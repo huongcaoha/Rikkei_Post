@@ -65,7 +65,11 @@ export const LoginPage: React.FC = () => {
         fullName: res.fullName,
         phoneNumber: res.phoneNumber,
         email: res.email,
-        roles: res.roles,
+        roles: Array.isArray(res.roles) ? res.roles : Array.from(res.roles || []),
+        managedProvinceId: res.managedProvinceId,
+        managedProvinceName: res.managedProvinceName,
+        assignedPostOfficeId: res.assignedPostOfficeId,
+        postOfficeName: res.postOfficeName,
       });
 
       navigate('/dashboard');
@@ -98,7 +102,11 @@ export const LoginPage: React.FC = () => {
         fullName: res.fullName,
         phoneNumber: res.phoneNumber,
         email: res.email,
-        roles: res.roles,
+        roles: Array.isArray(res.roles) ? res.roles : Array.from(res.roles || []),
+        managedProvinceId: res.managedProvinceId,
+        managedProvinceName: res.managedProvinceName,
+        assignedPostOfficeId: res.assignedPostOfficeId,
+        postOfficeName: res.postOfficeName,
       });
       message.success(`Đăng nhập thành công! Chào mừng ${res.fullName}`);
       navigate('/dashboard');
@@ -149,7 +157,11 @@ export const LoginPage: React.FC = () => {
         fullName: res.fullName,
         phoneNumber: res.phoneNumber,
         email: res.email,
-        roles: res.roles,
+        roles: Array.isArray(res.roles) ? res.roles : Array.from(res.roles || []),
+        managedProvinceId: res.managedProvinceId,
+        managedProvinceName: res.managedProvinceName,
+        assignedPostOfficeId: res.assignedPostOfficeId,
+        postOfficeName: res.postOfficeName,
       });
       navigate('/dashboard');
     } catch (err: any) {

@@ -161,6 +161,11 @@ public class StaffManagementServiceImpl implements StaffManagementService {
             assignedPoId = getAssignedPostOfficeId(currentUser);
         }
 
+        // Quản lý chi nhánh quản lý toàn bộ các bưu cục thuộc chi nhánh tỉnh đó, không gán bưu cục lẻ
+        if (roles.stream().anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()))) {
+            assignedPoId = null;
+        }
+
         String provName = null;
         if (managedProvId != null) {
             provName = provinceRepository.findById(managedProvId).map(Province::getName).orElse(null);
@@ -282,7 +287,13 @@ public class StaffManagementServiceImpl implements StaffManagementService {
                     .map(Province::getName).orElse(null));
         }
 
-        if (request.getAssignedPostOfficeId() != null) {
+        boolean isBranchManagerRole = user.getRoles().stream()
+                .anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()));
+
+        if (isBranchManagerRole) {
+            user.setAssignedPostOfficeId(null);
+            user.setPostOfficeName(null);
+        } else if (request.getAssignedPostOfficeId() != null) {
             user.setAssignedPostOfficeId(request.getAssignedPostOfficeId());
             user.setPostOfficeName(warehouseRepository.findById(request.getAssignedPostOfficeId())
                     .map(Warehouse::getName).orElse(null));

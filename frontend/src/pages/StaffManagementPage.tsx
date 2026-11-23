@@ -3,11 +3,12 @@ import { Table, Card, Button, Modal, Form, Input, Select, Tag, Space, message, P
 import { Users, UserPlus, Edit2, Shield, MapPin, Building2, CheckCircle, XCircle } from 'lucide-react';
 import { staffApi } from '../api/staff';
 import { locationApi } from '../api/location';
+import { authApi } from '../api/auth';
 import { StaffUser, Province, Warehouse, CreateStaffRequest, UpdateStaffRequest } from '../types';
 import { useAuth } from '../context/AuthContext';
 
 export const StaffManagementPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [staffList, setStaffList] = useState<StaffUser[]>([]);
   const [assignableRoles, setAssignableRoles] = useState<string[]>([]);
   const [provinces, setProvinces] = useState<Province[]>([]);
@@ -18,11 +19,43 @@ export const StaffManagementPage: React.FC = () => {
   const [editingStaff, setEditingStaff] = useState<StaffUser | null>(null);
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string | undefined>(undefined);
   const [form] = Form.useForm();
+  const selectedRole = Form.useWatch('role', form);
 
   const userRoles = user?.roles || [];
   const isAdmin = userRoles.includes('ROLE_ADMIN');
   const isBranchManager = userRoles.includes('ROLE_BRANCH_MANAGER');
   const isPostOfficeManager = userRoles.includes('ROLE_POST_OFFICE_MANAGER');
+
+  // Đảm bảo thông tin managedProvinceId và nạp sẵn bưu cục cho Branch Manager
+  useEffect(() => {
+    const ensureUserDataAndWarehouses = async () => {
+      let provId = user?.managedProvinceId;
+      if (!provId && (isBranchManager || isPostOfficeManager)) {
+        try {
+          const freshUser = await authApi.getCurrentUser();
+          if (freshUser?.managedProvinceId) {
+            provId = freshUser.managedProvinceId;
+            updateUser(freshUser);
+          }
+        } catch (e) {
+          console.error('Lỗi làm mới thông tin tài khoản:', e);
+        }
+      }
+
+      if (provId) {
+        loadWarehousesForProvince(provId);
+      }
+    };
+
+    ensureUserDataAndWarehouses();
+  }, [isBranchManager, isPostOfficeManager, user?.managedProvinceId]);
+
+  // Khi chọn vai trò Quản lý chi nhánh thì tự động xóa gán bưu cục lẻ
+  useEffect(() => {
+    if (selectedRole === 'ROLE_BRANCH_MANAGER') {
+      form.setFieldsValue({ assignedPostOfficeId: undefined });
+    }
+  }, [selectedRole]);
 
   const loadData = async () => {
     setLoading(true);
@@ -62,26 +95,35 @@ export const StaffManagementPage: React.FC = () => {
     }
   };
 
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = async () => {
     setEditingStaff(null);
     form.resetFields();
-    if (assignableRoles.length > 0) {
-      form.setFieldsValue({ role: assignableRoles[0] });
+    const defaultRole = assignableRoles.length > 0 ? assignableRoles[0] : 'ROLE_POST_OFFICE_MANAGER';
+
+    let branchOrPoProvId = (isBranchManager || isPostOfficeManager) ? user?.managedProvinceId : undefined;
+
+    // Nếu chưa có managedProvinceId trong local state, tải ngay từ API
+    if (!branchOrPoProvId && (isBranchManager || isPostOfficeManager)) {
+      try {
+        const freshUser = await authApi.getCurrentUser();
+        if (freshUser?.managedProvinceId) {
+          branchOrPoProvId = freshUser.managedProvinceId;
+          updateUser(freshUser);
+        }
+      } catch (e) {
+        console.error('Lỗi lấy thông tin tỉnh:', e);
+      }
     }
 
-    if (isBranchManager && user?.managedProvinceId) {
-      form.setFieldsValue({
-        managedProvinceId: user.managedProvinceId,
-      });
-      loadWarehousesForProvince(user.managedProvinceId);
-    } else if (isPostOfficeManager) {
-      form.setFieldsValue({
-        managedProvinceId: user?.managedProvinceId,
-        assignedPostOfficeId: user?.assignedPostOfficeId,
-      });
-      if (user?.managedProvinceId) {
-        loadWarehousesForProvince(user.managedProvinceId);
-      }
+    form.setFieldsValue({
+      role: defaultRole,
+      password: 'Password@123',
+      managedProvinceId: branchOrPoProvId,
+      assignedPostOfficeId: isPostOfficeManager ? user?.assignedPostOfficeId : undefined,
+    });
+
+    if (branchOrPoProvId) {
+      loadWarehousesForProvince(branchOrPoProvId);
     } else {
       setWarehouses([]);
     }
@@ -99,7 +141,7 @@ export const StaffManagementPage: React.FC = () => {
       email: record.email,
       role: primaryRole,
       managedProvinceId: record.managedProvinceId,
-      assignedPostOfficeId: record.assignedPostOfficeId,
+      assignedPostOfficeId: primaryRole === 'ROLE_BRANCH_MANAGER' ? undefined : record.assignedPostOfficeId,
       isActive: record.isActive,
     });
     if (record.managedProvinceId) {
@@ -121,7 +163,10 @@ export const StaffManagementPage: React.FC = () => {
         ? user.managedProvinceId
         : values.managedProvinceId;
 
-      const selectedWh = warehouses.find((w) => w.id === values.assignedPostOfficeId);
+      // Quản lý chi nhánh quản lý toàn bộ các bưu cục thuộc chi nhánh, không gán bưu cục lẻ
+      const assignedPoId = values.role === 'ROLE_BRANCH_MANAGER' ? undefined : values.assignedPostOfficeId;
+
+      const selectedWh = warehouses.find((w) => w.id === assignedPoId);
       const prov = provinces.find((p) => p.id === provId);
 
       if (editingStaff) {
@@ -135,7 +180,7 @@ export const StaffManagementPage: React.FC = () => {
           roles: values.role ? [values.role] : [],
           managedProvinceId: provId,
           managedProvinceName: prov?.name,
-          assignedPostOfficeId: values.assignedPostOfficeId,
+          assignedPostOfficeId: assignedPoId,
           postOfficeName: selectedWh?.name,
           isActive: values.isActive,
         };
@@ -152,7 +197,7 @@ export const StaffManagementPage: React.FC = () => {
           roles: values.role ? [values.role] : [],
           managedProvinceId: provId,
           managedProvinceName: prov?.name,
-          assignedPostOfficeId: values.assignedPostOfficeId,
+          assignedPostOfficeId: assignedPoId,
           postOfficeName: selectedWh?.name,
         };
         await staffApi.createStaff(createReq);
@@ -420,6 +465,14 @@ export const StaffManagementPage: React.FC = () => {
                     )}
                   </span>
                 }
+                rules={[
+                  {
+                    required:
+                      selectedRole === 'ROLE_BRANCH_MANAGER' ||
+                      selectedRole === 'ROLE_POST_OFFICE_MANAGER',
+                    message: 'Vui lòng chọn Tỉnh/Thành phố quản lý',
+                  },
+                ]}
               >
                 <Select
                   disabled={isBranchManager || isPostOfficeManager}
@@ -445,16 +498,32 @@ export const StaffManagementPage: React.FC = () => {
                         (Cố định theo bưu cục của bạn)
                       </span>
                     )}
+                    {selectedRole === 'ROLE_BRANCH_MANAGER' && (
+                      <span className="text-xs text-blue-600 font-normal ml-1">
+                        (Quản lý toàn bộ bưu cục)
+                      </span>
+                    )}
                   </span>
                 }
+                rules={[
+                  {
+                    required:
+                      selectedRole === 'ROLE_POST_OFFICE_MANAGER' ||
+                      selectedRole === 'ROLE_SHIPPER' ||
+                      selectedRole === 'ROLE_WAREHOUSE_STAFF',
+                    message: 'Vui lòng chọn bưu cục / kho trực thuộc',
+                  },
+                ]}
               >
                 <Select
-                  disabled={isPostOfficeManager}
-                  allowClear
+                  disabled={isPostOfficeManager || selectedRole === 'ROLE_BRANCH_MANAGER'}
+                  allowClear={selectedRole !== 'ROLE_POST_OFFICE_MANAGER'}
                   showSearch
                   loading={loadingWarehouses}
                   placeholder={
-                    warehouses.length > 0
+                    selectedRole === 'ROLE_BRANCH_MANAGER'
+                      ? 'Quản lý toàn bộ bưu cục trong chi nhánh'
+                      : warehouses.length > 0
                       ? 'Chọn bưu cục / kho thuộc chi nhánh'
                       : 'Chọn tỉnh thành trước (hoặc chưa có kho)'
                   }
