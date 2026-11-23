@@ -1,0 +1,86 @@
+services:
+  # =========================================================================
+  # 1. DATABASE TIER (PostgreSQL 15)
+  # =========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: rkp-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: rkp_admin
+      POSTGRES_PASSWORD: rkp_password_2026
+      POSTGRES_DB: rkp_logistics
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./documents/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    networks:
+      - rkp-network
+
+  # =========================================================================
+  # 2. CACHE & DISTRIBUTED LOCK TIER (Redis)
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: rkp-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "rkp_redis_2026"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - rkp-network
+
+  # =========================================================================
+  # 3. MESSAGE BROKER: APACHE KAFKA (KRAFT MODE - NO ZOOKEEPER)
+  # =========================================================================
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: rkp-kafka
+    restart: always
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - rkp-network
+
+  # Kafka UI for real-time topic monitoring
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: rkp-kafka-ui
+    restart: always
+    depends_on:
+      - kafka
+    ports:
+      - "8089:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-rikkei-post
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    networks:
+      - rkp-network
+
+networks:
+  rkp-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  kafka_data:
+    driver: local

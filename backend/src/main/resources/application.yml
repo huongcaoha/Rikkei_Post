@@ -1,0 +1,87 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rikkei-post-backend
+
+  # Database Configuration (PostgreSQL 15+)
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/rkp_logistics}
+    username: ${SPRING_DATASOURCE_USERNAME:rkp_admin}
+    password: ${SPRING_DATASOURCE_PASSWORD:rkp_password_2026}
+    driver-class-name: org.postgresql.Driver
+
+  # Code-First ORM Configuration (Hibernate auto table generation)
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update # Tự động tạo và cập nhật bảng, quan hệ Many-to-Many user_role
+    show-sql: true
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # Redis Cache Configuration
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:rkp_redis_2026}
+
+  # Apache Kafka Configuration (KRaft Mode: localhost:9092)
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: rkp-logistics-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+  # Spring Mail Configuration (Linh hoạt: Gmail SMTP hoặc VPS SMTP Server)
+  mail:
+    host: ${SPRING_MAIL_HOST:smtp.gmail.com}
+    port: ${SPRING_MAIL_PORT:587}
+    username: ${SPRING_MAIL_USERNAME:huongcaoha1994@gmail.com}
+    password: ${SPRING_MAIL_PASSWORD:nruk lbzl yyjj vosg}
+    properties:
+      mail:
+        smtp:
+          auth: ${SPRING_MAIL_AUTH:true}
+          starttls:
+            enable: ${SPRING_MAIL_STARTTLS:true}
+        transport:
+          protocol: smtp
+
+# JWT Security Configuration
+app:
+  jwt:
+    secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+    expiration-ms: 86400000 # 24 hours
+
+# Cloudflare R2 / S3 Configuration for POD Image Storage (Zero Egress Fees)
+cloudflare:
+  r2:
+    account-id: ${R2_ACCOUNT_ID:your_cloudflare_account_id}
+    access-key-id: ${R2_ACCESS_KEY_ID:your_r2_access_key}
+    secret-access-key: ${R2_SECRET_ACCESS_KEY:your_r2_secret_key}
+    bucket-name: ${R2_BUCKET_NAME:rikkei-post-pod}
+    public-url-prefix: ${R2_PUBLIC_URL_PREFIX:https://pub-your-id.r2.dev}
+
+# OAuth2 Third-Party Providers Configuration (Google, Facebook, GitHub)
+oauth2:
+  github:
+    client-id: ${GITHUB_CLIENT_ID:269560015950-8f10ja2hcr362m1q7jlhu53be7t93vk6.apps.googleusercontent.com}
+    client-secret: ${GITHUB_CLIENT_SECRET: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}
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:146681352133-vlqosog6vd92leukas8mn7sitooqerfd.apps.googleusercontent.com}
+  facebook:
+    app-id: ${FACEBOOK_APP_ID:1263761462121053}
