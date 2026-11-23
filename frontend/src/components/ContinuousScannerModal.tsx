@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Building2,
   Truck,
+  RotateCcw,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -18,10 +19,11 @@ import { Order } from '../types';
 interface ContinuousScannerModalProps {
   open: boolean;
   onClose: () => void;
-  defaultMode?: 'PICKUP' | 'INBOUND' | 'DELIVERY';
+  defaultMode?: 'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN';
   canInbound?: boolean;
   canPickup?: boolean;
   canDelivery?: boolean;
+  canReturn?: boolean;
   onOrderUpdated?: () => void;
 }
 
@@ -38,12 +40,14 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   canInbound = false,
   canPickup = true,
   canDelivery = true,
+  canReturn = false,
   onOrderUpdated,
 }) => {
-  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY'>(defaultMode);
+  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN'>(defaultMode);
   // Yêu cầu: Mặc định là quét mã bằng CAMERA
   const [inputMode, setInputMode] = useState<'CAMERA' | 'MANUAL'>('CAMERA');
   const [barcodeInput, setBarcodeInput] = useState<string>('');
+  const [returnReason, setReturnReason] = useState<string>('Khách hẹn lại / Không liên lạc được');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
 
@@ -234,6 +238,9 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       } else if (scanMode === 'DELIVERY') {
         updatedOrder = await shipperApi.scanDelivery(code);
         successMsg = `Đã xuất kho lấy đơn [${code}] mang đi giao thành công!`;
+      } else if (scanMode === 'RETURN') {
+        updatedOrder = await shipperApi.scanReturn(code, returnReason);
+        successMsg = `Đã quét thu hồi hoàn kho thành công đơn [${code}]!`;
       } else {
         updatedOrder = await shipperApi.scanInbound(code);
         successMsg = `Đã nhập kho bưu cục thành công đơn [${code}]!`;
@@ -245,6 +252,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       let successTitle = 'Nhập Kho Thành Công';
       if (scanMode === 'PICKUP') successTitle = 'Lấy Hàng Thành Công';
       else if (scanMode === 'DELIVERY') successTitle = 'Xuất Kho Đi Giao Thành Công';
+      else if (scanMode === 'RETURN') successTitle = 'Thu Hồi Hoàn Kho Thành Công';
 
       setPopupFeedback({
         type: 'SUCCESS',
@@ -280,25 +288,30 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   const getHeaderTitle = () => {
     if (scanMode === 'DELIVERY') return 'Quét Xuất Kho Lấy Đơn Đi Giao';
     if (scanMode === 'PICKUP') return 'Quét Mã Lấy Hàng Tại Shop';
+    if (scanMode === 'RETURN') return 'Quét Mã Thu Hồi Đơn Hoàn Về Kho';
     return 'Quét Mã Nhập Kho Bưu Cục';
   };
 
   const getHeaderColor = () => {
     if (scanMode === 'DELIVERY') return 'bg-blue-600';
     if (scanMode === 'PICKUP') return 'bg-amber-600';
+    if (scanMode === 'RETURN') return 'bg-orange-600';
     return 'bg-red-600';
   };
 
   // Các chế độ quét khả dụng
   const modeOptions = [];
   if (canPickup) {
-    modeOptions.push({ label: 'Lấy hàng tại Shop', value: 'PICKUP', icon: <Truck size={14} /> });
+    modeOptions.push({ label: 'Lấy hàng Shop', value: 'PICKUP', icon: <Truck size={14} /> });
   }
   if (canDelivery) {
-    modeOptions.push({ label: 'Lấy đơn đi giao', value: 'DELIVERY', icon: <Scan size={14} /> });
+    modeOptions.push({ label: 'Lấy đi giao', value: 'DELIVERY', icon: <Scan size={14} /> });
   }
   if (canInbound) {
-    modeOptions.push({ label: 'Nhập kho bưu cục', value: 'INBOUND', icon: <Building2 size={14} /> });
+    modeOptions.push({ label: 'Nhập kho', value: 'INBOUND', icon: <Building2 size={14} /> });
+  }
+  if (canReturn) {
+    modeOptions.push({ label: 'Thu hồi hoàn', value: 'RETURN', icon: <RotateCcw size={14} /> });
   }
 
   return (
@@ -340,6 +353,19 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
                 onChange={(val) => setScanMode(val as any)}
                 options={modeOptions}
                 className="font-medium text-xs bg-white shadow-xs"
+              />
+            </div>
+          )}
+
+          {scanMode === 'RETURN' && (
+            <div className="bg-orange-50 border border-orange-200 p-2.5 rounded-xl space-y-1">
+              <span className="text-xs font-semibold text-orange-800">Lý do thu hồi hoàn về kho:</span>
+              <Input
+                size="small"
+                value={returnReason}
+                onChange={(e) => setReturnReason(e.target.value)}
+                placeholder="Nhập lý do không giao được / hoàn hàng..."
+                className="rounded-lg text-xs"
               />
             </div>
           )}

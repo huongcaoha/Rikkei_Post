@@ -14,11 +14,16 @@ import vn.rikkei.post.entity.DeliveryRoute;
 import vn.rikkei.post.entity.MerchantAddress;
 import vn.rikkei.post.entity.Order;
 import vn.rikkei.post.entity.OrderTrackingLog;
+import vn.rikkei.post.entity.ShipperAssignment;
 import vn.rikkei.post.entity.User;
+import vn.rikkei.post.entity.Warehouse;
 import vn.rikkei.post.repository.MerchantAddressRepository;
 import vn.rikkei.post.repository.OrderRepository;
 import vn.rikkei.post.repository.OrderTrackingLogRepository;
+import vn.rikkei.post.repository.ShipperAssignmentRepository;
 import vn.rikkei.post.repository.UserRepository;
+import vn.rikkei.post.repository.WarehouseRepository;
+import vn.rikkei.post.security.CustomUserDetails;
 import vn.rikkei.post.service.DeliveryRouteService;
 import vn.rikkei.post.service.EmailService;
 import vn.rikkei.post.service.OrderService;
@@ -29,7 +34,9 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -41,6 +48,8 @@ public class OrderServiceImpl implements OrderService {
     private final PricingService pricingService;
     private final EmailService emailService;
     private final UserRepository userRepository;
+    private final WarehouseRepository warehouseRepository;
+    private final ShipperAssignmentRepository assignmentRepository;
     private final MerchantAddressRepository merchantAddressRepository;
     private final DeliveryRouteService deliveryRouteService;
     private final Random random = new Random();
@@ -90,21 +99,35 @@ public class OrderServiceImpl implements OrderService {
         // 3. Sinh Routing Code phân loại bưu cục
         String routingCode = generateRoutingCode(request.getReceiverProvinceId(), request.getReceiverDistrictId());
 
-        // 4. Kiểm tra tuyến đường và phân bổ Shipper tự động nếu là DOOR_PICKUP (Lấy hàng tại Shop)
+        // 4. Tự động xác định Bưu cục gần Shop nhất theo vị trí GPS hoặc địa chỉ hành chính
+        Warehouse nearestPostOffice = findNearestPostOffice(
+                request.getSenderLat(),
+                request.getSenderLng(),
+                request.getSenderProvinceId(),
+                request.getSenderDistrictId()
+        );
+
+        // 5. Kiểm tra tuyến đường phù hợp
         DeliveryRoute matchedRoute = null;
-        if ("DOOR_PICKUP".equalsIgnoreCase(priceRes.getPickupType())) {
-            try {
-                matchedRoute = deliveryRouteService.findBestMatchingRoute(
-                        request.getSenderProvinceId(),
-                        request.getSenderWardName(),
-                        request.getSenderAddress()
-                );
-            } catch (Exception e) {
-                log.warn("Không thể tự động phân bổ tuyến đường: {}", e.getMessage());
-            }
+        try {
+            matchedRoute = deliveryRouteService.findBestMatchingRoute(
+                    request.getSenderProvinceId(),
+                    request.getSenderWardName(),
+                    request.getSenderAddress()
+            );
+        } catch (Exception e) {
+            log.warn("Không thể tự động phân bổ tuyến đường: {}", e.getMessage());
         }
 
-        // 5. Lưu thực thể Order
+        // 6. Tự động gán Bưu tá gần nhất phụ trách bưu cục/tuyến đường để đến lấy hàng
+        User assignedShipper = findNearestShipper(nearestPostOffice, matchedRoute, request.getSenderProvinceId());
+
+        Long finalPostOfficeId = nearestPostOffice != null ? nearestPostOffice.getId() : (matchedRoute != null ? matchedRoute.getPostOfficeId() : 1L);
+        Long finalShipperId = assignedShipper != null ? assignedShipper.getId() : (matchedRoute != null ? matchedRoute.getAssignedShipperId() : null);
+        String finalShipperName = assignedShipper != null ? assignedShipper.getFullName() : (matchedRoute != null ? matchedRoute.getAssignedShipperName() : null);
+        String finalShipperPhone = assignedShipper != null ? assignedShipper.getPhoneNumber() : (matchedRoute != null ? matchedRoute.getAssignedShipperPhone() : null);
+
+        // 7. Lưu thực thể Order
         Order order = Order.builder()
                 .trackingCode(trackingCode)
                 .merchantId(merchantId)
@@ -140,34 +163,41 @@ public class OrderServiceImpl implements OrderService {
                 .codAmount(request.getCodAmount() != null ? request.getCodAmount() : BigDecimal.ZERO)
                 .paymentParty(request.getPaymentParty() != null ? request.getPaymentParty() : "RECEIVER")
                 .serviceType(request.getServiceType() != null ? request.getServiceType() : "STANDARD")
-                .pickupType(priceRes.getPickupType() != null ? priceRes.getPickupType() : "DROP_OFF")
+                .pickupType(priceRes.getPickupType() != null ? priceRes.getPickupType() : "DOOR_PICKUP")
                 .pickupFee(priceRes.getPickupFee() != null ? priceRes.getPickupFee() : BigDecimal.ZERO)
                 .routingCode(routingCode)
                 .currentStatus("CREATED")
                 .deliveryAttempts(0)
                 .notes(request.getNotes())
                 .assignedRouteId(matchedRoute != null ? matchedRoute.getId() : null)
-                .assignedPostOfficeId(matchedRoute != null ? matchedRoute.getPostOfficeId() : null)
-                .assignedShipperId(matchedRoute != null ? matchedRoute.getAssignedShipperId() : null)
-                .assignedShipperName(matchedRoute != null ? matchedRoute.getAssignedShipperName() : null)
-                .assignedShipperPhone(matchedRoute != null ? matchedRoute.getAssignedShipperPhone() : null)
+                .assignedPostOfficeId(finalPostOfficeId)
+                .assignedShipperId(finalShipperId)
+                .assignedShipperName(finalShipperName)
+                .assignedShipperPhone(finalShipperPhone)
                 .build();
 
         final Order savedOrder = orderRepository.save(order);
 
-        // 6. Ghi log khởi tạo hành trình ban đầu
+        // 8. Tự động khởi tạo ShipperAssignment để bưu tá nhận nhiệm vụ lấy hàng ngay lập tức
+        if (finalShipperId != null) {
+            ShipperAssignment assignment = ShipperAssignment.builder()
+                    .shipperId(finalShipperId)
+                    .trackingCode(savedOrder.getTrackingCode())
+                    .taskType("PICKUP")
+                    .status("ASSIGNED")
+                    .sequenceOrder(1)
+                    .build();
+            assignmentRepository.save(assignment);
+        }
+
+        // 9. Ghi log khởi tạo hành trình ban đầu
+        String poName = nearestPostOffice != null ? nearestPostOffice.getName() : "Bưu cục điều phối";
         String initialDesc;
-        if ("DOOR_PICKUP".equalsIgnoreCase(savedOrder.getPickupType())) {
-            if (savedOrder.getAssignedShipperName() != null) {
-                initialDesc = "Đơn hàng mới được tạo trên hệ thống Rikkei_Post. Đã tự động phân bổ bưu tá "
-                        + savedOrder.getAssignedShipperName() + " (SĐT: " + savedOrder.getAssignedShipperPhone()
-                        + ") thuộc bưu cục quản lý tuyến " + (matchedRoute != null ? matchedRoute.getRouteName() : "")
-                        + " đến tận nơi lấy hàng.";
-            } else {
-                initialDesc = "Đơn hàng mới được tạo trên hệ thống Rikkei_Post. Đang điều phối bưu tá đến tận nơi lấy hàng.";
-            }
+        if (finalShipperName != null) {
+            initialDesc = String.format("Đơn hàng mới được tạo trên hệ thống Rikkei_Post. Tiếp nhận bởi %s. Đã tự động điều phối bưu tá %s (SĐT: %s) đến tận nơi lấy hàng tại Shop.",
+                    poName, finalShipperName, finalShipperPhone != null ? finalShipperPhone : "N/A");
         } else {
-            initialDesc = "Đơn hàng mới được tạo trên hệ thống Rikkei_Post. Chờ Shop gửi hàng tại bưu cục.";
+            initialDesc = String.format("Đơn hàng mới được tạo trên hệ thống Rikkei_Post. Tiếp nhận bởi %s. Chờ phân bổ bưu tá đến lấy hàng.", poName);
         }
 
         OrderTrackingLog logEntry = OrderTrackingLog.builder()
@@ -288,8 +318,26 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(readOnly = true)
     public DashboardStatsResponse getDashboardStats(Long merchantId) {
-        Page<Order> all = orderRepository.findByMerchantId(merchantId, Pageable.unpaged());
-        List<Order> list = all.getContent();
+        return getDashboardStats(null, null, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DashboardStatsResponse getDashboardStats(CustomUserDetails currentUser, LocalDate startDate, LocalDate endDate) {
+        List<Order> list = getOrdersForUserScope(currentUser);
+
+        // Lọc theo khoảng ngày (startDate, endDate)
+        if (startDate != null || endDate != null) {
+            list = list.stream()
+                    .filter(o -> {
+                        LocalDate d = o.getCreatedAt() != null ? o.getCreatedAt().toLocalDate() : null;
+                        if (d == null) return false;
+                        if (startDate != null && d.isBefore(startDate)) return false;
+                        if (endDate != null && d.isAfter(endDate)) return false;
+                        return true;
+                    })
+                    .collect(Collectors.toList());
+        }
 
         long total = list.size();
         long created = list.stream().filter(o -> "CREATED".equals(o.getCurrentStatus()) || "PICKED_UP".equals(o.getCurrentStatus())).count();
@@ -320,6 +368,144 @@ public class OrderServiceImpl implements OrderService {
                 .totalShippingFee(feeSum)
                 .successRate(Math.round(rate * 10.0) / 10.0)
                 .build();
+    }
+
+    private List<Order> getOrdersForUserScope(CustomUserDetails currentUser) {
+        if (currentUser == null) {
+            return orderRepository.findAll();
+        }
+        User user = userRepository.findById(currentUser.getId()).orElse(null);
+        if (user == null) {
+            return orderRepository.findAll();
+        }
+
+        boolean isAdmin = user.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+        boolean isBranchManager = user.getRoles().stream().anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()));
+        boolean isPostOfficeManager = user.getRoles().stream().anyMatch(r ->
+                "ROLE_POST_OFFICE_MANAGER".equalsIgnoreCase(r.getRoleName()) ||
+                "ROLE_WAREHOUSE_STAFF".equalsIgnoreCase(r.getRoleName())
+        );
+        boolean isShipper = user.getRoles().stream().anyMatch(r -> "ROLE_SHIPPER".equalsIgnoreCase(r.getRoleName()));
+
+        if (isAdmin) {
+            return orderRepository.findAll();
+        } else if (isBranchManager && user.getManagedProvinceId() != null) {
+            return orderRepository.findAll().stream()
+                    .filter(o -> user.getManagedProvinceId().equals(o.getSenderProvinceId()) || user.getManagedProvinceId().equals(o.getReceiverProvinceId()))
+                    .collect(Collectors.toList());
+        } else if (isPostOfficeManager && user.getAssignedPostOfficeId() != null) {
+            return orderRepository.findByAssignedPostOfficeId(user.getAssignedPostOfficeId());
+        } else if (isShipper) {
+            return orderRepository.findByAssignedShipperId(user.getId());
+        } else {
+            return orderRepository.findByMerchantId(user.getId(), Pageable.unpaged()).getContent();
+        }
+    }
+
+    /**
+     * Tự động tìm kiếm Bưu cục gần Shop nhất theo tọa độ (senderLat, senderLng)
+     * hoặc theo Tỉnh/Huyện người gửi.
+     */
+    private Warehouse findNearestPostOffice(Double lat, Double lng, Integer provinceId, Integer districtId) {
+        List<Warehouse> activeWhs = warehouseRepository.findByIsActiveTrue();
+        if (activeWhs.isEmpty()) {
+            return null;
+        }
+
+        // 1. Nếu có tọa độ GPS hợp lệ, tính khoảng cách địa lý (Haversine)
+        if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
+            Warehouse closest = null;
+            double minDistance = Double.MAX_VALUE;
+
+            for (Warehouse wh : activeWhs) {
+                if (wh.getLatitude() != null && wh.getLongitude() != null) {
+                    double dist = calculateDistanceKm(lat, lng, wh.getLatitude(), wh.getLongitude());
+                    // Ưu tiên bưu cục giao dịch (SPOKE_POST_OFFICE)
+                    double adjustedDist = "SPOKE_POST_OFFICE".equalsIgnoreCase(wh.getType()) ? dist * 0.9 : dist;
+                    if (adjustedDist < minDistance) {
+                        minDistance = adjustedDist;
+                        closest = wh;
+                    }
+                }
+            }
+            if (closest != null) {
+                return closest;
+            }
+        }
+
+        // 2. Nếu không có tọa độ, tìm theo Tỉnh/TP và Quận/Huyện
+        if (provinceId != null) {
+            List<Warehouse> provinceWhs = activeWhs.stream()
+                    .filter(w -> provinceId.equals(w.getProvinceId()))
+                    .collect(Collectors.toList());
+
+            if (!provinceWhs.isEmpty()) {
+                if (districtId != null && districtId > 0) {
+                    Optional<Warehouse> districtWh = provinceWhs.stream()
+                            .filter(w -> districtId.equals(w.getDistrictId()))
+                            .findFirst();
+                    if (districtWh.isPresent()) {
+                        return districtWh.get();
+                    }
+                }
+                return provinceWhs.stream()
+                        .filter(w -> "SPOKE_POST_OFFICE".equalsIgnoreCase(w.getType()))
+                        .findFirst()
+                        .orElse(provinceWhs.get(0));
+            }
+        }
+
+        return activeWhs.stream()
+                .filter(w -> "SPOKE_POST_OFFICE".equalsIgnoreCase(w.getType()))
+                .findFirst()
+                .orElse(activeWhs.get(0));
+    }
+
+    /**
+     * Tự động tìm kiếm Shipper gần Shop nhất phụ trách bưu cục/tuyến đường để đến lấy hàng
+     */
+    private User findNearestShipper(Warehouse postOffice, DeliveryRoute matchedRoute, Integer provinceId) {
+        // 1. Nếu tuyến đường đã có bưu tá phụ trách, lấy bưu tá đó
+        if (matchedRoute != null && matchedRoute.getAssignedShipperId() != null) {
+            Optional<User> shipperOpt = userRepository.findById(matchedRoute.getAssignedShipperId());
+            if (shipperOpt.isPresent() && Boolean.TRUE.equals(shipperOpt.get().getIsActive())) {
+                return shipperOpt.get();
+            }
+        }
+
+        // 2. Tìm bưu tá thuộc bưu cục gần nhất đó
+        if (postOffice != null) {
+            List<User> poShippers = userRepository.findByRoles_RoleNameAndAssignedPostOfficeId("ROLE_SHIPPER", postOffice.getId())
+                    .stream().filter(u -> Boolean.TRUE.equals(u.getIsActive())).collect(Collectors.toList());
+            if (!poShippers.isEmpty()) {
+                return poShippers.get(0);
+            }
+        }
+
+        // 3. Tìm bưu tá trong cùng Tỉnh/TP
+        if (provinceId != null) {
+            List<User> provShippers = userRepository.findByRoles_RoleNameAndManagedProvinceId("ROLE_SHIPPER", provinceId)
+                    .stream().filter(u -> Boolean.TRUE.equals(u.getIsActive())).collect(Collectors.toList());
+            if (!provShippers.isEmpty()) {
+                return provShippers.get(0);
+            }
+        }
+
+        // 4. Fallback: Lấy bưu tá bất kỳ đang hoạt động
+        List<User> allShippers = userRepository.findByRoles_RoleName("ROLE_SHIPPER")
+                .stream().filter(u -> Boolean.TRUE.equals(u.getIsActive())).collect(Collectors.toList());
+        return allShippers.isEmpty() ? null : allShippers.get(0);
+    }
+
+    private double calculateDistanceKm(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371; // Bán kính Trái Đất (km)
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
     @Override

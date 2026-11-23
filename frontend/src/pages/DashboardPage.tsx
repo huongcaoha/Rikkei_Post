@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Button, Table, Tag, Input, Spin, message } from 'antd';
+import { Card, Button, Table, Tag, Input, Spin, message, DatePicker } from 'antd';
 import {
   Package,
   Truck,
@@ -12,7 +12,9 @@ import {
   Search,
   ArrowRight,
   Scan,
+  Calendar,
 } from 'lucide-react';
+import dayjs, { Dayjs } from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import { orderApi } from '../api/order';
 import { DashboardStats, Order } from '../types';
@@ -28,24 +30,41 @@ export const DashboardPage: React.FC = () => {
   const [quickScannerOpen, setQuickScannerOpen] = useState<boolean>(false);
   const navigate = useNavigate();
 
+  // Bộ lọc theo ngày (startDate, endDate) theo yêu cầu người dùng
+  const [startDate, setStartDate] = useState<string | undefined>(undefined);
+  const [endDate, setEndDate] = useState<string | undefined>(undefined);
+  const [datePreset, setDatePreset] = useState<'today' | '7days' | '30days' | 'all'>('all');
+
   const userRoles = user?.roles || [];
+  const isAdmin = userRoles.includes('ROLE_ADMIN');
+  const isBranchManager = userRoles.includes('ROLE_BRANCH_MANAGER');
+  const isPostOfficeManager = userRoles.includes('ROLE_POST_OFFICE_MANAGER');
+  const isWarehouseStaff = userRoles.includes('ROLE_WAREHOUSE_STAFF');
   const isStaffOrAdmin = userRoles.some((r) =>
     ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF'].includes(r)
   );
   // Chỉ tài khoản Shop / Khách hàng thuần túy mới có quyền tạo đơn hàng
   const canCreateOrder = userRoles.includes('ROLE_MERCHANT') && !isStaffOrAdmin;
-  const canInboundWarehouse = userRoles.includes('ROLE_ADMIN') || userRoles.includes('ROLE_BRANCH_MANAGER') || userRoles.includes('ROLE_POST_OFFICE_MANAGER') || userRoles.includes('ROLE_WAREHOUSE_STAFF');
+  const canInboundWarehouse = isAdmin || isBranchManager || isPostOfficeManager || isWarehouseStaff;
   const isShipper = userRoles.includes('ROLE_SHIPPER');
 
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
+  const dashboardTitle = isAdmin
+    ? 'Tổng quan Hệ thống Toàn quốc'
+    : isBranchManager
+    ? `Tổng quan Chi nhánh ${user?.managedProvinceName || ''}`
+    : isPostOfficeManager
+    ? `Tổng quan Bưu cục ${user?.postOfficeName || ''}`
+    : 'Tổng quan Vận hành & Đơn hàng';
 
-  const fetchDashboardData = async () => {
+  useEffect(() => {
+    fetchDashboardData(startDate, endDate);
+  }, [startDate, endDate]);
+
+  const fetchDashboardData = async (sDate?: string, eDate?: string) => {
     setLoading(true);
     try {
       const [statsData, ordersData] = await Promise.all([
-        orderApi.getDashboardStats(),
+        orderApi.getDashboardStats(sDate, eDate),
         orderApi.getMyOrders(0, 5),
       ]);
       setStats(statsData);
@@ -54,6 +73,36 @@ export const DashboardPage: React.FC = () => {
       message.error('Không thể tải dữ liệu dashboard: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApplyPreset = (preset: 'today' | '7days' | '30days' | 'all') => {
+    setDatePreset(preset);
+    const today = dayjs().format('YYYY-MM-DD');
+    if (preset === 'today') {
+      setStartDate(today);
+      setEndDate(today);
+    } else if (preset === '7days') {
+      setStartDate(dayjs().subtract(6, 'day').format('YYYY-MM-DD'));
+      setEndDate(today);
+    } else if (preset === '30days') {
+      setStartDate(dayjs().subtract(29, 'day').format('YYYY-MM-DD'));
+      setEndDate(today);
+    } else {
+      setStartDate(undefined);
+      setEndDate(undefined);
+    }
+  };
+
+  const handleRangePickerChange = (dates: [Dayjs | null, Dayjs | null] | null) => {
+    if (dates && dates[0] && dates[1]) {
+      setStartDate(dates[0].format('YYYY-MM-DD'));
+      setEndDate(dates[1].format('YYYY-MM-DD'));
+      setDatePreset('all');
+    } else {
+      setStartDate(undefined);
+      setEndDate(undefined);
+      setDatePreset('all');
     }
   };
 
@@ -177,7 +226,7 @@ export const DashboardPage: React.FC = () => {
       {/* Header section with CTA */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-200 shadow-xs">
         <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Tổng quan Vận hành & Đơn hàng</h1>
+          <h1 className="text-2xl font-black text-gray-900 tracking-tight">{dashboardTitle}</h1>
           <p className="text-gray-500 text-sm mt-1">
             Theo dõi dòng tiền COD, trạng thái đơn hàng và tỷ lệ giao thành công theo thời gian thực.
           </p>
@@ -216,6 +265,68 @@ export const DashboardPage: React.FC = () => {
               Tạo đơn mới
             </Button>
           )}
+        </div>
+      </div>
+
+      {/* Date Range Filter Bar theo yêu cầu người dùng */}
+      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center space-x-2 text-gray-700 font-semibold text-sm">
+          <Calendar size={18} className="text-red-600" />
+          <span>Khoảng thời gian lọc thống kê:</span>
+          {startDate && endDate ? (
+            <Tag color="red" className="ml-2 font-mono">
+              {dayjs(startDate).format('DD/MM/YYYY')} - {dayjs(endDate).format('DD/MM/YYYY')}
+            </Tag>
+          ) : (
+            <Tag color="default" className="ml-2">Tất cả thời gian</Tag>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl bg-gray-100 p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => handleApplyPreset('today')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                datePreset === 'today' ? 'bg-white text-red-600 shadow-xs font-bold' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Hôm nay
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset('7days')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                datePreset === '7days' ? 'bg-white text-red-600 shadow-xs font-bold' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              7 ngày qua
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset('30days')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                datePreset === '30days' ? 'bg-white text-red-600 shadow-xs font-bold' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              30 ngày qua
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset('all')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                datePreset === 'all' ? 'bg-white text-red-600 shadow-xs font-bold' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Tất cả
+            </button>
+          </div>
+          <DatePicker.RangePicker
+            format="DD/MM/YYYY"
+            value={startDate && endDate ? [dayjs(startDate), dayjs(endDate)] : null}
+            onChange={handleRangePickerChange}
+            className="rounded-xl border-gray-300 h-9"
+            placeholder={['Từ ngày (start)', 'Đến ngày (end)']}
+          />
         </div>
       </div>
 

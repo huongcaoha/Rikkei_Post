@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,15 +43,22 @@ public class ShipperServiceImpl implements ShipperService {
     @Override
     @Transactional(readOnly = true)
     public List<OrderResponse> getMyAssignedOrders(Long shipperId, String category, LocalDate startDate, LocalDate endDate) {
-        List<Order> orders = orderRepository.findByAssignedShipperId(shipperId);
+        return getMyAssignedOrders(shipperId, null, category, startDate, endDate);
+    }
 
-        // 1. Phân loại theo category yêu cầu của shipper
+    @Override
+    @Transactional(readOnly = true)
+    public List<OrderResponse> getMyAssignedOrders(Long userId, Long filterShipperId, String category, LocalDate startDate, LocalDate endDate) {
+        User currentUser = userRepository.findById(userId).orElse(null);
+        List<Order> orders = getOrdersByScopeAndShipper(currentUser, filterShipperId);
+
+        // 1. Phân loại theo category yêu cầu của shipper / bưu cục
         if (category != null && !category.isBlank() && !"ALL".equalsIgnoreCase(category)) {
             String cat = category.toUpperCase().trim();
             switch (cat) {
                 case "PICKUP_PENDING":
                 case "PICKUP":
-                    // 1. Đơn hàng cần lấy tại shop: status CREATED
+                    // 1. Đơn hàng cần mới tạo chưa được lấy hoặc khách chưa mang đến
                     orders = orders.stream()
                             .filter(o -> "CREATED".equalsIgnoreCase(o.getCurrentStatus()))
                             .collect(Collectors.toList());
@@ -63,28 +71,28 @@ public class ShipperServiceImpl implements ShipperService {
                     break;
                 case "IN_WAREHOUSE":
                 case "AT_SORTING_HUB":
-                    // 3. Đơn hàng đã giao cho kho: status AT_SORTING_HUB hoặc IN_TRANSIT
+                    // 3. Đơn đã được quét mã code nhập kho: status AT_SORTING_HUB hoặc IN_TRANSIT hoặc PICKED_UP
                     orders = orders.stream()
-                            .filter(o -> "AT_SORTING_HUB".equalsIgnoreCase(o.getCurrentStatus()) || "IN_TRANSIT".equalsIgnoreCase(o.getCurrentStatus()))
+                            .filter(o -> "AT_SORTING_HUB".equalsIgnoreCase(o.getCurrentStatus()) || "IN_TRANSIT".equalsIgnoreCase(o.getCurrentStatus()) || "PICKED_UP".equalsIgnoreCase(o.getCurrentStatus()))
                             .collect(Collectors.toList());
                     break;
                 case "DELIVERING":
                 case "DELIVERY":
-                    // 4. Đơn hàng đã lấy ở kho mang đi giao: status DELIVERING
+                    // 4. Đơn hàng đang được đi giao
                     orders = orders.stream()
                             .filter(o -> "DELIVERING".equalsIgnoreCase(o.getCurrentStatus()))
                             .collect(Collectors.toList());
                     break;
                 case "DELIVERED":
-                    // 5. Đơn hàng đã giao cho khách: status DELIVERED
+                    // 5. Đơn hàng đã giao xong
                     orders = orders.stream()
                             .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus()))
                             .collect(Collectors.toList());
                     break;
                 case "DELIVERY_FAILED":
-                    // 6. Đơn hàng không giao được: status DELIVERY_FAILED
+                    // 6. Đơn hàng không giao được đang chờ hoàn về
                     orders = orders.stream()
-                            .filter(o -> "DELIVERY_FAILED".equalsIgnoreCase(o.getCurrentStatus()))
+                            .filter(o -> "DELIVERY_FAILED".equalsIgnoreCase(o.getCurrentStatus()) || "RETURNING".equalsIgnoreCase(o.getCurrentStatus()))
                             .collect(Collectors.toList());
                     break;
                 case "COD_COLLECTED":
@@ -111,7 +119,14 @@ public class ShipperServiceImpl implements ShipperService {
     @Override
     @Transactional(readOnly = true)
     public Map<String, Object> getShipperSummary(Long shipperId, LocalDate startDate, LocalDate endDate) {
-        List<Order> orders = orderRepository.findByAssignedShipperId(shipperId);
+        return getShipperSummary(shipperId, null, startDate, endDate);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getShipperSummary(Long userId, Long filterShipperId, LocalDate startDate, LocalDate endDate) {
+        User currentUser = userRepository.findById(userId).orElse(null);
+        List<Order> orders = getOrdersByScopeAndShipper(currentUser, filterShipperId);
 
         // Đếm theo từng phân loại chuẩn xác
         long pickupPending = orders.stream()
@@ -123,7 +138,7 @@ public class ShipperServiceImpl implements ShipperService {
                 .count();
 
         long inWarehouse = orders.stream()
-                .filter(o -> ("AT_SORTING_HUB".equalsIgnoreCase(o.getCurrentStatus()) || "IN_TRANSIT".equalsIgnoreCase(o.getCurrentStatus()))
+                .filter(o -> ("AT_SORTING_HUB".equalsIgnoreCase(o.getCurrentStatus()) || "IN_TRANSIT".equalsIgnoreCase(o.getCurrentStatus()) || "PICKED_UP".equalsIgnoreCase(o.getCurrentStatus()))
                         && isMatchDate(o, "IN_WAREHOUSE", startDate, endDate))
                 .count();
 
@@ -136,7 +151,8 @@ public class ShipperServiceImpl implements ShipperService {
                 .count();
 
         long deliveryFailed = orders.stream()
-                .filter(o -> "DELIVERY_FAILED".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "DELIVERY_FAILED", startDate, endDate))
+                .filter(o -> ("DELIVERY_FAILED".equalsIgnoreCase(o.getCurrentStatus()) || "RETURNING".equalsIgnoreCase(o.getCurrentStatus()))
+                        && isMatchDate(o, "DELIVERY_FAILED", startDate, endDate))
                 .count();
 
         // Tính tiền COD & cước đã thu được từ các đơn giao thành công (DELIVERED)
@@ -178,6 +194,144 @@ public class ShipperServiceImpl implements ShipperService {
         summary.put("codOrdersCount", codOrdersCount);
 
         return summary;
+    }
+
+    private List<Order> getOrdersByScopeAndShipper(User currentUser, Long filterShipperId) {
+        if (currentUser == null) {
+            return filterShipperId != null ? orderRepository.findByAssignedShipperId(filterShipperId) : orderRepository.findAll();
+        }
+
+        boolean isAdmin = currentUser.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+        boolean isBranchManager = currentUser.getRoles().stream().anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()));
+        boolean isPostOfficeManager = currentUser.getRoles().stream().anyMatch(r ->
+                "ROLE_POST_OFFICE_MANAGER".equalsIgnoreCase(r.getRoleName()) ||
+                "ROLE_WAREHOUSE_STAFF".equalsIgnoreCase(r.getRoleName())
+        );
+        boolean isShipper = currentUser.getRoles().stream().anyMatch(r -> "ROLE_SHIPPER".equalsIgnoreCase(r.getRoleName()));
+
+        if (filterShipperId != null) {
+            return orderRepository.findByAssignedShipperId(filterShipperId);
+        }
+
+        if (isAdmin) {
+            return orderRepository.findAll();
+        }
+
+        if (isBranchManager && currentUser.getManagedProvinceId() != null) {
+            return orderRepository.findAll().stream()
+                    .filter(o -> currentUser.getManagedProvinceId().equals(o.getSenderProvinceId()) || currentUser.getManagedProvinceId().equals(o.getReceiverProvinceId()))
+                    .collect(Collectors.toList());
+        }
+
+        if (isPostOfficeManager && currentUser.getAssignedPostOfficeId() != null) {
+            return orderRepository.findByAssignedPostOfficeId(currentUser.getAssignedPostOfficeId());
+        }
+
+        if (isShipper) {
+            return orderRepository.findByAssignedShipperId(currentUser.getId());
+        }
+
+        return orderRepository.findAll();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> getPostOfficeShippers(Long currentUserId) {
+        User currentUser = userRepository.findById(currentUserId).orElse(null);
+        if (currentUser == null) return Collections.emptyList();
+
+        List<User> shippers;
+        if (currentUser.getAssignedPostOfficeId() != null) {
+            shippers = userRepository.findByRoles_RoleNameAndAssignedPostOfficeId("ROLE_SHIPPER", currentUser.getAssignedPostOfficeId());
+        } else if (currentUser.getManagedProvinceId() != null) {
+            shippers = userRepository.findByRoles_RoleNameAndManagedProvinceId("ROLE_SHIPPER", currentUser.getManagedProvinceId());
+        } else {
+            shippers = userRepository.findByRoles_RoleName("ROLE_SHIPPER");
+        }
+
+        return shippers.stream()
+                .filter(u -> Boolean.TRUE.equals(u.getIsActive()))
+                .map(u -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("id", u.getId());
+                    map.put("fullName", u.getFullName());
+                    map.put("phoneNumber", u.getPhoneNumber());
+                    map.put("username", u.getUsername());
+                    return map;
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse scanReturnToWarehouse(Long userId, String trackingCode, String reason, String note) {
+        final String cleanCode = trackingCode != null ? trackingCode.trim().toUpperCase() : "";
+        Order order = orderRepository.findByTrackingCode(cleanCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bưu gửi với mã vận đơn: " + cleanCode));
+
+        User actor = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin tài khoản thao tác!"));
+
+        if (!isWarehouseAuthorized(actor)) {
+            throw new org.springframework.security.access.AccessDeniedException("Chỉ quản lý bưu cục hoặc nhân viên kho mới có quyền quét thu hồi đơn hàng về kho!");
+        }
+
+        // Kiểm tra trạng thái hiện tại
+        String currentStatus = order.getCurrentStatus() != null ? order.getCurrentStatus().toUpperCase() : "";
+        if ("RETURNING".equals(currentStatus)) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC THU HỒI VỀ KHO trước đó rồi! Vui lòng không quét lại.");
+        }
+        if ("DELIVERED".equals(currentStatus)) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ GIAO THÀNH CÔNG cho khách rồi! Không thể thu hồi hoàn kho.");
+        }
+        if (!"DELIVERY_FAILED".equals(currentStatus) && !"DELIVERING".equals(currentStatus)) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] hiện đang ở trạng thái [" + currentStatus + "], không phải đơn giao thất bại nên không thể thu hồi hoàn kho!");
+        }
+
+        validateStatusTransition(order, "RETURNING", actor);
+
+        LocalDateTime now = LocalDateTime.now();
+        String timeStr = now.format(TIME_FORMATTER);
+        String roleTitle = getRoleTitle(actor);
+
+        order.setCurrentStatus("RETURNING");
+        if (actor.getAssignedPostOfficeId() != null) {
+            order.setAssignedPostOfficeId(actor.getAssignedPostOfficeId());
+        }
+        Order saved = orderRepository.save(order);
+
+        Long whId = actor.getAssignedPostOfficeId() != null ? actor.getAssignedPostOfficeId() : order.getAssignedPostOfficeId();
+        Warehouse wh = whId != null ? warehouseRepository.findById(whId).orElse(null) : null;
+        String whName = wh != null ? wh.getName() + " (" + wh.getCode() + ")" : "Bưu cục thu hồi";
+
+        String reasonStr = (reason != null && !reason.isBlank()) ? reason.trim() : "Giao hàng không thành công sau các lần phát";
+        String noteSuffix = (note != null && !note.isBlank()) ? ". Ghi chú bưu cục: " + note.trim() : "";
+
+        String desc = String.format("Bưu cục %s đã quét mã thu hồi đơn hàng hoàn về kho vào lúc %s. Người thực hiện thu hồi: %s (%s - SĐT: %s). Lý do không giao được / hoàn hàng: %s%s. Kiện hàng đã lưu kho bưu cục an toàn chờ xử lý hoàn trả về cho Shop/Người gửi.",
+                whName,
+                timeStr,
+                actor.getFullName(),
+                roleTitle,
+                actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
+                reasonStr,
+                noteSuffix);
+
+        OrderTrackingLog logEntry = OrderTrackingLog.builder()
+                .trackingCode(cleanCode)
+                .status("RETURNING")
+                .locationType("POST_OFFICE")
+                .locationId(whId != null ? whId : 1L)
+                .locationName("Kho bưu cục: " + whName)
+                .description(desc)
+                .actorId(userId)
+                .actorName(actor.getFullName() + " (" + roleTitle + ")")
+                .deviceInfo("POST_OFFICE_RETURN_SCANNER")
+                .build();
+        trackingLogRepository.save(logEntry);
+
+        log.info("Bưu cục {} đã quét thu hồi đơn hàng {} sang RETURNING bởi {} lúc {}",
+                whName, cleanCode, actor.getFullName(), timeStr);
+        return mapToResponse(saved);
     }
 
     private boolean isMatchDate(Order o, String category, LocalDate startDate, LocalDate endDate) {
@@ -261,8 +415,8 @@ public class ShipperServiceImpl implements ShipperService {
                 }
             }
             case "DELIVERING" -> {
-                // Từ DELIVERING chỉ có thể sang: DELIVERED (giao thành công) hoặc DELIVERY_FAILED (giao thất bại)
-                if ("DELIVERED".equals(target) || "DELIVERY_FAILED".equals(target)) {
+                // Từ DELIVERING chỉ có thể sang: DELIVERED (giao thành công), DELIVERY_FAILED (giao thất bại) hoặc RETURNING (thu hồi hoàn kho)
+                if ("DELIVERED".equals(target) || "DELIVERY_FAILED".equals(target) || "RETURNING".equals(target)) {
                     isValidTransition = true;
                 }
             }

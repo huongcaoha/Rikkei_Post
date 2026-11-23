@@ -25,25 +25,36 @@ public class ShipperController {
     public ResponseEntity<ApiResponse<List<OrderResponse>>> getMyTasks(
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String taskType,
+            @RequestParam(required = false) Long shipperId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
         String selectedCategory = (category != null && !category.isBlank()) ? category : taskType;
-        List<OrderResponse> tasks = shipperService.getMyAssignedOrders(shipperId, selectedCategory, startDate, endDate);
+        List<OrderResponse> tasks = shipperService.getMyAssignedOrders(currentUserId, shipperId, selectedCategory, startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(tasks));
     }
 
     @GetMapping("/summary")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getSummary(
+            @RequestParam(required = false) Long shipperId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
-        Map<String, Object> summary = shipperService.getShipperSummary(shipperId, startDate, endDate);
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        Map<String, Object> summary = shipperService.getShipperSummary(currentUserId, shipperId, startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(summary));
+    }
+
+    @GetMapping("/post-office-shippers")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getPostOfficeShippers(
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        List<Map<String, Object>> shippers = shipperService.getPostOfficeShippers(currentUserId);
+        return ResponseEntity.ok(ApiResponse.success(shippers));
     }
 
     @PostMapping("/scan-pickup")
@@ -91,5 +102,18 @@ public class ShipperController {
         String note = payload.get("note");
         OrderResponse response = shipperService.updateDeliveryStatus(shipperId, trackingCode, status, note);
         return ResponseEntity.ok(ApiResponse.success(response, "Cập nhật trạng thái giao hàng thành công!"));
+    }
+
+    @PostMapping("/scan-return")
+    public ResponseEntity<ApiResponse<OrderResponse>> scanReturn(
+            @RequestBody Map<String, String> payload,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        String trackingCode = payload.get("trackingCode");
+        String reason = payload.get("reason");
+        String note = payload.get("note");
+        OrderResponse response = shipperService.scanReturnToWarehouse(currentUserId, trackingCode, reason, note);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã quét thu hồi đơn hàng hoàn về kho thành công!"));
     }
 }

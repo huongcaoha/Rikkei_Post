@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Input, Modal, Tabs, Tag, message, Row, Col, Space, DatePicker } from 'antd';
+import { Card, Button, Input, Modal, Tabs, Tag, message, Row, Col, Space, DatePicker, Select } from 'antd';
 import {
   Scan,
   PackageCheck,
@@ -18,6 +18,7 @@ import {
   AlertCircle,
   Check,
   Navigation,
+  UserCheck,
 } from 'lucide-react';
 import dayjs, { Dayjs } from 'dayjs';
 import { shipperApi } from '../api/shipper';
@@ -40,6 +41,10 @@ export const ShipperPortalPage: React.FC = () => {
   const [summary, setSummary] = useState<ShipperSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Danh sách bưu tá thuộc bưu cục & Shipper đang được chọn để lọc
+  const [shippersList, setShippersList] = useState<Array<{ id: number; fullName: string; phoneNumber?: string; username: string }>>([]);
+  const [selectedShipperId, setSelectedShipperId] = useState<number | undefined>(undefined);
+
   // 7 Phân loại theo yêu cầu người dùng
   const [activeTab, setActiveTab] = useState<string>('PICKUP_PENDING');
 
@@ -50,7 +55,13 @@ export const ShipperPortalPage: React.FC = () => {
 
   // Continuous Scanner Modal states
   const [isScanModalOpen, setIsScanModalOpen] = useState<boolean>(false);
-  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY'>('PICKUP');
+  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN'>('PICKUP');
+
+  // Modal thu hồi hoàn kho cho đơn không giao được
+  const [returnModalVisible, setReturnModalVisible] = useState<boolean>(false);
+  const [returnTrackingCode, setReturnTrackingCode] = useState<string>('');
+  const [returnReason, setReturnReason] = useState<string>('Khách hẹn lại nhiều lần / Không liên lạc được');
+  const [returnNote, setReturnNote] = useState<string>('');
 
   // Điều hướng chỉ đường Google Maps
   const openGoogleMapsDirections = (lat?: number, lng?: number, address?: string) => {
@@ -71,12 +82,23 @@ export const ShipperPortalPage: React.FC = () => {
   const [selectedTrackingCode, setSelectedTrackingCode] = useState<string>('');
   const [failedReason, setFailedReason] = useState<string>('Không liên lạc được với người nhận');
 
+  // Tải danh sách bưu tá thuộc bưu cục
+  useEffect(() => {
+    if (canInboundWarehouse) {
+      shipperApi.getPostOfficeShippers().then((data) => {
+        setShippersList(data || []);
+      }).catch((err) => {
+        console.warn('Lỗi tải danh sách bưu tá bưu cục:', err);
+      });
+    }
+  }, [canInboundWarehouse]);
+
   const loadTasksAndSummary = async () => {
     setLoading(true);
     try {
       const [taskList, summaryData] = await Promise.all([
-        shipperApi.getMyTasks(activeTab, startDate, endDate),
-        shipperApi.getSummary(startDate, endDate),
+        shipperApi.getMyTasks(activeTab, startDate, endDate, selectedShipperId),
+        shipperApi.getSummary(startDate, endDate, selectedShipperId),
       ]);
       setTasks(taskList);
       setSummary(summaryData);
@@ -97,7 +119,7 @@ export const ShipperPortalPage: React.FC = () => {
     return () => {
       window.removeEventListener('rikkei-order-updated', handleOrderUpdated);
     };
-  }, [activeTab, startDate, endDate]);
+  }, [activeTab, startDate, endDate, selectedShipperId]);
 
   const handleApplyPreset = (preset: 'today' | '7days' | '30days' | 'all') => {
     setDatePreset(preset);
@@ -129,7 +151,7 @@ export const ShipperPortalPage: React.FC = () => {
     }
   };
 
-  const handleOpenScanner = (mode: 'PICKUP' | 'INBOUND' | 'DELIVERY') => {
+  const handleOpenScanner = (mode: 'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN') => {
     setScanMode(mode);
     setIsScanModalOpen(true);
   };
@@ -162,6 +184,25 @@ export const ShipperPortalPage: React.FC = () => {
     }
   };
 
+  const openReturnModal = (trackingCode: string) => {
+    setReturnTrackingCode(trackingCode);
+    setReturnReason('Khách hẹn lại nhiều lần / Không nhận hàng');
+    setReturnNote('');
+    setReturnModalVisible(true);
+  };
+
+  const handleConfirmReturn = async () => {
+    if (!returnTrackingCode) return;
+    try {
+      await shipperApi.scanReturn(returnTrackingCode, returnReason, returnNote);
+      message.success(`Đã thu hồi hoàn kho thành công đơn ${returnTrackingCode}!`);
+      setReturnModalVisible(false);
+      loadTasksAndSummary();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Lỗi thu hồi hoàn kho!');
+    }
+  };
+
   const getStatusTag = (status: string) => {
     switch (status) {
       case 'CREATED':
@@ -190,7 +231,52 @@ export const ShipperPortalPage: React.FC = () => {
       label: (
         <span className="flex items-center space-x-1.5 font-bold">
           <PackagePlus size={16} className="text-blue-600" />
-          <span>Đơn cần lấy tại shop ({summary?.pickupPending ?? 0})</span>
+          <span>Đơn mới tạo chưa lấy ({summary?.pickupPending ?? 0})</span>
+        </span>
+      ),
+    },
+    {
+      key: 'IN_WAREHOUSE',
+      label: (
+        <span className="flex items-center space-x-1.5 font-bold">
+          <Building2 size={16} className="text-cyan-600" />
+          <span>Đơn đã quét mã nhập kho ({summary?.inWarehouse ?? 0})</span>
+        </span>
+      ),
+    },
+    {
+      key: 'DELIVERING',
+      label: (
+        <span className="flex items-center space-x-1.5 font-bold">
+          <Truck size={16} className="text-orange-600" />
+          <span>Đơn đang đi giao ({summary?.delivering ?? 0})</span>
+        </span>
+      ),
+    },
+    {
+      key: 'DELIVERED',
+      label: (
+        <span className="flex items-center space-x-1.5 font-bold">
+          <CheckCircle2 size={16} className="text-emerald-600" />
+          <span>Đơn đã giao xong ({summary?.delivered ?? 0})</span>
+        </span>
+      ),
+    },
+    {
+      key: 'DELIVERY_FAILED',
+      label: (
+        <span className="flex items-center space-x-1.5 font-bold">
+          <XCircle size={16} className="text-rose-600" />
+          <span>Đơn không giao được chờ hoàn ({summary?.deliveryFailed ?? 0})</span>
+        </span>
+      ),
+    },
+    {
+      key: 'COD_COLLECTED',
+      label: (
+        <span className="flex items-center space-x-1.5 font-bold">
+          <Coins size={16} className="text-yellow-600" />
+          <span>Tiền thu từ khách ({((summary?.totalCollected ?? summary?.totalCodCollected ?? 0) / 1000).toLocaleString()}k)</span>
         </span>
       ),
     },
@@ -203,51 +289,6 @@ export const ShipperPortalPage: React.FC = () => {
         </span>
       ),
     },
-    {
-      key: 'IN_WAREHOUSE',
-      label: (
-        <span className="flex items-center space-x-1.5 font-bold">
-          <Building2 size={16} className="text-cyan-600" />
-          <span>Đơn đã giao cho kho ({summary?.inWarehouse ?? 0})</span>
-        </span>
-      ),
-    },
-    {
-      key: 'DELIVERING',
-      label: (
-        <span className="flex items-center space-x-1.5 font-bold">
-          <Truck size={16} className="text-orange-600" />
-          <span>Đơn đã lấy ở kho mang đi giao ({summary?.delivering ?? 0})</span>
-        </span>
-      ),
-    },
-    {
-      key: 'DELIVERED',
-      label: (
-        <span className="flex items-center space-x-1.5 font-bold">
-          <CheckCircle2 size={16} className="text-emerald-600" />
-          <span>Đơn đã giao cho khách ({summary?.delivered ?? 0})</span>
-        </span>
-      ),
-    },
-    {
-      key: 'DELIVERY_FAILED',
-      label: (
-        <span className="flex items-center space-x-1.5 font-bold">
-          <XCircle size={16} className="text-rose-600" />
-          <span>Đơn không giao được ({summary?.deliveryFailed ?? 0})</span>
-        </span>
-      ),
-    },
-    {
-      key: 'COD_COLLECTED',
-      label: (
-        <span className="flex items-center space-x-1.5 font-bold">
-          <Coins size={16} className="text-yellow-600" />
-          <span>Số tiền đã thu được ({((summary?.totalCollected ?? summary?.totalCodCollected ?? 0) / 1000).toLocaleString()}k)</span>
-        </span>
-      ),
-    },
   ];
 
   return (
@@ -257,11 +298,11 @@ export const ShipperPortalPage: React.FC = () => {
         <div>
           <div className="flex items-center space-x-2 text-red-200 text-xs font-semibold uppercase tracking-wider">
             <Truck size={16} />
-            <span>Cổng Tác Nghiệp Bưu Tá & Giao Nhận Chuyên Nghiệp</span>
+            <span>{canInboundWarehouse ? 'Tác Nghiệp Quét Mã & Điều Hành Kho Bưu Cục' : 'Cổng Tác Nghiệp Bưu Tá & Giao Nhận Chuyên Nghiệp'}</span>
           </div>
           <h1 className="text-xl md:text-2xl font-black mt-1">Xin chào, {user?.fullName || 'Bưu tá'}!</h1>
           <p className="text-red-100 text-xs md:text-sm mt-1 max-w-xl">
-            Quản lý và theo dõi chính xác từng giai đoạn đơn hàng, quét lấy hàng và thống kê đối soát tiền thu tức thì.
+            Quản lý và theo dõi chính xác từng giai đoạn đơn hàng, quét lấy hàng, nhập xuất kho và thu hồi đơn chuyển hoàn.
           </p>
         </div>
 
@@ -273,7 +314,7 @@ export const ShipperPortalPage: React.FC = () => {
             onClick={() => handleOpenScanner('PICKUP')}
             className="bg-white text-red-700 hover:bg-gray-100 font-bold border-none h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
           >
-            Quét mã lấy hàng tại Shop
+            Quét lấy hàng tại Shop
           </Button>
 
           <Button
@@ -287,27 +328,38 @@ export const ShipperPortalPage: React.FC = () => {
           </Button>
 
           {canInboundWarehouse && (
-            <Button
-              size="large"
-              icon={<Building2 size={18} />}
-              onClick={() => handleOpenScanner('INBOUND')}
-              className="bg-red-800 text-white hover:bg-red-900 border-red-500 font-semibold h-11 px-4 rounded-xl flex items-center justify-center flex-1 md:flex-initial"
-            >
-              Quét nhập kho bưu cục
-            </Button>
+            <>
+              <Button
+                size="large"
+                icon={<Building2 size={18} />}
+                onClick={() => handleOpenScanner('INBOUND')}
+                className="bg-red-800 text-white hover:bg-red-900 border-red-500 font-semibold h-11 px-4 rounded-xl flex items-center justify-center flex-1 md:flex-initial"
+              >
+                Quét nhập kho bưu cục
+              </Button>
+              <Button
+                size="large"
+                type="primary"
+                icon={<RotateCcw size={18} />}
+                onClick={() => handleOpenScanner('RETURN')}
+                className="bg-orange-600 hover:bg-orange-700 text-white font-bold border-none h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
+              >
+                Quét mã thu hồi hoàn kho
+              </Button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Bộ Lọc Theo Ngày (Date Range Filter) */}
+      {/* Bộ Lọc Theo Ngày & Bưu Tá */}
       <Card className="rounded-2xl shadow-xs border-gray-200 bg-white p-2">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-          <div className="flex items-center space-x-2 text-gray-700 font-bold text-sm">
-            <Calendar size={18} className="text-red-600" />
-            <span>Lọc theo ngày tác nghiệp:</span>
-          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center space-x-2 text-gray-700 font-bold text-sm">
+              <Calendar size={18} className="text-red-600" />
+              <span>Thời gian:</span>
+            </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             {/* Các nút bấm nhanh thời gian */}
             <div className="flex items-center space-x-1 bg-gray-100 p-1 rounded-lg">
               <button
@@ -326,7 +378,7 @@ export const ShipperPortalPage: React.FC = () => {
                   datePreset === '7days' ? 'bg-red-600 text-white shadow-xs' : 'text-gray-600 hover:text-black'
                 }`}
               >
-                7 ngày qua
+                7 ngày
               </button>
               <button
                 type="button"
@@ -335,7 +387,7 @@ export const ShipperPortalPage: React.FC = () => {
                   datePreset === '30days' ? 'bg-red-600 text-white shadow-xs' : 'text-gray-600 hover:text-black'
                 }`}
               >
-                30 ngày qua
+                30 ngày
               </button>
               <button
                 type="button"
@@ -348,13 +400,12 @@ export const ShipperPortalPage: React.FC = () => {
               </button>
             </div>
 
-            {/* RangePicker chọn ngày tùy chỉnh */}
             <RangePicker
+              format="DD/MM/YYYY"
               value={startDate && endDate ? [dayjs(startDate), dayjs(endDate)] : null}
               onChange={handleRangePickerChange}
-              format="DD/MM/YYYY"
+              className="rounded-lg h-8 text-xs border-gray-300"
               placeholder={['Từ ngày', 'Đến ngày']}
-              className="rounded-lg h-9 text-xs"
             />
 
             {(startDate || endDate) && (
@@ -368,6 +419,28 @@ export const ShipperPortalPage: React.FC = () => {
               </Button>
             )}
           </div>
+
+          {/* Bộ lọc theo Shipper của kho bưu cục */}
+          {canInboundWarehouse && (
+            <div className="flex items-center space-x-2 w-full md:w-auto">
+              <UserCheck size={16} className="text-blue-600 shrink-0" />
+              <span className="text-xs font-bold text-gray-700 shrink-0">Bưu tá phụ trách:</span>
+              <Select
+                placeholder="Tất cả bưu tá bưu cục"
+                allowClear
+                value={selectedShipperId}
+                onChange={(val) => setSelectedShipperId(val)}
+                className="w-full md:w-60"
+                options={[
+                  { label: '🌟 Tất cả bưu tá bưu cục', value: undefined },
+                  ...shippersList.map((s) => ({
+                    label: `🛵 ${s.fullName} (${s.phoneNumber || s.username})`,
+                    value: s.id,
+                  })),
+                ]}
+              />
+            </div>
+          )}
         </div>
       </Card>
 
@@ -738,16 +811,33 @@ export const ShipperPortalPage: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Mục 6: Đơn không giao được -> Bưu tá có thể bấm đi phát lại */}
+                  {/* Mục 6: Đơn không giao được -> Bưu tá có thể bấm đi phát lại hoặc Quản lý kho thu hồi hoàn về */}
                   {task.currentStatus === 'DELIVERY_FAILED' && (
-                    <Button
-                      type="primary"
-                      icon={<RotateCcw size={16} />}
-                      onClick={() => handleQuickUpdateStatus(task.trackingCode, 'DELIVERING', 'Bưu tá lên lịch đi giao lại')}
-                      className="bg-rose-600 hover:bg-rose-700 font-bold h-10 w-full rounded-xl shadow-xs"
-                    >
-                      Giao lại đơn này
-                    </Button>
+                    <div className="flex flex-col gap-2 w-full">
+                      {canInboundWarehouse && (
+                        <Button
+                          type="primary"
+                          icon={<RotateCcw size={16} />}
+                          onClick={() => openReturnModal(task.trackingCode)}
+                          className="bg-orange-600 hover:bg-orange-700 font-bold h-9 w-full rounded-xl shadow-xs"
+                        >
+                          Thu hồi hoàn về kho
+                        </Button>
+                      )}
+                      <Button
+                        icon={<RotateCcw size={16} />}
+                        onClick={() => handleQuickUpdateStatus(task.trackingCode, 'DELIVERING', 'Bưu tá lên lịch đi giao lại')}
+                        className="bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold h-9 w-full rounded-xl border border-rose-200"
+                      >
+                        Giao lại đơn này
+                      </Button>
+                    </div>
+                  )}
+
+                  {task.currentStatus === 'RETURNING' && (
+                    <div className="w-full text-center py-2 px-3 bg-orange-50 text-orange-800 font-bold rounded-xl border border-orange-200 text-xs">
+                      Đã thu hồi hoàn kho - Đang lưu kho chờ trả Shop
+                    </div>
                   )}
 
                   {/* Mục 5 & 7: Đơn đã giao cho khách / Đã thu tiền */}
@@ -826,6 +916,81 @@ export const ShipperPortalPage: React.FC = () => {
         </div>
       </Modal>
 
+      {/* Modal Quét Mã Thu Hồi Đơn Hàng Hoàn Về Kho (POST_OFFICE_MANAGER / WAREHOUSE_STAFF) */}
+      <Modal
+        title={
+          <div className="flex items-center space-x-2 text-orange-600 font-bold">
+            <RotateCcw size={20} />
+            <span>Thu hồi đơn hàng hoàn về kho: {returnTrackingCode}</span>
+          </div>
+        }
+        open={returnModalVisible}
+        onOk={handleConfirmReturn}
+        onCancel={() => setReturnModalVisible(false)}
+        okText="Xác nhận thu hồi hoàn kho"
+        cancelText="Hủy bỏ"
+        okButtonProps={{ className: 'bg-orange-600 hover:bg-orange-700 font-bold' }}
+      >
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-gray-700">
+            Mã bưu gửi thu hồi: <strong className="font-mono text-orange-600 font-bold">{returnTrackingCode}</strong>
+          </p>
+
+          <div>
+            <label className="text-xs font-bold text-gray-600 uppercase block mb-1">
+              Chọn nhanh lý do thu hồi hoàn kho:
+            </label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {[
+                'Khách từ chối nhận hàng nhiều lần',
+                'Sai địa chỉ nhận / Không liên lạc được',
+                'Khách hủy đơn hàng / Đổi ý không mua',
+                'Hàng bị hư hỏng / Người nhận từ chối',
+                'Shop yêu cầu thu hồi hoàn gấp',
+              ].map((reason) => (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => setReturnReason(reason)}
+                  className={`text-xs px-2.5 py-1 rounded-md border transition text-left ${
+                    returnReason === reason
+                      ? 'bg-orange-50 border-orange-500 text-orange-700 font-bold'
+                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-gray-600 uppercase block mb-1">
+              Chi tiết lý do hoàn hàng (*):
+            </label>
+            <Input.TextArea
+              rows={2}
+              value={returnReason}
+              onChange={(e) => setReturnReason(e.target.value)}
+              placeholder="Nhập lý do tại sao không giao được nên hoàn về..."
+              className="rounded-lg"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-gray-600 uppercase block mb-1">
+              Ghi chú bưu cục khi nhập kho thu hồi:
+            </label>
+            <Input
+              value={returnNote}
+              onChange={(e) => setReturnNote(e.target.value)}
+              placeholder="Ví dụ: Đã nhận lại gói hàng từ bưu tá, nguyên vẹn..."
+              className="rounded-lg"
+            />
+          </div>
+        </div>
+      </Modal>
+
       {/* Continuous Scanner Modal */}
       <ContinuousScannerModal
         open={isScanModalOpen}
@@ -834,6 +999,7 @@ export const ShipperPortalPage: React.FC = () => {
         canInbound={canInboundWarehouse}
         canPickup={true}
         canDelivery={true}
+        canReturn={canInboundWarehouse}
         onOrderUpdated={loadTasksAndSummary}
       />
     </div>

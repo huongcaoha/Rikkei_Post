@@ -30,8 +30,7 @@ public class OrderController {
     @PostMapping
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @Valid @RequestBody CreateOrderRequest request,
-            @AuthenticationPrincipal CustomUserDetails userDetails
-    ) {
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
         Long merchantId = userDetails != null ? userDetails.getId() : 1L;
         OrderResponse response = orderService.createOrder(request, merchantId);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response, "Tạo đơn hàng thành công"));
@@ -40,11 +39,11 @@ public class OrderController {
     @PostMapping("/batch")
     public ResponseEntity<ApiResponse<BatchOrderResponse>> createBatchOrders(
             @Valid @RequestBody BatchOrderRequest request,
-            @AuthenticationPrincipal CustomUserDetails userDetails
-    ) {
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
         Long merchantId = userDetails != null ? userDetails.getId() : 1L;
         BatchOrderResponse response = orderService.createBatchOrders(request, merchantId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response, "Xử lý tạo lô đơn hàng hoàn tất"));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success(response, "Xử lý tạo lô đơn hàng hoàn tất"));
     }
 
     @GetMapping("/{trackingCode}")
@@ -58,8 +57,7 @@ public class OrderController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String status,
-            @AuthenticationPrincipal CustomUserDetails userDetails
-    ) {
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
         Long merchantId = userDetails != null ? userDetails.getId() : 1L;
         PageRequest pageRequest = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<OrderResponse> orders = orderService.getMerchantOrders(merchantId, status, pageRequest);
@@ -68,10 +66,11 @@ public class OrderController {
 
     @GetMapping("/merchant/dashboard-stats")
     public ResponseEntity<ApiResponse<DashboardStatsResponse>> getDashboardStats(
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate startDate,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate endDate,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        Long merchantId = userDetails != null ? userDetails.getId() : 1L;
-        DashboardStatsResponse stats = orderService.getDashboardStats(merchantId);
+        DashboardStatsResponse stats = orderService.getDashboardStats(userDetails, startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(stats));
     }
 
@@ -89,8 +88,7 @@ public class OrderController {
 
     @GetMapping("/default-sender-address")
     public ResponseEntity<ApiResponse<MerchantAddress>> getDefaultSenderAddress(
-            @AuthenticationPrincipal CustomUserDetails userDetails
-    ) {
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
         Long merchantId = userDetails != null ? userDetails.getId() : 1L;
         MerchantAddress address = orderService.getDefaultSenderAddress(merchantId);
         return ResponseEntity.ok(ApiResponse.success(address));
@@ -99,8 +97,7 @@ public class OrderController {
     @PostMapping("/default-sender-address")
     public ResponseEntity<ApiResponse<MerchantAddress>> saveDefaultSenderAddress(
             @RequestBody MerchantAddress address,
-            @AuthenticationPrincipal CustomUserDetails userDetails
-    ) {
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
         Long merchantId = userDetails != null ? userDetails.getId() : 1L;
         MerchantAddress saved = orderService.saveDefaultSenderAddress(address, merchantId);
         return ResponseEntity.ok(ApiResponse.success(saved, "Lưu thông tin người gửi mặc định thành công"));

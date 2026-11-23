@@ -31,8 +31,11 @@ export const orderApi = {
     return res.data.data;
   },
 
-  getDashboardStats: async (): Promise<DashboardStats> => {
-    const res = await apiClient.get('/orders/merchant/dashboard-stats');
+  getDashboardStats: async (startDate?: string, endDate?: string): Promise<DashboardStats> => {
+    const params: any = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const res = await apiClient.get('/orders/merchant/dashboard-stats', { params });
     return res.data.data;
   },
 

@@ -8,9 +8,13 @@ import java.util.Map;
 
 public interface ShipperService {
     List<OrderResponse> getMyAssignedOrders(Long shipperId, String category, LocalDate startDate, LocalDate endDate);
+    List<OrderResponse> getMyAssignedOrders(Long userId, Long filterShipperId, String category, LocalDate startDate, LocalDate endDate);
     Map<String, Object> getShipperSummary(Long shipperId, LocalDate startDate, LocalDate endDate);
+    Map<String, Object> getShipperSummary(Long userId, Long filterShipperId, LocalDate startDate, LocalDate endDate);
+    List<Map<String, Object>> getPostOfficeShippers(Long currentUserId);
     OrderResponse scanPickupOrder(Long shipperId, String trackingCode);
     OrderResponse scanInboundToPostOffice(Long shipperId, String trackingCode, Long warehouseId);
     OrderResponse scanOutForDelivery(Long shipperId, String trackingCode);
+    OrderResponse scanReturnToWarehouse(Long userId, String trackingCode, String reason, String note);
     OrderResponse updateDeliveryStatus(Long shipperId, String trackingCode, String status, String note);
 }

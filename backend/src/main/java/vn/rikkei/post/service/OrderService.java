@@ -10,6 +10,9 @@ import vn.rikkei.post.dto.order.OrderResponse;
 import vn.rikkei.post.entity.MerchantAddress;
 import vn.rikkei.post.entity.OrderTrackingLog;
 
+import vn.rikkei.post.security.CustomUserDetails;
+
+import java.time.LocalDate;
 import java.util.List;
 
 public interface OrderService {
@@ -18,6 +21,7 @@ public interface OrderService {
     OrderResponse getOrderByTrackingCode(String trackingCode);
     Page<OrderResponse> getMerchantOrders(Long merchantId, String status, Pageable pageable);
     DashboardStatsResponse getDashboardStats(Long merchantId);
+    DashboardStatsResponse getDashboardStats(CustomUserDetails currentUser, LocalDate startDate, LocalDate endDate);
     List<OrderTrackingLog> getOrderTimeline(String trackingCode);
     MerchantAddress getDefaultSenderAddress(Long merchantId);
     MerchantAddress saveDefaultSenderAddress(MerchantAddress request, Long merchantId);

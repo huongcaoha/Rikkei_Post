@@ -242,7 +242,7 @@ export const CreateOrderPage: React.FC = () => {
         codAmount: 450000,
         paymentParty: 'RECEIVER',
         serviceType: 'STANDARD',
-        pickupType: 'DROP_OFF',
+        pickupType: 'DOOR_PICKUP',
         notes: 'Cho xem hàng, không thử',
       };
 
