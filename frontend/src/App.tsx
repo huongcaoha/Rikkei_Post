@@ -12,6 +12,7 @@ import { PrintLabelPage } from './pages/PrintLabelPage';
 import { TrackOrderPage } from './pages/TrackOrderPage';
 import { StaffManagementPage } from './pages/StaffManagementPage';
 import { DeliveryRoutesPage } from './pages/DeliveryRoutesPage';
+import { WarehouseManagementPage } from './pages/WarehouseManagementPage';
 import { ShipperPortalPage } from './pages/ShipperPortalPage';
 import { ProfilePage } from './pages/ProfilePage';
 
@@ -54,6 +55,7 @@ export const App: React.FC = () => {
               <Route path="/orders/print/:trackingCode" element={<PrintLabelPage />} />
               <Route path="/admin/staff" element={<StaffManagementPage />} />
               <Route path="/admin/routes" element={<DeliveryRoutesPage />} />
+              <Route path="/admin/warehouses" element={<WarehouseManagementPage />} />
               <Route path="/shipper/tasks" element={<ShipperPortalPage />} />
               <Route path="/profile" element={<ProfilePage />} />
             </Route>

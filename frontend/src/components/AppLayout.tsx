@@ -16,6 +16,7 @@ import {
   Menu as MenuIcon,
   Scan,
   UserCheck,
+  Building2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
@@ -121,6 +122,15 @@ export const AppLayout: React.FC = () => {
       key: '/admin/routes',
       icon: <RouteIcon size={18} />,
       label: isPostOfficeManager ? 'Phân tuyến bưu tá bưu cục' : 'Quản lý tuyến đường & Bưu tá',
+    });
+  }
+
+  // Quản lý kho bưu cục (Admin & Branch Manager)
+  if (isAdmin || isBranchManager) {
+    menuItems.push({
+      key: '/admin/warehouses',
+      icon: <Building2 size={18} />,
+      label: isAdmin ? 'Quản lý kho & Bưu cục' : 'Quản lý bưu cục Chi nhánh',
     });
   }
 

@@ -65,6 +65,9 @@ export interface Warehouse {
   provinceId: number;
   districtId?: number;
   address: string;
+  latitude: number;
+  longitude: number;
+  capacityPackages?: number;
   isActive: boolean;
 }
 
