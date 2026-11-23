@@ -11,5 +11,6 @@ public interface ShipperService {
     Map<String, Object> getShipperSummary(Long shipperId, LocalDate startDate, LocalDate endDate);
     OrderResponse scanPickupOrder(Long shipperId, String trackingCode);
     OrderResponse scanInboundToPostOffice(Long shipperId, String trackingCode, Long warehouseId);
+    OrderResponse scanOutForDelivery(Long shipperId, String trackingCode);
     OrderResponse updateDeliveryStatus(Long shipperId, String trackingCode, String status, String note);
 }

@@ -29,6 +29,11 @@ export const shipperApi = {
     return res.data.data;
   },
 
+  scanDelivery: async (trackingCode: string): Promise<Order> => {
+    const res = await apiClient.post('/shipper/scan-delivery', { trackingCode });
+    return res.data.data;
+  },
+
   updateStatus: async (trackingCode: string, status: string, note?: string): Promise<Order> => {
     const res = await apiClient.post('/shipper/update-status', { trackingCode, status, note });
     return res.data.data;

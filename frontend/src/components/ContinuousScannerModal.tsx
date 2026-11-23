@@ -18,9 +18,10 @@ import { Order } from '../types';
 interface ContinuousScannerModalProps {
   open: boolean;
   onClose: () => void;
-  defaultMode?: 'PICKUP' | 'INBOUND';
+  defaultMode?: 'PICKUP' | 'INBOUND' | 'DELIVERY';
   canInbound?: boolean;
   canPickup?: boolean;
+  canDelivery?: boolean;
   onOrderUpdated?: () => void;
 }
 
@@ -36,9 +37,10 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   defaultMode = 'PICKUP',
   canInbound = false,
   canPickup = true,
+  canDelivery = true,
   onOrderUpdated,
 }) => {
-  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND'>(defaultMode);
+  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY'>(defaultMode);
   // Yêu cầu: Mặc định là quét mã bằng CAMERA
   const [inputMode, setInputMode] = useState<'CAMERA' | 'MANUAL'>('CAMERA');
   const [barcodeInput, setBarcodeInput] = useState<string>('');
@@ -62,13 +64,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   // Cập nhật chế độ mặc định khi mở modal
   useEffect(() => {
     if (open) {
-      if (!canPickup && canInbound) {
-        setScanMode('INBOUND');
-      } else if (canPickup && !canInbound) {
-        setScanMode('PICKUP');
-      } else {
-        setScanMode(defaultMode);
-      }
+      setScanMode(defaultMode);
       // Luôn đặt mặc định là CAMERA khi mở
       setInputMode('CAMERA');
       setBarcodeInput('');
@@ -77,7 +73,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
     } else {
       stopCamera();
     }
-  }, [open, defaultMode, canInbound, canPickup]);
+  }, [open, defaultMode]);
 
   // Điều khiển camera khi chuyển tab Camera / Nhập tay
   useEffect(() => {
@@ -235,6 +231,9 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       if (scanMode === 'PICKUP') {
         updatedOrder = await shipperApi.scanPickup(code);
         successMsg = `Đã lấy hàng thành công đơn [${code}] từ Shop!`;
+      } else if (scanMode === 'DELIVERY') {
+        updatedOrder = await shipperApi.scanDelivery(code);
+        successMsg = `Đã xuất kho lấy đơn [${code}] mang đi giao thành công!`;
       } else {
         updatedOrder = await shipperApi.scanInbound(code);
         successMsg = `Đã nhập kho bưu cục thành công đơn [${code}]!`;
@@ -243,9 +242,13 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       playSound(true);
 
       // Hiển thị Popup thành công kèm nút OK
+      let successTitle = 'Nhập Kho Thành Công';
+      if (scanMode === 'PICKUP') successTitle = 'Lấy Hàng Thành Công';
+      else if (scanMode === 'DELIVERY') successTitle = 'Xuất Kho Đi Giao Thành Công';
+
       setPopupFeedback({
         type: 'SUCCESS',
-        title: scanMode === 'PICKUP' ? 'Lấy Hàng Thành Công' : 'Nhập Kho Thành Công',
+        title: successTitle,
         message: successMsg,
       });
 
@@ -274,6 +277,30 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
     }
   };
 
+  const getHeaderTitle = () => {
+    if (scanMode === 'DELIVERY') return 'Quét Xuất Kho Lấy Đơn Đi Giao';
+    if (scanMode === 'PICKUP') return 'Quét Mã Lấy Hàng Tại Shop';
+    return 'Quét Mã Nhập Kho Bưu Cục';
+  };
+
+  const getHeaderColor = () => {
+    if (scanMode === 'DELIVERY') return 'bg-blue-600';
+    if (scanMode === 'PICKUP') return 'bg-amber-600';
+    return 'bg-red-600';
+  };
+
+  // Các chế độ quét khả dụng
+  const modeOptions = [];
+  if (canPickup) {
+    modeOptions.push({ label: 'Lấy hàng tại Shop', value: 'PICKUP', icon: <Truck size={14} /> });
+  }
+  if (canDelivery) {
+    modeOptions.push({ label: 'Lấy đơn đi giao', value: 'DELIVERY', icon: <Scan size={14} /> });
+  }
+  if (canInbound) {
+    modeOptions.push({ label: 'Nhập kho bưu cục', value: 'INBOUND', icon: <Building2 size={14} /> });
+  }
+
   return (
     <>
       <Modal
@@ -286,16 +313,10 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         title={
           <div className="flex items-center justify-between pr-6 border-b pb-3">
             <div className="flex items-center space-x-2 text-base font-bold text-gray-900">
-              <div
-                className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${
-                  scanMode === 'PICKUP' ? 'bg-amber-600' : 'bg-red-600'
-                }`}
-              >
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${getHeaderColor()}`}>
                 <Scan size={18} />
               </div>
-              <span>
-                {scanMode === 'PICKUP' ? 'Quét Mã Lấy Hàng (Bưu Tá)' : 'Quét Mã Nhập Kho (Kho Vận)'}
-              </span>
+              <span>{getHeaderTitle()}</span>
             </div>
 
             <Button
@@ -310,17 +331,14 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         }
       >
         <div className="pt-2 space-y-4">
-          {/* Lựa chọn vai trò nếu có cả 2 quyền (Quản lý) */}
-          {canPickup && canInbound && (
+          {/* Lựa chọn vai trò / chế độ quét */}
+          {modeOptions.length > 1 && (
             <div className="bg-gray-50 p-2 rounded-xl flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-600 ml-1">Chế độ quét:</span>
               <Segmented
                 value={scanMode}
                 onChange={(val) => setScanMode(val as any)}
-                options={[
-                  { label: 'Quét lấy hàng tại Shop', value: 'PICKUP', icon: <Truck size={14} /> },
-                  { label: 'Quét nhập kho bưu cục', value: 'INBOUND', icon: <Building2 size={14} /> },
-                ]}
+                options={modeOptions}
                 className="font-medium text-xs bg-white shadow-xs"
               />
             </div>

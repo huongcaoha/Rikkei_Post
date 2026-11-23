@@ -77,11 +77,15 @@ export interface Order {
   senderAddress: string;
   senderProvinceId?: number;
   senderWardName?: string;
+  senderLat?: number;
+  senderLng?: number;
   receiverName: string;
   receiverPhone: string;
   receiverAddress: string;
   receiverProvinceId?: number;
   receiverWardName?: string;
+  receiverLat?: number;
+  receiverLng?: number;
   itemName: string;
   itemValue: number;
   actualWeightGram: number;
@@ -119,6 +123,8 @@ export interface CreateOrderRequest {
   senderWardId?: number;
   senderWardName?: string;
   saveAsDefaultSender?: boolean;
+  senderLat?: number;
+  senderLng?: number;
   receiverName: string;
   receiverPhone: string;
   receiverAddress: string;
@@ -126,6 +132,8 @@ export interface CreateOrderRequest {
   receiverDistrictId?: number;
   receiverWardId?: number;
   receiverWardName: string;
+  receiverLat?: number;
+  receiverLng?: number;
   itemName: string;
   itemValue: number;
   actualWeightGram: number;

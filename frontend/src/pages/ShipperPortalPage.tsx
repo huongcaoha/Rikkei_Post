@@ -17,6 +17,7 @@ import {
   Banknote,
   AlertCircle,
   Check,
+  Navigation,
 } from 'lucide-react';
 import dayjs, { Dayjs } from 'dayjs';
 import { shipperApi } from '../api/shipper';
@@ -49,7 +50,21 @@ export const ShipperPortalPage: React.FC = () => {
 
   // Continuous Scanner Modal states
   const [isScanModalOpen, setIsScanModalOpen] = useState<boolean>(false);
-  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND'>('PICKUP');
+  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY'>('PICKUP');
+
+  // Điều hướng chỉ đường Google Maps
+  const openGoogleMapsDirections = (lat?: number, lng?: number, address?: string) => {
+    let url = 'https://www.google.com/maps/dir/?api=1';
+    if (lat && lng) {
+      url += `&destination=${lat},${lng}`;
+    } else if (address) {
+      url += `&destination=${encodeURIComponent(address)}`;
+    } else {
+      message.warning('Không có thông tin địa chỉ hoặc tọa độ để chỉ đường!');
+      return;
+    }
+    window.open(url, '_blank');
+  };
 
   // Modal báo giao hàng thất bại
   const [failedModalVisible, setFailedModalVisible] = useState<boolean>(false);
@@ -114,7 +129,7 @@ export const ShipperPortalPage: React.FC = () => {
     }
   };
 
-  const handleOpenScanner = (mode: 'PICKUP' | 'INBOUND') => {
+  const handleOpenScanner = (mode: 'PICKUP' | 'INBOUND' | 'DELIVERY') => {
     setScanMode(mode);
     setIsScanModalOpen(true);
   };
@@ -256,9 +271,19 @@ export const ShipperPortalPage: React.FC = () => {
             type="primary"
             icon={<Scan size={18} />}
             onClick={() => handleOpenScanner('PICKUP')}
-            className="bg-white text-red-700 hover:bg-gray-100 font-bold border-none h-11 px-5 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
+            className="bg-white text-red-700 hover:bg-gray-100 font-bold border-none h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
           >
             Quét mã lấy hàng tại Shop
+          </Button>
+
+          <Button
+            size="large"
+            type="primary"
+            icon={<Truck size={18} />}
+            onClick={() => handleOpenScanner('DELIVERY')}
+            className="bg-amber-400 hover:bg-amber-300 text-gray-900 font-bold border-none h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
+          >
+            Quét mã lấy đơn đi giao
           </Button>
 
           {canInboundWarehouse && (
@@ -555,45 +580,73 @@ export const ShipperPortalPage: React.FC = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                     {/* Shop / Người gửi */}
-                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                      <div className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
-                        <span>Shop / Người gửi:</span>
+                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex flex-col justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
+                          <span>Shop / Người gửi:</span>
+                          {task.senderLat && task.senderLng && (
+                            <Tag color="cyan" className="text-[10px] m-0 font-normal">📍 GPS</Tag>
+                          )}
+                        </div>
+                        <div className="font-bold text-gray-800 text-sm mt-0.5">{task.senderName}</div>
+                        <div className="text-xs text-gray-600 flex items-center mt-1">
+                          <Phone size={12} className="mr-1.5 text-blue-500 shrink-0" />
+                          <a href={`tel:${task.senderPhone}`} className="text-blue-600 font-semibold hover:underline">
+                            {task.senderPhone}
+                          </a>
+                        </div>
+                        <div className="text-xs text-gray-600 flex items-start mt-1">
+                          <MapPin size={12} className="mr-1.5 text-red-500 shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">
+                            {task.senderAddress}
+                            {task.senderWardName ? `, ${task.senderWardName}` : ''}
+                          </span>
+                        </div>
                       </div>
-                      <div className="font-bold text-gray-800 text-sm mt-0.5">{task.senderName}</div>
-                      <div className="text-xs text-gray-600 flex items-center mt-1">
-                        <Phone size={12} className="mr-1.5 text-blue-500 shrink-0" />
-                        <a href={`tel:${task.senderPhone}`} className="text-blue-600 font-semibold hover:underline">
-                          {task.senderPhone}
-                        </a>
-                      </div>
-                      <div className="text-xs text-gray-600 flex items-start mt-1">
-                        <MapPin size={12} className="mr-1.5 text-red-500 shrink-0 mt-0.5" />
-                        <span className="line-clamp-2">
-                          {task.senderAddress}
-                          {task.senderWardName ? `, ${task.senderWardName}` : ''}
-                        </span>
-                      </div>
+
+                      <Button
+                        size="small"
+                        icon={<Navigation size={12} className="text-blue-500" />}
+                        onClick={() => openGoogleMapsDirections(task.senderLat, task.senderLng, task.senderAddress + (task.senderWardName ? ', ' + task.senderWardName : ''))}
+                        className="text-xs font-semibold text-blue-600 border-blue-200 hover:bg-blue-50 mt-2 self-start flex items-center"
+                      >
+                        Chỉ đường đến Shop
+                      </Button>
                     </div>
 
                     {/* Người nhận */}
-                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                      <div className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
-                        <span>Người nhận / Khách:</span>
+                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex flex-col justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
+                          <span>Người nhận / Khách:</span>
+                          {task.receiverLat && task.receiverLng && (
+                            <Tag color="cyan" className="text-[10px] m-0 font-normal">📍 GPS</Tag>
+                          )}
+                        </div>
+                        <div className="font-bold text-gray-800 text-sm mt-0.5">{task.receiverName}</div>
+                        <div className="text-xs text-gray-600 flex items-center mt-1">
+                          <Phone size={12} className="mr-1.5 text-blue-500 shrink-0" />
+                          <a href={`tel:${task.receiverPhone}`} className="text-blue-600 font-semibold hover:underline">
+                            {task.receiverPhone}
+                          </a>
+                        </div>
+                        <div className="text-xs text-gray-600 flex items-start mt-1">
+                          <MapPin size={12} className="mr-1.5 text-red-500 shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">
+                            {task.receiverAddress}
+                            {task.receiverWardName ? `, ${task.receiverWardName}` : ''}
+                          </span>
+                        </div>
                       </div>
-                      <div className="font-bold text-gray-800 text-sm mt-0.5">{task.receiverName}</div>
-                      <div className="text-xs text-gray-600 flex items-center mt-1">
-                        <Phone size={12} className="mr-1.5 text-blue-500 shrink-0" />
-                        <a href={`tel:${task.receiverPhone}`} className="text-blue-600 font-semibold hover:underline">
-                          {task.receiverPhone}
-                        </a>
-                      </div>
-                      <div className="text-xs text-gray-600 flex items-start mt-1">
-                        <MapPin size={12} className="mr-1.5 text-red-500 shrink-0 mt-0.5" />
-                        <span className="line-clamp-2">
-                          {task.receiverAddress}
-                          {task.receiverWardName ? `, ${task.receiverWardName}` : ''}
-                        </span>
-                      </div>
+
+                      <Button
+                        size="small"
+                        icon={<Navigation size={12} className="text-emerald-500" />}
+                        onClick={() => openGoogleMapsDirections(task.receiverLat, task.receiverLng, task.receiverAddress + (task.receiverWardName ? ', ' + task.receiverWardName : ''))}
+                        className="text-xs font-semibold text-emerald-600 border-emerald-200 hover:bg-emerald-50 mt-2 self-start flex items-center"
+                      >
+                        Chỉ đường đến người nhận
+                      </Button>
                     </div>
                   </div>
 
@@ -655,16 +708,12 @@ export const ShipperPortalPage: React.FC = () => {
                     </Button>
                   )}
 
-                  {/* Mục 3: Đơn đã giao cho kho -> Bưu tá bấm bắt đầu lấy đi giao */}
+                  {/* Mục 3: Đơn đã giao cho kho -> Đã loại bỏ nút lấy đi giao thủ công, chuyển sang quét mã code */}
                   {task.currentStatus === 'AT_SORTING_HUB' && (
-                    <Button
-                      type="primary"
-                      icon={<Truck size={16} />}
-                      onClick={() => handleQuickUpdateStatus(task.trackingCode, 'DELIVERING', 'Bưu tá xuất kho mang đi giao')}
-                      className="bg-blue-600 hover:bg-blue-700 font-bold h-10 w-full rounded-xl shadow-xs"
-                    >
-                      Lấy hàng đi giao
-                    </Button>
+                    <div className="w-full text-center py-2.5 px-3 bg-cyan-50 text-cyan-800 font-bold rounded-xl border border-cyan-200 text-xs flex items-center justify-center space-x-1.5">
+                      <Scan size={14} className="text-cyan-700" />
+                      <span>Đã lưu kho - Quét mã đi giao</span>
+                    </div>
                   )}
 
                   {/* Mục 4: Đơn đã lấy ở kho mang đi giao -> Giao thành công hoặc Thất bại */}
@@ -784,6 +833,7 @@ export const ShipperPortalPage: React.FC = () => {
         defaultMode={scanMode}
         canInbound={canInboundWarehouse}
         canPickup={true}
+        canDelivery={true}
         onOrderUpdated={loadTasksAndSummary}
       />
     </div>

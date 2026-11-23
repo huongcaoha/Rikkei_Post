@@ -20,12 +20,16 @@ public class OrderResponse {
     private String senderAddress;
     private Integer senderProvinceId;
     private String senderWardName;
+    private Double senderLat;
+    private Double senderLng;
 
     private String receiverName;
     private String receiverPhone;
     private String receiverAddress;
     private Integer receiverProvinceId;
     private String receiverWardName;
+    private Double receiverLat;
+    private Double receiverLng;
 
     private String itemName;
     private BigDecimal itemValue;

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Form, Input, InputNumber, Select, Radio, Button, Card, Divider, message, Spin, Checkbox, Tooltip, Tag } from 'antd';
-import { Package, User, MapPin, Calculator, CheckCircle, ArrowLeft, BookmarkCheck, RotateCcw, Truck } from 'lucide-react';
+import { Form, Input, InputNumber, Select, Radio, Button, Card, Divider, message, Spin, Checkbox, Tooltip, Tag, Space } from 'antd';
+import { Package, User, MapPin, Calculator, CheckCircle, ArrowLeft, BookmarkCheck, RotateCcw, Truck, Crosshair, Navigation, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { pricingApi } from '../api/pricing';
 import { orderApi } from '../api/order';
 import { locationApi } from '../api/location';
 import { PriceEstimate, CreateOrderRequest, Ward } from '../types';
+import { LocationPickerModal } from '../components/LocationPickerModal';
 
 const STORAGE_SENDER_KEY = 'rkp_saved_sender_info';
 
@@ -34,6 +35,51 @@ export const CreateOrderPage: React.FC = () => {
   const [calculating, setCalculating] = useState(false);
   const [priceEstimate, setPriceEstimate] = useState<PriceEstimate | null>(null);
   const [merchantTotalOrders, setMerchantTotalOrders] = useState<number>(0);
+
+  // Tọa độ GPS & Modal bản đồ vị trí
+  const [senderLocation, setSenderLocation] = useState<{ lat?: number; lng?: number } | null>(null);
+  const [receiverLocation, setReceiverLocation] = useState<{ lat?: number; lng?: number } | null>(null);
+  const [mapModalTarget, setMapModalTarget] = useState<'sender' | 'receiver' | null>(null);
+
+  // Lấy GPS hiện tại cho Người gửi (Shop)
+  const handleGetSenderGps = () => {
+    if (!navigator.geolocation) {
+      message.error('Trình duyệt không hỗ trợ lấy vị trí GPS!');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setSenderLocation({ lat, lng });
+        form.setFieldValue('senderLat', lat);
+        form.setFieldValue('senderLng', lng);
+        message.success(`Đã lấy vị trí GPS của Shop thành công (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      },
+      () => message.warning('Không thể lấy vị trí GPS (vui lòng bật định vị trên thiết bị/trình duyệt).'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  // Lấy GPS hiện tại cho Người nhận (Khách hàng)
+  const handleGetReceiverGps = () => {
+    if (!navigator.geolocation) {
+      message.error('Trình duyệt không hỗ trợ lấy vị trí GPS!');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setReceiverLocation({ lat, lng });
+        form.setFieldValue('receiverLat', lat);
+        form.setFieldValue('receiverLng', lng);
+        message.success(`Đã lấy vị trí GPS của Người nhận thành công (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      },
+      () => message.warning('Không thể lấy vị trí GPS (vui lòng bật định vị trên thiết bị/trình duyệt).'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   // Danh mục Tỉnh / Thành phố từ cơ sở dữ liệu
   const [provinces, setProvinces] = useState<{ id: number; name: string }[]>(INITIAL_PROVINCES);
@@ -272,6 +318,10 @@ export const CreateOrderPage: React.FC = () => {
       // 2. Gửi dữ liệu tạo đơn chuẩn hóa: loại bỏ hoàn toàn mã quận/huyện
       const payload: CreateOrderRequest = {
         ...values,
+        senderLat: senderLocation?.lat || values.senderLat,
+        senderLng: senderLocation?.lng || values.senderLng,
+        receiverLat: receiverLocation?.lat || values.receiverLat,
+        receiverLng: receiverLocation?.lng || values.receiverLng,
         senderDistrictId: 0,
         senderWardId: 0,
         receiverDistrictId: 0,
@@ -389,13 +439,59 @@ export const CreateOrderPage: React.FC = () => {
               </Form.Item>
             </div>
 
-            <Form.Item
-              name="senderAddress"
-              label="Địa chỉ chi tiết người gửi (Số nhà, tên đường, tòa nhà/ngõ ngách)"
-              rules={[{ required: true, message: 'Vui lòng nhập địa chỉ chi tiết người gửi' }]}
-            >
-              <Input placeholder="Ví dụ: Số 10 Phố Chùa Bộc, Đống Đa, Hà Nội" />
-            </Form.Item>
+            {/* Địa chỉ chi tiết người gửi kèm Định vị GPS & Chọn bản đồ */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-sm font-medium text-gray-800">
+                  <span className="text-red-500 mr-1">*</span>Địa chỉ chi tiết người gửi (Số nhà, tên đường):
+                </label>
+                <div className="flex items-center space-x-1.5">
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<Crosshair size={14} className="text-red-600" />}
+                    onClick={handleGetSenderGps}
+                    className="p-0 h-auto text-xs text-red-600 font-semibold hover:text-red-700 flex items-center"
+                  >
+                    Vị trí hiện tại
+                  </Button>
+                  <span className="text-gray-300">|</span>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<MapPin size={14} className="text-blue-600" />}
+                    onClick={() => setMapModalTarget('sender')}
+                    className="p-0 h-auto text-xs text-blue-600 font-semibold hover:text-blue-700 flex items-center"
+                  >
+                    Chọn trên bản đồ
+                  </Button>
+                </div>
+              </div>
+
+              <Form.Item
+                name="senderAddress"
+                rules={[{ required: true, message: 'Vui lòng nhập địa chỉ chi tiết người gửi' }]}
+                className="mb-2"
+              >
+                <Input placeholder="Ví dụ: Số 10 Phố Chùa Bộc, Đống Đa, Hà Nội" />
+              </Form.Item>
+
+              {senderLocation?.lat && senderLocation?.lng && (
+                <div className="mb-3 flex items-center space-x-2 text-xs">
+                  <Tag color="cyan" className="font-mono">
+                    📍 Tọa độ GPS Shop: [{senderLocation.lat.toFixed(5)}, {senderLocation.lng.toFixed(5)}]
+                  </Tag>
+                  <a
+                    href={`https://www.google.com/maps?q=${senderLocation.lat},${senderLocation.lng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline flex items-center"
+                  >
+                    Xem trên Google Map <ExternalLink size={11} className="ml-0.5" />
+                  </a>
+                </div>
+              )}
+            </div>
 
             {/* Checkbox lưu thông tin người gửi làm mặc định */}
             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex items-center justify-between">
@@ -462,13 +558,59 @@ export const CreateOrderPage: React.FC = () => {
               </Form.Item>
             </div>
 
-            <Form.Item
-              name="receiverAddress"
-              label="Địa chỉ chi tiết người nhận (Số nhà, tên đường, tòa nhà/ngõ ngách)"
-              rules={[{ required: true, message: 'Vui lòng nhập địa chỉ chi tiết người nhận' }]}
-            >
-              <Input placeholder="Ví dụ: Số 25 Lê Duẩn, Bến Nghé, Quận 1" />
-            </Form.Item>
+            {/* Địa chỉ chi tiết người nhận kèm Định vị GPS & Chọn bản đồ */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-sm font-medium text-gray-800">
+                  <span className="text-red-500 mr-1">*</span>Địa chỉ chi tiết người nhận (Số nhà, tên đường):
+                </label>
+                <div className="flex items-center space-x-1.5">
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<Crosshair size={14} className="text-red-600" />}
+                    onClick={handleGetReceiverGps}
+                    className="p-0 h-auto text-xs text-red-600 font-semibold hover:text-red-700 flex items-center"
+                  >
+                    Vị trí hiện tại
+                  </Button>
+                  <span className="text-gray-300">|</span>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<MapPin size={14} className="text-blue-600" />}
+                    onClick={() => setMapModalTarget('receiver')}
+                    className="p-0 h-auto text-xs text-blue-600 font-semibold hover:text-blue-700 flex items-center"
+                  >
+                    Chọn trên bản đồ
+                  </Button>
+                </div>
+              </div>
+
+              <Form.Item
+                name="receiverAddress"
+                rules={[{ required: true, message: 'Vui lòng nhập địa chỉ chi tiết người nhận' }]}
+                className="mb-2"
+              >
+                <Input placeholder="Ví dụ: Số 25 Lê Duẩn, Bến Nghé, Quận 1" />
+              </Form.Item>
+
+              {receiverLocation?.lat && receiverLocation?.lng && (
+                <div className="mb-3 flex items-center space-x-2 text-xs">
+                  <Tag color="cyan" className="font-mono">
+                    📍 Tọa độ GPS Người nhận: [{receiverLocation.lat.toFixed(5)}, {receiverLocation.lng.toFixed(5)}]
+                  </Tag>
+                  <a
+                    href={`https://www.google.com/maps?q=${receiverLocation.lat},${receiverLocation.lng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline flex items-center"
+                  >
+                    Xem trên Google Map <ExternalLink size={11} className="ml-0.5" />
+                  </a>
+                </div>
+              )}
+            </div>
           </Card>
 
           {/* 3. Bưu gửi, Phương thức lấy hàng & Gói cước */}
@@ -690,6 +832,32 @@ export const CreateOrderPage: React.FC = () => {
           </Card>
         </div>
       </Form>
+
+      {/* Modal chọn vị trí trên bản đồ tương tác / Google Maps */}
+      <LocationPickerModal
+        open={mapModalTarget !== null}
+        onClose={() => setMapModalTarget(null)}
+        title={mapModalTarget === 'sender' ? 'Chọn Vị Trí Shop / Người Gửi Trên Bản Đồ' : 'Chọn Vị Trí Người Nhận Trên Bản Đồ'}
+        initialLat={mapModalTarget === 'sender' ? senderLocation?.lat : receiverLocation?.lat}
+        initialLng={mapModalTarget === 'sender' ? senderLocation?.lng : receiverLocation?.lng}
+        onSelectLocation={(lat, lng, addressText) => {
+          if (mapModalTarget === 'sender') {
+            setSenderLocation({ lat, lng });
+            form.setFieldValue('senderLat', lat);
+            form.setFieldValue('senderLng', lng);
+            if (addressText && !form.getFieldValue('senderAddress')) {
+              form.setFieldValue('senderAddress', addressText);
+            }
+          } else {
+            setReceiverLocation({ lat, lng });
+            form.setFieldValue('receiverLat', lat);
+            form.setFieldValue('receiverLng', lng);
+            if (addressText && !form.getFieldValue('receiverAddress')) {
+              form.setFieldValue('receiverAddress', addressText);
+            }
+          }
+        }}
+      />
     </div>
   );
 };

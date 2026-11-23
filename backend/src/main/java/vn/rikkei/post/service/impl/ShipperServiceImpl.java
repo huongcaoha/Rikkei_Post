@@ -214,6 +214,110 @@ public class ShipperServiceImpl implements ShipperService {
         return true;
     }
 
+    private void validateStatusTransition(Order order, String newStatus, User actor) {
+        String current = order.getCurrentStatus() != null ? order.getCurrentStatus().toUpperCase().trim() : "CREATED";
+        String target = newStatus != null ? newStatus.toUpperCase().trim() : "";
+
+        if (current.equals(target)) {
+            throw new IllegalStateException("Đơn hàng [" + order.getTrackingCode() + "] hiện đã ở trạng thái [" + current + "], không cần cập nhật lại.");
+        }
+
+        // 1. Kiểm tra Terminal states (Trạng thái kết thúc tuyệt đối không được sửa đổi)
+        if ("DELIVERED".equals(current)) {
+            throw new IllegalStateException("Đơn hàng [" + order.getTrackingCode() + "] ĐÃ GIAO THÀNH CÔNG (DELIVERED). Đây là trạng thái hoàn tất cuối cùng, tuyệt đối không được phép chỉnh sửa, hủy hoặc chuyển về trạng thái trước!");
+        }
+        if ("CANCELLED".equals(current)) {
+            throw new IllegalStateException("Đơn hàng [" + order.getTrackingCode() + "] ĐÃ BỊ HỦY (CANCELLED), không thể thay đổi trạng thái!");
+        }
+        if ("RETURNED".equals(current)) {
+            throw new IllegalStateException("Đơn hàng [" + order.getTrackingCode() + "] ĐÃ HOÀN TRẢ VỀ SHOP (RETURNED), không thể thay đổi trạng thái!");
+        }
+
+        // 2. Kiểm tra Thứ tự luân chuyển trạng thái (State machine lifecycle order)
+        boolean isValidTransition = false;
+        switch (current) {
+            case "CREATED" -> {
+                // Từ CREATED chỉ có thể sang: PICKED_UP (bưu tá lấy hàng), AT_SORTING_HUB (khách gửi tại bưu cục), hoặc CANCELLED (hủy đơn)
+                if ("PICKED_UP".equals(target) || "AT_SORTING_HUB".equals(target) || "CANCELLED".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            case "PICKED_UP" -> {
+                // Từ PICKED_UP (đã lấy của shop) bắt buộc phải nhập kho bưu cục (AT_SORTING_HUB)
+                if ("AT_SORTING_HUB".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            case "AT_SORTING_HUB" -> {
+                // Từ AT_SORTING_HUB chỉ có thể sang: DELIVERING (lấy hàng đi giao), IN_TRANSIT (vận chuyển liên bưu cục), hoặc RETURNING (chuyển hoàn)
+                if ("DELIVERING".equals(target) || "IN_TRANSIT".equals(target) || "RETURNING".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            case "IN_TRANSIT" -> {
+                // Từ IN_TRANSIT chỉ có thể nhập về bưu cục kế tiếp (AT_SORTING_HUB)
+                if ("AT_SORTING_HUB".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            case "DELIVERING" -> {
+                // Từ DELIVERING chỉ có thể sang: DELIVERED (giao thành công) hoặc DELIVERY_FAILED (giao thất bại)
+                if ("DELIVERED".equals(target) || "DELIVERY_FAILED".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            case "DELIVERY_FAILED" -> {
+                // Từ DELIVERY_FAILED chỉ có thể sang: DELIVERING (giao lại) hoặc RETURNING (chuyển hoàn)
+                if ("DELIVERING".equals(target) || "RETURNING".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            case "RETURNING" -> {
+                // Từ RETURNING chỉ có thể sang RETURNED (đã trả hàng về shop)
+                if ("RETURNED".equals(target)) {
+                    isValidTransition = true;
+                }
+            }
+            default -> isValidTransition = false;
+        }
+
+        if (!isValidTransition) {
+            throw new IllegalStateException("Quy trình trạng thái không hợp lệ: Không thể chuyển đơn hàng từ [" + current + "] sang [" + target + "]. Vui lòng tác nghiệp theo đúng thứ tự giao nhận!");
+        }
+
+        // 3. Kiểm tra Phân quyền người dùng (Role-based Authorization)
+        if (actor != null && actor.getRoles() != null) {
+            boolean isAdmin = actor.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+            boolean isWarehouseStaff = actor.getRoles().stream().anyMatch(r ->
+                    "ROLE_WAREHOUSE_STAFF".equalsIgnoreCase(r.getRoleName()) ||
+                    "ROLE_POST_OFFICE_MANAGER".equalsIgnoreCase(r.getRoleName()) ||
+                    "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName())
+            );
+            boolean isShipper = actor.getRoles().stream().anyMatch(r -> "ROLE_SHIPPER".equalsIgnoreCase(r.getRoleName()));
+            boolean isMerchant = actor.getRoles().stream().anyMatch(r -> "ROLE_MERCHANT".equalsIgnoreCase(r.getRoleName()));
+
+            // Shop chỉ được hủy đơn khi CREATED
+            if (isMerchant && !isAdmin && !isWarehouseStaff && !isShipper) {
+                if (!"CANCELLED".equals(target) || !"CREATED".equals(current)) {
+                    throw new org.springframework.security.access.AccessDeniedException("Tài khoản Shop chỉ có quyền hủy đơn hàng khi đơn còn ở trạng thái Mới tạo (CREATED)!");
+                }
+            }
+
+            // Nhập kho bưu cục (AT_SORTING_HUB) chỉ dành cho nhân viên kho / quản lý kho / admin
+            if ("AT_SORTING_HUB".equals(target) && !isWarehouseStaff && !isAdmin) {
+                throw new org.springframework.security.access.AccessDeniedException("Chỉ nhân viên kho hoặc quản lý bưu cục mới có quyền quét xác nhận nhập kho!");
+            }
+
+            // Bưu tá (chỉ có ROLE_SHIPPER) chỉ được thao tác: PICKED_UP, DELIVERING, DELIVERED, DELIVERY_FAILED
+            if (isShipper && !isWarehouseStaff && !isAdmin) {
+                List<String> shipperAllowedTargets = List.of("PICKED_UP", "DELIVERING", "DELIVERED", "DELIVERY_FAILED");
+                if (!shipperAllowedTargets.contains(target)) {
+                    throw new org.springframework.security.access.AccessDeniedException("Bưu tá không có quyền cập nhật trạng thái [" + target + "]!");
+                }
+            }
+        }
+    }
+
     private boolean isWarehouseAuthorized(User user) {
         if (user == null || user.getRoles() == null) return false;
         return user.getRoles().stream().anyMatch(r ->
@@ -260,18 +364,8 @@ public class ShipperServiceImpl implements ShipperService {
         User shipper = userRepository.findById(shipperId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin bưu tá!"));
 
-        // KIỂM TRA ĐẶC BIỆT: Nếu đơn đã được lấy trước đó -> Báo cảnh báo rõ ràng!
-        if (!"CREATED".equalsIgnoreCase(order.getCurrentStatus())) {
-            String statusText = switch (order.getCurrentStatus()) {
-                case "PICKED_UP" -> "Đã lấy hàng từ Shop thành công";
-                case "AT_SORTING_HUB" -> "Đã nhập kho bưu cục";
-                case "IN_TRANSIT" -> "Đang vận chuyển liên kết";
-                case "DELIVERING" -> "Đang trên đường đi phát cho khách";
-                case "DELIVERED" -> "Đã phát hàng thành công";
-                default -> order.getCurrentStatus();
-            };
-            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC LẤY trước đó rồi (Trạng thái hiện tại: " + statusText + ")! Vui lòng không thao tác lại.");
-        }
+        // Kiểm tra thứ tự trạng thái & phân quyền nghiêm ngặt
+        validateStatusTransition(order, "PICKED_UP", shipper);
 
         LocalDateTime now = LocalDateTime.now();
         String timeStr = now.format(TIME_FORMATTER);
@@ -329,19 +423,8 @@ public class ShipperServiceImpl implements ShipperService {
         User actor = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin tài khoản thao tác!"));
 
-        // KIỂM TRA PHÂN QUYỀN: Chỉ nhân viên kho hoặc quản lý kho/bưu cục mới có quyền nhập kho
-        if (!isWarehouseAuthorized(actor)) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Chỉ nhân viên kho hoặc quản lý bưu cục/kho mới có quyền xác nhận đơn hàng nhập kho! Bưu tá không thể thực hiện thao tác này.");
-        }
-
-        // KIỂM TRA ĐẶC BIỆT: Nếu đơn hàng đã nhập kho rồi -> Thông báo rõ ràng không thao tác lại
-        if ("AT_SORTING_HUB".equalsIgnoreCase(order.getCurrentStatus())) {
-            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC NHẬP KHO trước đó rồi! Vui lòng không quét lại.");
-        }
-        if (List.of("DELIVERING", "DELIVERED", "DELIVERY_FAILED").contains(order.getCurrentStatus())) {
-            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] hiện đang ở trạng thái [" + order.getCurrentStatus() + "], không thể nhập lại kho.");
-        }
+        // Kiểm tra thứ tự trạng thái & phân quyền nghiêm ngặt
+        validateStatusTransition(order, "AT_SORTING_HUB", actor);
 
         Long targetWhId = warehouseId;
         if (targetWhId == null) {
@@ -407,20 +490,8 @@ public class ShipperServiceImpl implements ShipperService {
         User actor = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin tài khoản thao tác!"));
 
-        // KIỂM TRA PHÂN QUYỀN ĐẶC BIỆT: Nếu muốn chuyển sang AT_SORTING_HUB (nhập kho),
-        // bắt buộc phải là nhân viên kho hoặc quản lý kho/bưu cục!
-        if ("AT_SORTING_HUB".equalsIgnoreCase(status) && !isWarehouseAuthorized(actor)) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Chỉ nhân viên kho hoặc quản lý bưu cục/kho mới có quyền xác nhận đơn hàng nhập kho! Bưu tá không có quyền cập nhật trạng thái này.");
-        }
-
-        // KIỂM TRA ĐẶC BIỆT: Tránh quét lặp đơn đã nhập kho hoặc đã lấy
-        if ("AT_SORTING_HUB".equalsIgnoreCase(status) && "AT_SORTING_HUB".equalsIgnoreCase(order.getCurrentStatus())) {
-            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC NHẬP KHO trước đó rồi! Vui lòng không cập nhật lại.");
-        }
-        if ("PICKED_UP".equalsIgnoreCase(status) && !"CREATED".equalsIgnoreCase(order.getCurrentStatus())) {
-            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC LẤY trước đó rồi (Trạng thái hiện tại: " + order.getCurrentStatus() + ")! Vui lòng không thao tác lại.");
-        }
+        // Kiểm tra thứ tự trạng thái & phân quyền nghiêm ngặt
+        validateStatusTransition(order, status, actor);
 
         LocalDateTime now = LocalDateTime.now();
         String timeStr = now.format(TIME_FORMATTER);
@@ -575,6 +646,67 @@ public class ShipperServiceImpl implements ShipperService {
         return mapToResponse(saved);
     }
 
+    @Override
+    @Transactional
+    public OrderResponse scanOutForDelivery(Long shipperId, String trackingCode) {
+        final String cleanCode = trackingCode != null ? trackingCode.trim().toUpperCase() : "";
+        Order order = orderRepository.findByTrackingCode(cleanCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bưu gửi với mã vận đơn: " + cleanCode));
+
+        User shipper = userRepository.findById(shipperId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin bưu tá!"));
+
+        // Kiểm tra trạng thái: Đơn hàng bắt buộc phải đang ở kho bưu cục (AT_SORTING_HUB) mới được lấy đi giao!
+        if ("DELIVERING".equalsIgnoreCase(order.getCurrentStatus())) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC XUẤT KHO ĐI GIAO trước đó rồi! Vui lòng không quét lại.");
+        }
+        if ("DELIVERED".equalsIgnoreCase(order.getCurrentStatus())) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ GIAO THÀNH CÔNG cho khách rồi! Không thể xuất kho đi giao lại.");
+        }
+        if (!"AT_SORTING_HUB".equalsIgnoreCase(order.getCurrentStatus())) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] hiện đang ở trạng thái [" + order.getCurrentStatus() + "], chưa nhập kho bưu cục nên không thể lấy đi phát!");
+        }
+
+        validateStatusTransition(order, "DELIVERING", shipper);
+
+        LocalDateTime now = LocalDateTime.now();
+        String timeStr = now.format(TIME_FORMATTER);
+
+        order.setCurrentStatus("DELIVERING");
+        order.setAssignedShipperId(shipperId);
+        order.setAssignedShipperName(shipper.getFullName());
+        order.setAssignedShipperPhone(shipper.getPhoneNumber());
+
+        Order saved = orderRepository.save(order);
+
+        String shipperDisplayName = formatPersonName("Bưu tá", shipper.getFullName());
+        String receiverAddr = (order.getReceiverAddress() != null ? order.getReceiverAddress() : "")
+                + (order.getReceiverWardName() != null ? ", " + order.getReceiverWardName() : "");
+
+        String desc = String.format("%s (SĐT: %s) đã quét xuất kho bưu cục lấy kiện hàng đi phát đến người nhận (%s - %s) vào lúc %s.",
+                shipperDisplayName,
+                shipper.getPhoneNumber() != null ? shipper.getPhoneNumber() : "N/A",
+                order.getReceiverName() != null ? order.getReceiverName() : "Khách hàng",
+                receiverAddr,
+                timeStr);
+
+        OrderTrackingLog logEntry = OrderTrackingLog.builder()
+                .trackingCode(cleanCode)
+                .status("DELIVERING")
+                .locationType("POST_OFFICE")
+                .locationId(order.getAssignedPostOfficeId() != null ? order.getAssignedPostOfficeId() : 1L)
+                .locationName("Bưu cục khai thác phát")
+                .description(desc)
+                .actorId(shipperId)
+                .actorName(shipperDisplayName + " (Xuất kho đi phát)")
+                .deviceInfo("SHIPPER_MOBILE_SCANNER")
+                .build();
+        trackingLogRepository.save(logEntry);
+
+        log.info("Shipper {} đã quét xuất kho đơn {} mang đi phát lúc {}", shipper.getFullName(), cleanCode, timeStr);
+        return mapToResponse(saved);
+    }
+
     private OrderResponse mapToResponse(Order order) {
         return OrderResponse.builder()
                 .id(order.getId())
@@ -585,11 +717,15 @@ public class ShipperServiceImpl implements ShipperService {
                 .senderAddress(order.getSenderAddress())
                 .senderProvinceId(order.getSenderProvinceId())
                 .senderWardName(order.getSenderWardName())
+                .senderLat(order.getSenderLat())
+                .senderLng(order.getSenderLng())
                 .receiverName(order.getReceiverName())
                 .receiverPhone(order.getReceiverPhone())
                 .receiverAddress(order.getReceiverAddress())
                 .receiverProvinceId(order.getReceiverProvinceId())
                 .receiverWardName(order.getReceiverWardName())
+                .receiverLat(order.getReceiverLat())
+                .receiverLng(order.getReceiverLng())
                 .itemName(order.getItemName())
                 .itemValue(order.getItemValue())
                 .actualWeightGram(order.getActualWeightGram())

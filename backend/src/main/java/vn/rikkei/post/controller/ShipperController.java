@@ -69,6 +69,17 @@ public class ShipperController {
         return ResponseEntity.ok(ApiResponse.success(response, "Đã quét nhập kho bưu cục thành công!"));
     }
 
+    @PostMapping("/scan-delivery")
+    public ResponseEntity<ApiResponse<OrderResponse>> scanDelivery(
+            @RequestBody Map<String, String> payload,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        String trackingCode = payload.get("trackingCode");
+        OrderResponse response = shipperService.scanOutForDelivery(shipperId, trackingCode);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã quét xuất kho lấy đơn hàng đi giao thành công!"));
+    }
+
     @PostMapping("/update-status")
     public ResponseEntity<ApiResponse<OrderResponse>> updateStatus(
             @RequestBody Map<String, String> payload,
