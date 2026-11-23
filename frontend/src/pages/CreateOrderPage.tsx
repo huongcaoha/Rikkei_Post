@@ -6,7 +6,7 @@ import { pricingApi } from '../api/pricing';
 import { orderApi } from '../api/order';
 import { locationApi } from '../api/location';
 import { PriceEstimate, CreateOrderRequest, Ward } from '../types';
-import { LocationPickerModal } from '../components/LocationPickerModal';
+import { LocationPickerModal, reverseGeocodeAddress } from '../components/LocationPickerModal';
 
 const STORAGE_SENDER_KEY = 'rkp_saved_sender_info';
 
@@ -41,42 +41,68 @@ export const CreateOrderPage: React.FC = () => {
   const [receiverLocation, setReceiverLocation] = useState<{ lat?: number; lng?: number } | null>(null);
   const [mapModalTarget, setMapModalTarget] = useState<'sender' | 'receiver' | null>(null);
 
-  // Lấy GPS hiện tại cho Người gửi (Shop)
+  // Lấy GPS hiện tại cho Người gửi (Shop) và tự động điền địa chỉ
   const handleGetSenderGps = () => {
     if (!navigator.geolocation) {
       message.error('Trình duyệt không hỗ trợ lấy vị trí GPS!');
       return;
     }
+    const hide = message.loading('Đang lấy vị trí GPS và nhận diện địa chỉ Shop...', 0);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
+        hide();
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setSenderLocation({ lat, lng });
         form.setFieldValue('senderLat', lat);
         form.setFieldValue('senderLng', lng);
-        message.success(`Đã lấy vị trí GPS của Shop thành công (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+
+        const addr = await reverseGeocodeAddress(lat, lng);
+        if (addr) {
+          form.setFieldValue('senderAddress', addr);
+          message.success(`Đã lấy vị trí GPS và điền địa chỉ Shop: ${addr}`);
+        } else {
+          message.success(`Đã lấy vị trí GPS của Shop (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+        }
+        triggerPriceCalculation(form.getFieldsValue());
       },
-      () => message.warning('Không thể lấy vị trí GPS (vui lòng bật định vị trên thiết bị/trình duyệt).'),
+      () => {
+        hide();
+        message.warning('Không thể lấy vị trí GPS (vui lòng bật định vị trên thiết bị/trình duyệt).');
+      },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
-  // Lấy GPS hiện tại cho Người nhận (Khách hàng)
+  // Lấy GPS hiện tại cho Người nhận (Khách hàng) và tự động điền địa chỉ
   const handleGetReceiverGps = () => {
     if (!navigator.geolocation) {
       message.error('Trình duyệt không hỗ trợ lấy vị trí GPS!');
       return;
     }
+    const hide = message.loading('Đang lấy vị trí GPS và nhận diện địa chỉ Người nhận...', 0);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
+        hide();
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setReceiverLocation({ lat, lng });
         form.setFieldValue('receiverLat', lat);
         form.setFieldValue('receiverLng', lng);
-        message.success(`Đã lấy vị trí GPS của Người nhận thành công (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+
+        const addr = await reverseGeocodeAddress(lat, lng);
+        if (addr) {
+          form.setFieldValue('receiverAddress', addr);
+          message.success(`Đã lấy vị trí GPS và điền địa chỉ Người nhận: ${addr}`);
+        } else {
+          message.success(`Đã lấy vị trí GPS của Người nhận (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+        }
+        triggerPriceCalculation(form.getFieldsValue());
       },
-      () => message.warning('Không thể lấy vị trí GPS (vui lòng bật định vị trên thiết bị/trình duyệt).'),
+      () => {
+        hide();
+        message.warning('Không thể lấy vị trí GPS (vui lòng bật định vị trên thiết bị/trình duyệt).');
+      },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   };
@@ -845,17 +871,18 @@ export const CreateOrderPage: React.FC = () => {
             setSenderLocation({ lat, lng });
             form.setFieldValue('senderLat', lat);
             form.setFieldValue('senderLng', lng);
-            if (addressText && !form.getFieldValue('senderAddress')) {
+            if (addressText) {
               form.setFieldValue('senderAddress', addressText);
             }
           } else {
             setReceiverLocation({ lat, lng });
             form.setFieldValue('receiverLat', lat);
             form.setFieldValue('receiverLng', lng);
-            if (addressText && !form.getFieldValue('receiverAddress')) {
+            if (addressText) {
               form.setFieldValue('receiverAddress', addressText);
             }
           }
+          triggerPriceCalculation(form.getFieldsValue());
         }}
       />
     </div>
