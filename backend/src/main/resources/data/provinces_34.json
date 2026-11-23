@@ -1,0 +1,274 @@
+[
+  {
+    "id": 1,
+    "code": "HN",
+    "name": "Thành phố Hà Nội",
+    "region": "NORTH",
+    "displayOrder": 1,
+    "isActive": true
+  },
+  {
+    "id": 4,
+    "code": "CB",
+    "name": "Tỉnh Cao Bằng",
+    "region": "NORTH",
+    "displayOrder": 7,
+    "isActive": true
+  },
+  {
+    "id": 8,
+    "code": "TQ",
+    "name": "Tỉnh Tuyên Quang",
+    "region": "NORTH",
+    "displayOrder": 8,
+    "isActive": true
+  },
+  {
+    "id": 11,
+    "code": "DB",
+    "name": "Tỉnh Điện Biên",
+    "region": "NORTH",
+    "displayOrder": 9,
+    "isActive": true
+  },
+  {
+    "id": 12,
+    "code": "LC",
+    "name": "Tỉnh Lai Châu",
+    "region": "NORTH",
+    "displayOrder": 10,
+    "isActive": true
+  },
+  {
+    "id": 14,
+    "code": "SL",
+    "name": "Tỉnh Sơn La",
+    "region": "NORTH",
+    "displayOrder": 11,
+    "isActive": true
+  },
+  {
+    "id": 15,
+    "code": "LCA",
+    "name": "Tỉnh Lào Cai",
+    "region": "NORTH",
+    "displayOrder": 12,
+    "isActive": true
+  },
+  {
+    "id": 19,
+    "code": "TN",
+    "name": "Tỉnh Thái Nguyên",
+    "region": "NORTH",
+    "displayOrder": 13,
+    "isActive": true
+  },
+  {
+    "id": 20,
+    "code": "LS",
+    "name": "Tỉnh Lạng Sơn",
+    "region": "NORTH",
+    "displayOrder": 14,
+    "isActive": true
+  },
+  {
+    "id": 22,
+    "code": "QN",
+    "name": "Tỉnh Quảng Ninh",
+    "region": "NORTH",
+    "displayOrder": 15,
+    "isActive": true
+  },
+  {
+    "id": 24,
+    "code": "BN",
+    "name": "Tỉnh Bắc Ninh",
+    "region": "NORTH",
+    "displayOrder": 16,
+    "isActive": true
+  },
+  {
+    "id": 25,
+    "code": "PT",
+    "name": "Tỉnh Phú Thọ",
+    "region": "NORTH",
+    "displayOrder": 17,
+    "isActive": true
+  },
+  {
+    "id": 31,
+    "code": "HP",
+    "name": "Thành phố Hải Phòng",
+    "region": "NORTH",
+    "displayOrder": 4,
+    "isActive": true
+  },
+  {
+    "id": 33,
+    "code": "HY",
+    "name": "Tỉnh Hưng Yên",
+    "region": "NORTH",
+    "displayOrder": 18,
+    "isActive": true
+  },
+  {
+    "id": 37,
+    "code": "NB",
+    "name": "Tỉnh Ninh Bình",
+    "region": "NORTH",
+    "displayOrder": 19,
+    "isActive": true
+  },
+  {
+    "id": 38,
+    "code": "TH",
+    "name": "Tỉnh Thanh Hóa",
+    "region": "CENTRAL",
+    "displayOrder": 20,
+    "isActive": true
+  },
+  {
+    "id": 40,
+    "code": "NA",
+    "name": "Tỉnh Nghệ An",
+    "region": "CENTRAL",
+    "displayOrder": 21,
+    "isActive": true
+  },
+  {
+    "id": 42,
+    "code": "HT",
+    "name": "Tỉnh Hà Tĩnh",
+    "region": "CENTRAL",
+    "displayOrder": 22,
+    "isActive": true
+  },
+  {
+    "id": 44,
+    "code": "QT",
+    "name": "Tỉnh Quảng Trị",
+    "region": "CENTRAL",
+    "displayOrder": 23,
+    "isActive": true
+  },
+  {
+    "id": 46,
+    "code": "HUE",
+    "name": "Thành phố Huế",
+    "region": "CENTRAL",
+    "displayOrder": 6,
+    "isActive": true
+  },
+  {
+    "id": 48,
+    "code": "DNA",
+    "name": "Thành phố Đà Nẵng",
+    "region": "CENTRAL",
+    "displayOrder": 3,
+    "isActive": true
+  },
+  {
+    "id": 51,
+    "code": "QNG",
+    "name": "Tỉnh Quảng Ngãi",
+    "region": "CENTRAL",
+    "displayOrder": 24,
+    "isActive": true
+  },
+  {
+    "id": 52,
+    "code": "GL",
+    "name": "Tỉnh Gia Lai",
+    "region": "CENTRAL",
+    "displayOrder": 25,
+    "isActive": true
+  },
+  {
+    "id": 56,
+    "code": "KH",
+    "name": "Tỉnh Khánh Hòa",
+    "region": "CENTRAL",
+    "displayOrder": 26,
+    "isActive": true
+  },
+  {
+    "id": 66,
+    "code": "DL",
+    "name": "Tỉnh Đắk Lắk",
+    "region": "CENTRAL",
+    "displayOrder": 27,
+    "isActive": true
+  },
+  {
+    "id": 68,
+    "code": "LD",
+    "name": "Tỉnh Lâm Đồng",
+    "region": "CENTRAL",
+    "displayOrder": 28,
+    "isActive": true
+  },
+  {
+    "id": 75,
+    "code": "DON",
+    "name": "Tỉnh Đồng Nai",
+    "region": "SOUTH",
+    "displayOrder": 29,
+    "isActive": true
+  },
+  {
+    "id": 79,
+    "code": "SGN",
+    "name": "Thành phố Hồ Chí Minh",
+    "region": "SOUTH",
+    "displayOrder": 2,
+    "isActive": true
+  },
+  {
+    "id": 80,
+    "code": "TNIN",
+    "name": "Tỉnh Tây Ninh",
+    "region": "SOUTH",
+    "displayOrder": 30,
+    "isActive": true
+  },
+  {
+    "id": 82,
+    "code": "DT",
+    "name": "Tỉnh Đồng Tháp",
+    "region": "SOUTH",
+    "displayOrder": 31,
+    "isActive": true
+  },
+  {
+    "id": 86,
+    "code": "VL",
+    "name": "Tỉnh Vĩnh Long",
+    "region": "SOUTH",
+    "displayOrder": 32,
+    "isActive": true
+  },
+  {
+    "id": 91,
+    "code": "AG",
+    "name": "Tỉnh An Giang",
+    "region": "SOUTH",
+    "displayOrder": 33,
+    "isActive": true
+  },
+  {
+    "id": 92,
+    "code": "CT",
+    "name": "Thành phố Cần Thơ",
+    "region": "SOUTH",
+    "displayOrder": 5,
+    "isActive": true
+  },
+  {
+    "id": 96,
+    "code": "CM",
+    "name": "Tỉnh Cà Mau",
+    "region": "SOUTH",
+    "displayOrder": 34,
+    "isActive": true
+  }
+]

@@ -12,20 +12,12 @@ const STORAGE_SENDER_KEY = 'rkp_saved_sender_info';
 
 // Danh mục tỉnh thành khởi tạo nhanh trước khi API trả về
 const INITIAL_PROVINCES: { id: number; name: string }[] = [
-  { id: 1, name: 'Hà Nội' },
-  { id: 79, name: 'TP. Hồ Chí Minh' },
-  { id: 48, name: 'Đà Nẵng' },
-  { id: 31, name: 'Hải Phòng' },
-  { id: 92, name: 'Cần Thơ' },
-  { id: 74, name: 'Bình Dương' },
-  { id: 75, name: 'Đồng Nai' },
-  { id: 19, name: 'Thái Nguyên' },
-  { id: 24, name: 'Bắc Giang' },
-  { id: 27, name: 'Bắc Ninh' },
-  { id: 46, name: 'Thừa Thiên Huế' },
-  { id: 56, name: 'Khánh Hòa' },
-  { id: 77, name: 'Bà Rịa - Vũng Tàu' },
-  { id: 80, name: 'Long An' },
+  { id: 1, name: 'Thành phố Hà Nội' },
+  { id: 79, name: 'Thành phố Hồ Chí Minh' },
+  { id: 48, name: 'Thành phố Đà Nẵng' },
+  { id: 31, name: 'Thành phố Hải Phòng' },
+  { id: 92, name: 'Thành phố Cần Thơ' },
+  { id: 46, name: 'Thành phố Huế' },
 ];
 
 export const CreateOrderPage: React.FC = () => {
@@ -112,29 +104,22 @@ export const CreateOrderPage: React.FC = () => {
 
   // Danh sách Xã / Phường người gửi & người nhận
   const [senderWards, setSenderWards] = useState<string[]>([
-    'Phường Dịch Vọng Hậu',
-    'Phường Dịch Vọng',
-    'Phường Trung Hòa',
+    'Phường Cầu Giấy',
+    'Phường Ba Đình',
+    'Phường Ngọc Hà',
+    'Phường Giảng Võ',
+    'Phường Hoàn Kiếm',
+    'Phường Cửa Nam',
     'Phường Yên Hòa',
-    'Phường Láng Thượng',
-    'Phường Ô Chợ Dừa',
-    'Phường Bách Khoa',
-    'Phường Mỹ Đình 1',
-    'Phường Mỹ Đình 2',
-    'Phường Cầu Diễn',
+    'Phường Nghĩa Đô',
   ]);
 
   const [receiverWards, setReceiverWards] = useState<string[]>([
-    'Phường Bến Nghé',
     'Phường Bến Thành',
-    'Phường Tân Định',
-    'Phường Đa Kao',
-    'Phường Võ Thị Sáu',
-    'Phường Thảo Điền',
-    'Phường An Phú',
-    'Phường Hiệp Bình Chánh',
-    'Phường 1 (Tân Bình)',
-    'Phường 12 (Gò Vấp)',
+    'Phường Tân Sơn Hòa',
+    'Phường Thủ Dầu Một',
+    'Phường Phú Lợi',
+    'Phường Bến Cát',
   ]);
 
   // Tải danh sách Xã / Phường theo Tỉnh
@@ -222,7 +207,7 @@ export const CreateOrderPage: React.FC = () => {
         senderName: savedSender?.senderName || 'Shop Thời Trang Trẻ',
         senderPhone: savedSender?.senderPhone || '0912345678',
         senderProvinceId: initialSenderProvinceId,
-        senderWardName: savedSender?.senderWardName || 'Phường Dịch Vọng Hậu',
+        senderWardName: savedSender?.senderWardName || 'Phường Cầu Giấy',
         senderAddress: savedSender?.senderAddress || 'Số 10 Phố Chùa Bộc, Đống Đa',
         saveAsDefaultSender: true,
 
@@ -230,7 +215,7 @@ export const CreateOrderPage: React.FC = () => {
         receiverName: '',
         receiverPhone: '',
         receiverProvinceId: initialReceiverProvinceId,
-        receiverWardName: 'Phường Bến Nghé',
+        receiverWardName: 'Phường Bến Thành',
         receiverAddress: '',
 
         itemName: 'Áo sơ mi nam cao cấp',
