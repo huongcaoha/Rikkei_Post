@@ -1,6 +1,7 @@
 package vn.rikkei.post.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -9,6 +10,7 @@ import vn.rikkei.post.dto.order.OrderResponse;
 import vn.rikkei.post.security.CustomUserDetails;
 import vn.rikkei.post.service.ShipperService;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -21,20 +23,26 @@ public class ShipperController {
 
     @GetMapping("/tasks")
     public ResponseEntity<ApiResponse<List<OrderResponse>>> getMyTasks(
+            @RequestParam(required = false) String category,
             @RequestParam(required = false) String taskType,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         Long shipperId = userDetails != null ? userDetails.getId() : 1L;
-        List<OrderResponse> tasks = shipperService.getMyAssignedOrders(shipperId, taskType);
+        String selectedCategory = (category != null && !category.isBlank()) ? category : taskType;
+        List<OrderResponse> tasks = shipperService.getMyAssignedOrders(shipperId, selectedCategory, startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(tasks));
     }
 
     @GetMapping("/summary")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         Long shipperId = userDetails != null ? userDetails.getId() : 1L;
-        Map<String, Object> summary = shipperService.getShipperSummary(shipperId);
+        Map<String, Object> summary = shipperService.getShipperSummary(shipperId, startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(summary));
     }
 

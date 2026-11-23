@@ -2,15 +2,20 @@ import apiClient from './client';
 import { Order, ShipperSummary } from '../types';
 
 export const shipperApi = {
-  getMyTasks: async (taskType?: string): Promise<Order[]> => {
+  getMyTasks: async (category?: string, startDate?: string, endDate?: string): Promise<Order[]> => {
     const params: any = {};
-    if (taskType) params.taskType = taskType;
+    if (category) params.category = category;
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
     const res = await apiClient.get('/shipper/tasks', { params });
     return res.data.data;
   },
 
-  getSummary: async (): Promise<ShipperSummary> => {
-    const res = await apiClient.get('/shipper/summary');
+  getSummary: async (startDate?: string, endDate?: string): Promise<ShipperSummary> => {
+    const params: any = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const res = await apiClient.get('/shipper/summary', { params });
     return res.data.data;
   },
 

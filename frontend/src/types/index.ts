@@ -259,7 +259,13 @@ export interface ShipperSummary {
   totalAssigned: number;
   pickupPending: number;
   pickedUp: number;
+  inWarehouse: number;
   delivering: number;
   delivered: number;
+  deliveryFailed: number;
+  totalCodCollected: number;
+  totalFeeCollected?: number;
+  totalCollected?: number;
+  codOrdersCount?: number;
 }
 

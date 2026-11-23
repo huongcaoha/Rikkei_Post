@@ -1,32 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, Input, Button, Tag, Badge, Segmented, message, Space } from 'antd';
+import { Modal, Input, Button, Tag, Segmented, message } from 'antd';
 import {
   Scan,
   Camera,
   Barcode,
   CheckCircle2,
   AlertTriangle,
-  XCircle,
-  Package,
-  Volume2,
-  VolumeX,
-  RotateCcw,
   Building2,
   Truck,
-  ArrowRight
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { shipperApi } from '../api/shipper';
 import { Order } from '../types';
-
-interface ScannedItem {
-  trackingCode: string;
-  order?: Order;
-  timestamp: string;
-  statusText: string;
-  isSuccess: boolean;
-  message: string;
-}
 
 interface ContinuousScannerModalProps {
   open: boolean;
@@ -35,6 +22,12 @@ interface ContinuousScannerModalProps {
   canInbound?: boolean;
   canPickup?: boolean;
   onOrderUpdated?: () => void;
+}
+
+interface PopupFeedback {
+  type: 'SUCCESS' | 'WARNING' | 'ERROR';
+  title?: string;
+  message: string;
 }
 
 export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
@@ -46,34 +39,27 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   onOrderUpdated,
 }) => {
   const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND'>(defaultMode);
-  const [inputMode, setInputMode] = useState<'CAMERA' | 'MANUAL'>('MANUAL');
+  // Yêu cầu: Mặc định là quét mã bằng CAMERA
+  const [inputMode, setInputMode] = useState<'CAMERA' | 'MANUAL'>('CAMERA');
   const [barcodeInput, setBarcodeInput] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [lastResult, setLastResult] = useState<{
-    success: boolean;
-    trackingCode: string;
-    message: string;
-    order?: Order;
-  } | null>(null);
-
-  const [sessionList, setSessionList] = useState<ScannedItem[]>([]);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+
+  // Popup thông báo kết quả (Thành công hoặc Lỗi có nút OK)
+  const [popupFeedback, setPopupFeedback] = useState<PopupFeedback | null>(null);
 
   const manualInputRef = useRef<any>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const lastScannedCodeRef = useRef<string>('');
   const lastScannedTimeRef = useRef<number>(0);
+  const isPopupOpenRef = useRef<boolean>(false);
 
-  const isSecureContext = typeof window !== 'undefined' && (
-    window.isSecureContext ||
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.protocol === 'https:'
-  );
+  // Đồng bộ ref trạng thái popup để chặn quét camera khi popup đang mở
+  useEffect(() => {
+    isPopupOpenRef.current = !!popupFeedback;
+  }, [popupFeedback]);
 
-  // Cập nhật mode mặc định khi mở modal
+  // Cập nhật chế độ mặc định khi mở modal
   useEffect(() => {
     if (open) {
       if (!canPickup && canInbound) {
@@ -83,26 +69,27 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       } else {
         setScanMode(defaultMode);
       }
+      // Luôn đặt mặc định là CAMERA khi mở
+      setInputMode('CAMERA');
       setBarcodeInput('');
-      setLastResult(null);
-      // Tự động focus ô nhập liệu
-      setTimeout(() => {
-        manualInputRef.current?.focus();
-      }, 300);
+      setPopupFeedback(null);
+      lastScannedCodeRef.current = '';
     } else {
       stopCamera();
     }
   }, [open, defaultMode, canInbound, canPickup]);
 
-  // Điều khiển camera khi chuyển tab Camera / Laser
+  // Điều khiển camera khi chuyển tab Camera / Nhập tay
   useEffect(() => {
     if (open && inputMode === 'CAMERA') {
       startCamera();
     } else {
       stopCamera();
-      setTimeout(() => {
-        manualInputRef.current?.focus();
-      }, 200);
+      if (open && inputMode === 'MANUAL') {
+        setTimeout(() => {
+          manualInputRef.current?.focus();
+        }, 200);
+      }
     }
     return () => {
       stopCamera();
@@ -120,14 +107,12 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       gain.connect(audioCtx.destination);
 
       if (isSuccess) {
-        // Âm bíp trong trẻo thành công (1046 Hz - nốt C6)
         osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
         osc.start();
         osc.stop(audioCtx.currentTime + 0.15);
       } else {
-        // Âm trầm cảnh báo lỗi hoặc trùng mã (330 Hz - nốt E4)
         osc.frequency.setValueAtTime(329.6, audioCtx.currentTime);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
@@ -135,26 +120,20 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         osc.stop(audioCtx.currentTime + 0.35);
       }
     } catch (e) {
-      // Bỏ qua nếu trình duyệt chặn tự phát âm thanh
+      // Bỏ qua lỗi âm thanh nếu trình duyệt hạn chế
     }
   };
 
   const startCamera = async () => {
-    if (!isSecureContext) {
-      setIsCameraActive(false);
-      message.warning('Trình duyệt di động hạn chế mở Camera trực tiếp trên HTTP qua IP LAN. Bạn có thể bấm "Chụp ảnh bưu kiện" hoặc truy cập qua HTTPS!', 5);
-      return;
-    }
     try {
       if (html5QrCodeRef.current) {
         await stopCamera();
       }
       // Chờ một chút để container DOM sẵn sàng
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 250));
       const container = document.getElementById('qr-reader-container');
-      if (!container) {
-        return;
-      }
+      if (!container) return;
+
       const qrCode = new Html5Qrcode('qr-reader-container');
       html5QrCodeRef.current = qrCode;
 
@@ -174,11 +153,12 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       try {
         const cameras = await Html5Qrcode.getCameras();
         if (cameras && cameras.length > 0) {
-          const backCam = cameras.find((c) =>
-            c.label.toLowerCase().includes('back') ||
-            c.label.toLowerCase().includes('sau') ||
-            c.label.toLowerCase().includes('environment')
-          ) || cameras[cameras.length - 1];
+          const backCam =
+            cameras.find((c) =>
+              c.label.toLowerCase().includes('back') ||
+              c.label.toLowerCase().includes('sau') ||
+              c.label.toLowerCase().includes('environment')
+            ) || cameras[cameras.length - 1];
           await qrCode.start(
             backCam.id,
             config,
@@ -201,42 +181,8 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
           () => {}
         );
       }
-      setIsCameraActive(true);
     } catch (err: any) {
       console.warn('Lỗi khởi động camera live:', err);
-      setIsCameraActive(false);
-      message.warning('Không thể mở camera quay video trực tiếp. Vui lòng bấm nút "Chụp ảnh bưu kiện" hoặc nhập mã bằng bàn phím.', 4);
-    }
-  };
-
-  // Quét mã từ ảnh chụp bưu kiện bằng camera gốc của điện thoại (hỗ trợ cả HTTP và HTTPS)
-  const handlePhotoCaptured = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsProcessing(true);
-    const hideLoading = message.loading('Đang nhận diện mã vạch từ ảnh chụp...', 0);
-    try {
-      const dummyId = 'qr-reader-dummy-hidden';
-      let dummyEl = document.getElementById(dummyId);
-      if (!dummyEl) {
-        dummyEl = document.createElement('div');
-        dummyEl.id = dummyId;
-        dummyEl.style.display = 'none';
-        document.body.appendChild(dummyEl);
-      }
-      const fileScanner = new Html5Qrcode(dummyId);
-      const decodedResult = await fileScanner.scanFile(file, true);
-      hideLoading();
-      message.success(`Đã nhận diện thành công mã: ${decodedResult}`);
-      handleCameraDecoded(decodedResult);
-    } catch (err: any) {
-      hideLoading();
-      playSound(false);
-      message.error('Không tìm thấy mã vạch / QR hợp lệ trong ảnh. Vui lòng chụp rõ nét và đủ sáng hơn nhé!', 3);
-    } finally {
-      setIsProcessing(false);
-      if (e.target) e.target.value = '';
     }
   };
 
@@ -248,19 +194,23 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         }
         await html5QrCodeRef.current.clear();
       } catch (e) {
-        // Ignore cleanup error
+        // Ignore
       }
       html5QrCodeRef.current = null;
     }
-    setIsCameraActive(false);
   };
 
   // Xử lý khi camera phát hiện mã
   const handleCameraDecoded = (decodedText: string) => {
+    // Nếu đang xử lý hoặc đang có Popup mở -> Không quét tiếp
+    if (isProcessing || isPopupOpenRef.current) {
+      return;
+    }
+
     const cleanCode = decodedText.trim().toUpperCase();
     const now = Date.now();
-    // Chặn quét lặp cùng 1 mã trong vòng 2.5 giây từ camera
-    if (cleanCode === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2500) {
+    // Chặn quét lặp cùng 1 mã trong vòng 2 giây
+    if (cleanCode === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2000) {
       return;
     }
     lastScannedCodeRef.current = cleanCode;
@@ -268,78 +218,52 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
     processBarcode(cleanCode);
   };
 
-  // Xử lý mã vận đơn (tự động gọi API không cần nút xác nhận)
+  // Xử lý mã vận đơn (Gọi API và hiển thị Popup thông báo thành công hoặc lỗi)
   const processBarcode = async (rawCode: string) => {
     const code = rawCode.trim().toUpperCase();
-    if (!code) return;
+    if (!code) {
+      message.warning('Vui lòng nhập mã vận đơn!');
+      return;
+    }
 
     setIsProcessing(true);
-    const nowTimeStr = new Date().toLocaleTimeString('vi-VN');
 
     try {
       let updatedOrder: Order;
       let successMsg = '';
 
       if (scanMode === 'PICKUP') {
-        // Tự động gọi API quét lấy hàng
         updatedOrder = await shipperApi.scanPickup(code);
         successMsg = `Đã lấy hàng thành công đơn [${code}] từ Shop!`;
       } else {
-        // Tự động gọi API quét nhập kho bưu cục
         updatedOrder = await shipperApi.scanInbound(code);
         successMsg = `Đã nhập kho bưu cục thành công đơn [${code}]!`;
       }
 
       playSound(true);
-      setLastResult({
-        success: true,
-        trackingCode: code,
+
+      // Hiển thị Popup thành công kèm nút OK
+      setPopupFeedback({
+        type: 'SUCCESS',
+        title: scanMode === 'PICKUP' ? 'Lấy Hàng Thành Công' : 'Nhập Kho Thành Công',
         message: successMsg,
-        order: updatedOrder,
       });
 
-      // Ghi nhận vào phiên quét
-      setSessionList((prev) => [
-        {
-          trackingCode: code,
-          order: updatedOrder,
-          timestamp: nowTimeStr,
-          statusText: scanMode === 'PICKUP' ? 'Đã lấy từ Shop' : 'Đã nhập kho Hub',
-          isSuccess: true,
-          message: successMsg,
-        },
-        ...prev,
-      ]);
-
-      // Báo ngoài màn hình chính để đồng bộ dữ liệu
+      // Báo bên ngoài cập nhật lại danh sách đơn hàng
       onOrderUpdated?.();
     } catch (err: any) {
       playSound(false);
-      const errMsg = err.response?.data?.message || err.message || 'Lỗi xử lý mã đơn hàng!';
+      const errMsg = err.response?.data?.message || err.message || 'Lỗi xử lý đơn hàng!';
 
-      setLastResult({
-        success: false,
-        trackingCode: code,
+      // Hiển thị Popup lỗi/cảnh báo kèm nút OK
+      setPopupFeedback({
+        type: 'ERROR',
+        title: 'Thông Báo',
         message: errMsg,
       });
-
-      setSessionList((prev) => [
-        {
-          trackingCode: code,
-          timestamp: nowTimeStr,
-          statusText: 'Cảnh báo / Thất bại',
-          isSuccess: false,
-          message: errMsg,
-        },
-        ...prev,
-      ]);
     } finally {
       setIsProcessing(false);
       setBarcodeInput('');
-      // Luôn giữ focus để quét tiếp mã tiếp theo ngay lập tức!
-      setTimeout(() => {
-        manualInputRef.current?.focus();
-      }, 100);
     }
   };
 
@@ -351,282 +275,195 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   };
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      destroyOnClose
-      width={640}
-      className="continuous-scanner-modal"
-      title={
-        <div className="flex items-center justify-between pr-6 border-b pb-3">
-          <div className="flex items-center space-x-2 text-base font-bold text-gray-900">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${
-              scanMode === 'PICKUP' ? 'bg-amber-600' : 'bg-red-600'
-            }`}>
-              <Scan size={18} />
-            </div>
-            <span>
-              {scanMode === 'PICKUP' ? 'Quét Mã Lấy Hàng (Bưu Tá)' : 'Quét Mã Nhập Kho (Khai Thác Kho)'}
-            </span>
-          </div>
-
-          <Button
-            type="text"
-            size="small"
-            icon={isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-            onClick={() => setIsMuted(!isMuted)}
-            className="text-gray-400 hover:text-gray-700"
-            title={isMuted ? 'Bật âm thanh bíp' : 'Tắt âm thanh'}
-          />
-        </div>
-      }
-    >
-      <div className="pt-2 space-y-4">
-        {/* Lựa chọn vai trò tác nghiệp nếu có cả 2 quyền */}
-        {canPickup && canInbound && (
-          <div className="bg-gray-50 p-2 rounded-xl flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-600 ml-1">Chế độ quét tự động:</span>
-            <Segmented
-              value={scanMode}
-              onChange={(val) => setScanMode(val as any)}
-              options={[
-                { label: '⚡ Quét lấy hàng tại Shop', value: 'PICKUP', icon: <Truck size={14} /> },
-                { label: '🏢 Quét nhập kho bưu cục', value: 'INBOUND', icon: <Building2 size={14} /> },
-              ]}
-              className="font-medium text-xs bg-white shadow-xs"
-            />
-          </div>
-        )}
-
-        {/* Input ẩn để kích hoạt Native Camera chụp ảnh bưu kiện trên điện thoại (chạy tốt trên cả HTTP và HTTPS) */}
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          ref={fileInputRef}
-          className="hidden"
-          onChange={handlePhotoCaptured}
-        />
-
-        {/* Cảnh báo thân thiện nếu điện thoại truy cập qua HTTP */}
-        {!isSecureContext && (
-          <div className="bg-amber-50/90 border border-amber-200 text-amber-900 rounded-xl p-3 text-xs space-y-1">
-            <div className="flex items-center space-x-1.5 font-bold text-amber-800">
-              <AlertTriangle size={16} className="text-amber-600" />
-              <span>Lưu ý khi dùng Camera trên điện thoại:</span>
-            </div>
-            <p className="text-gray-700 leading-relaxed">
-              Trình duyệt điện thoại (Safari/Chrome) chặn Camera live trực tiếp trên địa chỉ HTTP không bảo mật. 
-              Bạn hãy dùng <b>nút chụp ảnh màu cam</b> bên dưới (mở camera máy chụp mã) hoặc truy cập qua link <b>HTTPS</b>:{' '}
-              <a href={`https://${window.location.hostname}:3000`} className="text-red-600 underline font-bold" target="_self">
-                https://{window.location.hostname}:3000
-              </a>.
-            </p>
-          </div>
-        )}
-
-        {/* Nút chụp ảnh bưu kiện trực tiếp bằng Camera điện thoại */}
-        <div className="bg-gradient-to-r from-amber-50 to-orange-50 p-2.5 rounded-2xl border border-amber-200 flex items-center justify-between gap-2">
-          <div className="text-xs">
-            <div className="font-bold text-gray-800">Chụp ảnh bưu kiện</div>
-            <div className="text-[11px] text-gray-500">Mở camera chụp mã vạch / QR bưu gửi</div>
-          </div>
-          <Button
-            type="primary"
-            icon={<Camera size={16} />}
-            loading={isProcessing}
-            onClick={() => fileInputRef.current?.click()}
-            className="bg-amber-600 hover:bg-amber-700 font-bold rounded-xl h-10 px-4 text-xs shadow-xs"
-          >
-            📸 Chụp ảnh quét mã
-          </Button>
-        </div>
-
-        {/* Chuyển đổi phương thức: Súng quét mã/Bàn phím HOẶC Camera live */}
-        <div className="flex items-center justify-between bg-slate-100 p-1.5 rounded-xl">
-          <Button
-            type={inputMode === 'MANUAL' ? 'primary' : 'text'}
-            icon={<Barcode size={16} />}
-            onClick={() => setInputMode('MANUAL')}
-            className={`flex-1 rounded-lg text-xs font-semibold h-9 ${
-              inputMode === 'MANUAL' ? 'bg-gray-900 hover:bg-black shadow-xs' : 'text-gray-600'
-            }`}
-          >
-            Máy quét Barcode / Nhập tay
-          </Button>
-          <Button
-            type={inputMode === 'CAMERA' ? 'primary' : 'text'}
-            icon={<Camera size={16} />}
-            onClick={() => {
-              if (!isSecureContext) {
-                message.info('Trình duyệt di động yêu cầu truy cập qua https:// để mở camera live. Bạn có thể dùng nút "📸 Chụp ảnh quét mã" ở trên nhé!');
-              }
-              setInputMode('CAMERA');
-            }}
-            className={`flex-1 rounded-lg text-xs font-semibold h-9 ${
-              inputMode === 'CAMERA' ? 'bg-red-600 hover:bg-red-700 shadow-xs' : 'text-gray-600'
-            }`}
-          >
-            Camera Live liên tục
-          </Button>
-        </div>
-
-        {/* VÙNG 1: Camera Scanner */}
-        {inputMode === 'CAMERA' && (
-          <div className="space-y-2">
-            <div className="relative rounded-2xl overflow-hidden bg-black aspect-video flex items-center justify-center border-2 border-red-500 shadow-inner">
-              <div id="qr-reader-container" className="w-full h-full" />
-              {/* Khung ngắm quét mã vạch */}
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                <div className="w-64 h-36 border-2 border-dashed border-red-400 rounded-xl bg-red-500/10 flex items-center justify-center">
-                  <div className="w-full h-0.5 bg-red-500 shadow-lg animate-pulse" />
-                </div>
+    <>
+      <Modal
+        open={open}
+        onCancel={onClose}
+        footer={null}
+        destroyOnClose
+        width={560}
+        className="continuous-scanner-modal"
+        title={
+          <div className="flex items-center justify-between pr-6 border-b pb-3">
+            <div className="flex items-center space-x-2 text-base font-bold text-gray-900">
+              <div
+                className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${
+                  scanMode === 'PICKUP' ? 'bg-amber-600' : 'bg-red-600'
+                }`}
+              >
+                <Scan size={18} />
               </div>
+              <span>
+                {scanMode === 'PICKUP' ? 'Quét Mã Lấy Hàng (Bưu Tá)' : 'Quét Mã Nhập Kho (Kho Vận)'}
+              </span>
             </div>
-            <p className="text-center text-xs text-gray-500">
-              Hướng camera về phía mã vạch hoặc mã QR trên tem bưu gửi. Hệ thống sẽ <b>tự động nhận diện và cập nhật tức thì</b>.
-            </p>
-          </div>
-        )}
 
-        {/* VÙNG 2: Máy quét Barcode / Bàn phím liên tục */}
-        <form onSubmit={handleManualSubmit} className="space-y-2">
-          <div className="relative">
-            <Input
-              ref={manualInputRef}
-              size="large"
-              placeholder={
-                scanMode === 'PICKUP'
-                  ? 'Quét hoặc nhập mã vận đơn để TỰ ĐỘNG LẤY HÀNG (VD: RKP...)'
-                  : 'Quét hoặc nhập mã vận đơn để TỰ ĐỘNG NHẬP KHO (VD: RKP...)'
-              }
-              value={barcodeInput}
-              onChange={(e) => setBarcodeInput(e.target.value)}
-              onPressEnter={() => {
-                if (barcodeInput.trim()) processBarcode(barcodeInput);
-              }}
-              prefix={<Scan size={18} className="text-red-500 mr-1" />}
-              suffix={
-                isProcessing ? (
-                  <span className="text-xs text-red-500 font-semibold animate-pulse">Đang xử lý...</span>
-                ) : (
-                  <Tag color="blue" className="text-[10px] m-0 font-mono">Bấm Enter / Bắn súng</Tag>
-                )
-              }
-              className="rounded-xl font-mono text-base font-bold text-gray-900 border-2 border-red-300 focus:border-red-600 shadow-xs h-12"
-              autoFocus
+            <Button
+              type="text"
+              size="small"
+              icon={isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              onClick={() => setIsMuted(!isMuted)}
+              className="text-gray-400 hover:text-gray-700"
+              title={isMuted ? 'Bật âm thanh bíp' : 'Tắt âm thanh'}
             />
           </div>
-          <div className="flex items-center justify-between text-[11px] text-gray-500 px-1">
-            <span>⚡ Chế độ liên tục: Máy quét barcode tự động gửi mã và đổi trạng thái không cần click chuột.</span>
+        }
+      >
+        <div className="pt-2 space-y-4">
+          {/* Lựa chọn vai trò nếu có cả 2 quyền (Quản lý) */}
+          {canPickup && canInbound && (
+            <div className="bg-gray-50 p-2 rounded-xl flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-600 ml-1">Chế độ quét:</span>
+              <Segmented
+                value={scanMode}
+                onChange={(val) => setScanMode(val as any)}
+                options={[
+                  { label: 'Quét lấy hàng tại Shop', value: 'PICKUP', icon: <Truck size={14} /> },
+                  { label: 'Quét nhập kho bưu cục', value: 'INBOUND', icon: <Building2 size={14} /> },
+                ]}
+                className="font-medium text-xs bg-white shadow-xs"
+              />
+            </div>
+          )}
+
+          {/* ĐÚNG 2 TAB THEO YÊU CẦU: 1. Quét mã bằng camera (mặc định) & 2. Nhập mã bằng tay */}
+          <div className="flex items-center bg-gray-100 p-1.5 rounded-xl">
             <Button
-              type="link"
-              size="small"
-              onClick={() => manualInputRef.current?.focus()}
-              className="text-xs text-blue-600 p-0 font-medium"
+              type={inputMode === 'CAMERA' ? 'primary' : 'text'}
+              icon={<Camera size={16} />}
+              onClick={() => setInputMode('CAMERA')}
+              className={`flex-1 rounded-lg text-xs font-bold h-9 transition-all ${
+                inputMode === 'CAMERA' ? 'bg-red-600 hover:bg-red-700 text-white shadow-xs' : 'text-gray-600'
+              }`}
             >
-              Focus lại ô quét
+              Quét mã bằng camera
+            </Button>
+            <Button
+              type={inputMode === 'MANUAL' ? 'primary' : 'text'}
+              icon={<Barcode size={16} />}
+              onClick={() => setInputMode('MANUAL')}
+              className={`flex-1 rounded-lg text-xs font-bold h-9 transition-all ${
+                inputMode === 'MANUAL' ? 'bg-gray-900 hover:bg-black text-white shadow-xs' : 'text-gray-600'
+              }`}
+            >
+              Nhập mã bằng tay
             </Button>
           </div>
-        </form>
 
-        {/* VÙNG 3: Kết quả vừa quét gần nhất */}
-        {lastResult && (
-          <div
-            className={`p-4 rounded-2xl border transition-all ${
-              lastResult.success
-                ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
-                : 'bg-amber-50/90 border-amber-300 text-amber-900'
-            }`}
-          >
-            <div className="flex items-start space-x-3">
-              <div className="mt-0.5">
-                {lastResult.success ? (
-                  <CheckCircle2 size={24} className="text-emerald-600" />
-                ) : (
-                  <AlertTriangle size={24} className="text-amber-600" />
-                )}
-              </div>
-              <div className="flex-1 text-xs">
-                <div className="flex items-center space-x-2">
-                  <span className="font-mono font-black text-sm">{lastResult.trackingCode}</span>
-                  <Tag color={lastResult.success ? 'success' : 'warning'} className="font-bold text-[11px]">
-                    {lastResult.success
-                      ? scanMode === 'PICKUP' ? '✓ ĐÃ LẤY HÀNG' : '✓ ĐÃ NHẬP KHO'
-                      : 'CẢNH BÁO'}
-                  </Tag>
-                </div>
-                <div className="font-medium mt-1 leading-relaxed">{lastResult.message}</div>
-                {lastResult.order && (
-                  <div className="mt-2 pt-2 border-t border-emerald-200/60 text-[11px] text-gray-600 grid grid-cols-2 gap-2">
-                    <div>Người nhận: <b>{lastResult.order.receiverName}</b> ({lastResult.order.receiverPhone})</div>
-                    <div>Hàng hóa: <b>{lastResult.order.itemName}</b> ({lastResult.order.billableWeightGram}g)</div>
+          {/* TAB 1: Quét mã bằng camera (Mặc định) */}
+          {inputMode === 'CAMERA' && (
+            <div className="space-y-3">
+              <div className="relative rounded-2xl overflow-hidden bg-black aspect-video flex items-center justify-center border-2 border-red-500 shadow-md">
+                <div id="qr-reader-container" className="w-full h-full" />
+                {/* Khung ngắm quét mã vạch */}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div className="w-64 h-36 border-2 border-dashed border-red-400 rounded-xl bg-red-500/10 flex items-center justify-center">
+                    <div className="w-full h-0.5 bg-red-500 shadow-lg animate-pulse" />
                   </div>
-                )}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* VÙNG 4: Danh sách các đơn đã quét trong phiên (Session Audit Log) */}
-        <div className="border border-gray-200 rounded-2xl p-3 bg-gray-50/50 space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold text-gray-800 pb-1 border-b border-gray-200">
-            <span className="flex items-center space-x-1.5">
-              <Package size={15} className="text-red-600" />
-              <span>Kiện hàng đã quét trong phiên</span>
-              <Badge
-                count={sessionList.filter((s) => s.isSuccess).length}
-                overflowCount={999}
-                className="ml-1"
-                style={{ backgroundColor: '#10b981' }}
-              />
-            </span>
-            {sessionList.length > 0 && (
+          {/* TAB 2: Nhập mã bằng tay */}
+          {inputMode === 'MANUAL' && (
+            <form onSubmit={handleManualSubmit} className="space-y-3 pt-1">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-gray-700">Mã vận đơn bưu gửi (Barcode / QR):</label>
+                <Input
+                  ref={manualInputRef}
+                  size="large"
+                  placeholder="Nhập mã vận đơn (VD: RKP261123...)"
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onPressEnter={handleManualSubmit}
+                  prefix={<Barcode size={18} className="text-gray-400 mr-1" />}
+                  className="rounded-xl font-mono text-base font-bold text-gray-900 border-2 border-gray-300 focus:border-red-600 h-12"
+                  autoFocus
+                />
+              </div>
+
               <Button
-                type="text"
-                size="small"
-                icon={<RotateCcw size={12} />}
-                onClick={() => setSessionList([])}
-                className="text-[11px] text-gray-400 hover:text-red-600 h-6 px-1"
+                type="primary"
+                size="large"
+                block
+                loading={isProcessing}
+                onClick={handleManualSubmit}
+                className="bg-red-600 hover:bg-red-700 h-11 rounded-xl font-bold shadow-xs text-sm"
               >
-                Xóa lịch sử phiên
+                {scanMode === 'PICKUP' ? 'Xác nhận lấy hàng' : 'Xác nhận nhập kho'}
               </Button>
+            </form>
+          )}
+        </div>
+      </Modal>
+
+      {/* POPUP THÔNG BÁO KẾT QUẢ QUÉT MÃ (Thành công hoặc Lỗi có nút OK theo đúng yêu cầu) */}
+      <Modal
+        open={!!popupFeedback}
+        onCancel={() => {
+          setPopupFeedback(null);
+          lastScannedCodeRef.current = '';
+        }}
+        footer={null}
+        centered
+        closable={false}
+        width={360}
+        className="scanner-result-popup"
+      >
+        <div className="text-center py-4 px-1 space-y-4">
+          {/* Biểu tượng trạng thái */}
+          <div className="flex justify-center">
+            {popupFeedback?.type === 'SUCCESS' ? (
+              <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-inner">
+                <CheckCircle2 size={38} />
+              </div>
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 shadow-inner">
+                <AlertTriangle size={38} />
+              </div>
             )}
           </div>
 
-          {sessionList.length === 0 ? (
-            <div className="text-center py-4 text-xs text-gray-400 italic">
-              Chưa có đơn hàng nào được quét trong phiên này. Hãy quét hoặc nhập mã vận đơn để bắt đầu.
-            </div>
-          ) : (
-            <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1 text-xs">
-              {sessionList.map((item, idx) => (
-                <div
-                  key={idx}
-                  className={`p-2 rounded-xl flex items-center justify-between border ${
-                    item.isSuccess ? 'bg-white border-gray-200' : 'bg-amber-50/60 border-amber-200'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="font-mono font-bold text-red-600">{item.trackingCode}</span>
-                    <span className="text-[11px] text-gray-400">({item.timestamp})</span>
-                    <Tag
-                      color={item.isSuccess ? 'green' : 'orange'}
-                      className="text-[10px] font-medium m-0"
-                    >
-                      {item.statusText}
-                    </Tag>
-                  </div>
-                  <div className="text-[11px] text-gray-600 truncate max-w-[200px]" title={item.message}>
-                    {item.order?.itemName || item.message}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Tiêu đề & Nội dung thông báo */}
+          <div className="space-y-1.5">
+            <h3
+              className={`text-lg font-bold ${
+                popupFeedback?.type === 'SUCCESS' ? 'text-emerald-700' : 'text-amber-700'
+              }`}
+            >
+              {popupFeedback?.title || (popupFeedback?.type === 'SUCCESS' ? 'Thành công' : 'Thông báo')}
+            </h3>
+            <p className="text-sm text-gray-700 font-medium leading-relaxed px-2">
+              {popupFeedback?.message}
+            </p>
+          </div>
+
+          {/* NÚT OKE ĐỂ TẮT POPUP THEO ĐÚNG YÊU CẦU */}
+          <Button
+            type="primary"
+            size="large"
+            autoFocus
+            onClick={() => {
+              setPopupFeedback(null);
+              // Reset để cho phép quét tiếp mã mới
+              lastScannedCodeRef.current = '';
+              if (inputMode === 'MANUAL') {
+                setTimeout(() => manualInputRef.current?.focus(), 150);
+              }
+            }}
+            className={`w-full h-11 rounded-xl font-bold text-base shadow-md transition-all active:scale-95 ${
+              popupFeedback?.type === 'SUCCESS'
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : 'bg-amber-600 hover:bg-amber-700 text-white'
+            }`}
+          >
+            OK
+          </Button>
         </div>
-      </div>
-    </Modal>
+      </Modal>
+    </>
   );
 };
+
+export default ContinuousScannerModal;

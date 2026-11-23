@@ -17,6 +17,8 @@ import vn.rikkei.post.repository.UserRepository;
 import vn.rikkei.post.repository.WarehouseRepository;
 import vn.rikkei.post.service.ShipperService;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -39,18 +41,67 @@ public class ShipperServiceImpl implements ShipperService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<OrderResponse> getMyAssignedOrders(Long shipperId, String taskType) {
+    public List<OrderResponse> getMyAssignedOrders(Long shipperId, String category, LocalDate startDate, LocalDate endDate) {
         List<Order> orders = orderRepository.findByAssignedShipperId(shipperId);
 
-        if ("PICKUP".equalsIgnoreCase(taskType)) {
-            // Đơn cần lấy tại shop: các đơn được gán cho shipper, có phương thức DOOR_PICKUP và status là CREATED hoặc PICKED_UP
+        // 1. Phân loại theo category yêu cầu của shipper
+        if (category != null && !category.isBlank() && !"ALL".equalsIgnoreCase(category)) {
+            String cat = category.toUpperCase().trim();
+            switch (cat) {
+                case "PICKUP_PENDING":
+                case "PICKUP":
+                    // 1. Đơn hàng cần lấy tại shop: status CREATED
+                    orders = orders.stream()
+                            .filter(o -> "CREATED".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                case "PICKED_UP":
+                    // 2. Đơn hàng đã lấy của shop: status PICKED_UP
+                    orders = orders.stream()
+                            .filter(o -> "PICKED_UP".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                case "IN_WAREHOUSE":
+                case "AT_SORTING_HUB":
+                    // 3. Đơn hàng đã giao cho kho: status AT_SORTING_HUB hoặc IN_TRANSIT
+                    orders = orders.stream()
+                            .filter(o -> "AT_SORTING_HUB".equalsIgnoreCase(o.getCurrentStatus()) || "IN_TRANSIT".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                case "DELIVERING":
+                case "DELIVERY":
+                    // 4. Đơn hàng đã lấy ở kho mang đi giao: status DELIVERING
+                    orders = orders.stream()
+                            .filter(o -> "DELIVERING".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                case "DELIVERED":
+                    // 5. Đơn hàng đã giao cho khách: status DELIVERED
+                    orders = orders.stream()
+                            .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                case "DELIVERY_FAILED":
+                    // 6. Đơn hàng không giao được: status DELIVERY_FAILED
+                    orders = orders.stream()
+                            .filter(o -> "DELIVERY_FAILED".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                case "COD_COLLECTED":
+                    // 7. Số tiền đã thu được: các đơn đã giao thành công (status DELIVERED)
+                    orders = orders.stream()
+                            .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus()))
+                            .collect(Collectors.toList());
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // 2. Lọc theo khoảng ngày (startDate, endDate)
+        if (startDate != null || endDate != null) {
             orders = orders.stream()
-                    .filter(o -> "DOOR_PICKUP".equalsIgnoreCase(o.getPickupType()))
-                    .collect(Collectors.toList());
-        } else if ("DELIVERY".equalsIgnoreCase(taskType)) {
-            // Đơn giao: các đơn đang phát hoặc đã phát
-            orders = orders.stream()
-                    .filter(o -> List.of("DELIVERING", "DELIVERED", "DELIVERY_FAILED").contains(o.getCurrentStatus()))
+                    .filter(o -> isMatchDate(o, category, startDate, endDate))
                     .collect(Collectors.toList());
         }
 
@@ -59,33 +110,108 @@ public class ShipperServiceImpl implements ShipperService {
 
     @Override
     @Transactional(readOnly = true)
-    public Map<String, Object> getShipperSummary(Long shipperId) {
+    public Map<String, Object> getShipperSummary(Long shipperId, LocalDate startDate, LocalDate endDate) {
         List<Order> orders = orderRepository.findByAssignedShipperId(shipperId);
 
+        // Đếm theo từng phân loại chuẩn xác
         long pickupPending = orders.stream()
-                .filter(o -> "DOOR_PICKUP".equalsIgnoreCase(o.getPickupType()) && "CREATED".equalsIgnoreCase(o.getCurrentStatus()))
+                .filter(o -> "CREATED".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "PICKUP_PENDING", startDate, endDate))
                 .count();
 
         long pickedUp = orders.stream()
-                .filter(o -> "PICKED_UP".equalsIgnoreCase(o.getCurrentStatus()))
+                .filter(o -> "PICKED_UP".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "PICKED_UP", startDate, endDate))
+                .count();
+
+        long inWarehouse = orders.stream()
+                .filter(o -> ("AT_SORTING_HUB".equalsIgnoreCase(o.getCurrentStatus()) || "IN_TRANSIT".equalsIgnoreCase(o.getCurrentStatus()))
+                        && isMatchDate(o, "IN_WAREHOUSE", startDate, endDate))
                 .count();
 
         long delivering = orders.stream()
-                .filter(o -> "DELIVERING".equalsIgnoreCase(o.getCurrentStatus()))
+                .filter(o -> "DELIVERING".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "DELIVERING", startDate, endDate))
                 .count();
 
         long delivered = orders.stream()
-                .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus()))
+                .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "DELIVERED", startDate, endDate))
+                .count();
+
+        long deliveryFailed = orders.stream()
+                .filter(o -> "DELIVERY_FAILED".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "DELIVERY_FAILED", startDate, endDate))
+                .count();
+
+        // Tính tiền COD & cước đã thu được từ các đơn giao thành công (DELIVERED)
+        List<Order> deliveredOrders = orders.stream()
+                .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus()) && isMatchDate(o, "COD_COLLECTED", startDate, endDate))
+                .collect(Collectors.toList());
+
+        BigDecimal totalCodCollected = deliveredOrders.stream()
+                .map(o -> o.getCodAmount() != null ? o.getCodAmount() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalFeeCollected = deliveredOrders.stream()
+                .filter(o -> "RECEIVER".equalsIgnoreCase(o.getPaymentParty()))
+                .map(o -> o.getTotalFee() != null ? o.getTotalFee() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalCollected = totalCodCollected.add(totalFeeCollected);
+
+        long codOrdersCount = deliveredOrders.stream()
+                .filter(o -> (o.getCodAmount() != null && o.getCodAmount().compareTo(BigDecimal.ZERO) > 0)
+                        || ("RECEIVER".equalsIgnoreCase(o.getPaymentParty()) && o.getTotalFee() != null && o.getTotalFee().compareTo(BigDecimal.ZERO) > 0))
+                .count();
+
+        long totalAssigned = orders.stream()
+                .filter(o -> isMatchDate(o, null, startDate, endDate))
                 .count();
 
         Map<String, Object> summary = new HashMap<>();
-        summary.put("totalAssigned", orders.size());
+        summary.put("totalAssigned", totalAssigned);
         summary.put("pickupPending", pickupPending);
         summary.put("pickedUp", pickedUp);
+        summary.put("inWarehouse", inWarehouse);
         summary.put("delivering", delivering);
         summary.put("delivered", delivered);
+        summary.put("deliveryFailed", deliveryFailed);
+        summary.put("totalCodCollected", totalCodCollected);
+        summary.put("totalFeeCollected", totalFeeCollected);
+        summary.put("totalCollected", totalCollected);
+        summary.put("codOrdersCount", codOrdersCount);
 
         return summary;
+    }
+
+    private boolean isMatchDate(Order o, String category, LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) {
+            return true;
+        }
+
+        LocalDateTime targetTime;
+        if (category == null) {
+            targetTime = o.getUpdatedAt() != null ? o.getUpdatedAt() : o.getCreatedAt();
+        } else {
+            targetTime = switch (category.toUpperCase()) {
+                case "PICKUP_PENDING", "PICKUP" -> o.getCreatedAt();
+                case "PICKED_UP" -> o.getPickupCompletedAt() != null ? o.getPickupCompletedAt() : (o.getUpdatedAt() != null ? o.getUpdatedAt() : o.getCreatedAt());
+                case "DELIVERED", "COD_COLLECTED" -> o.getDeliveredAt() != null ? o.getDeliveredAt() : (o.getUpdatedAt() != null ? o.getUpdatedAt() : o.getCreatedAt());
+                default -> o.getUpdatedAt() != null ? o.getUpdatedAt() : o.getCreatedAt();
+            };
+        }
+
+        if (targetTime == null) {
+            targetTime = o.getCreatedAt();
+        }
+        if (targetTime == null) {
+            return true;
+        }
+
+        LocalDate orderDate = targetTime.toLocalDate();
+        if (startDate != null && orderDate.isBefore(startDate)) {
+            return false;
+        }
+        if (endDate != null && orderDate.isAfter(endDate)) {
+            return false;
+        }
+        return true;
     }
 
     private boolean isWarehouseAuthorized(User user) {
