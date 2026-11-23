@@ -130,7 +130,9 @@ export const StaffManagementPage: React.FC = () => {
           phoneNumber: values.phoneNumber,
           email: values.email,
           password: values.password || undefined,
+          newPassword: values.password || undefined,
           role: values.role,
+          roles: values.role ? [values.role] : [],
           managedProvinceId: provId,
           managedProvinceName: prov?.name,
           assignedPostOfficeId: values.assignedPostOfficeId,
@@ -147,6 +149,7 @@ export const StaffManagementPage: React.FC = () => {
           phoneNumber: values.phoneNumber,
           email: values.email,
           role: values.role,
+          roles: values.role ? [values.role] : [],
           managedProvinceId: provId,
           managedProvinceName: prov?.name,
           assignedPostOfficeId: values.assignedPostOfficeId,
@@ -383,12 +386,14 @@ export const StaffManagementPage: React.FC = () => {
                 <Select placeholder="Chọn vai trò">
                   {assignableRoles.map((r) => (
                     <Select.Option key={r} value={r}>
+                      {r === 'ROLE_ADMIN' && 'Quản trị viên hệ thống (Admin)'}
                       {r === 'ROLE_BRANCH_MANAGER' && 'Quản lý Chi nhánh Tỉnh/TP'}
                       {r === 'ROLE_POST_OFFICE_MANAGER' && 'Quản lý Bưu cục kho vận'}
                       {r === 'ROLE_SHIPPER' && 'Bưu tá (Shipper)'}
                       {r === 'ROLE_WAREHOUSE_STAFF' && 'Nhân viên khai thác kho'}
                       {r === 'ROLE_MERCHANT' && 'Khách hàng / Shop'}
-                      {r !== 'ROLE_BRANCH_MANAGER' &&
+                      {r !== 'ROLE_ADMIN' &&
+                        r !== 'ROLE_BRANCH_MANAGER' &&
                         r !== 'ROLE_POST_OFFICE_MANAGER' &&
                         r !== 'ROLE_SHIPPER' &&
                         r !== 'ROLE_WAREHOUSE_STAFF' &&

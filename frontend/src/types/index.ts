@@ -243,7 +243,8 @@ export interface CreateStaffRequest {
   fullName: string;
   phoneNumber?: string;
   email?: string;
-  role: string;
+  role?: string;
+  roles?: string[];
   managedProvinceId?: number;
   managedProvinceName?: string;
   assignedPostOfficeId?: number;
@@ -255,7 +256,9 @@ export interface UpdateStaffRequest {
   phoneNumber?: string;
   email?: string;
   password?: string;
+  newPassword?: string;
   role?: string;
+  roles?: string[];
   managedProvinceId?: number;
   managedProvinceName?: string;
   assignedPostOfficeId?: number;

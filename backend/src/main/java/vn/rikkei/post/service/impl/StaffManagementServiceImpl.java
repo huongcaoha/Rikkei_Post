@@ -36,8 +36,8 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     public List<String> getAssignableRoles(CustomUserDetails currentUser) {
         if (hasRole(currentUser, "ROLE_ADMIN")) {
-            // Admin có quyền phân quyền tất cả vai trò ngoại trừ chính ROLE_ADMIN
-            return List.of("ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_MERCHANT");
+            // Admin có quyền phân quyền tất cả vai trò bao gồm cả Quản trị viên
+            return List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_MERCHANT");
         } else if (hasRole(currentUser, "ROLE_BRANCH_MANAGER")) {
             // Quản lý chi nhánh có quyền tạo các tài khoản cấp thấp hơn thuộc địa bàn
             return List.of("ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF");
@@ -113,25 +113,19 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     @Transactional
     public StaffUserResponse createStaff(CreateStaffRequest request, CustomUserDetails currentUser) {
-        // Kiểm tra trùng username, phone, email
-        if (userRepository.existsByUsername(request.getUsername())) {
-            throw new IllegalArgumentException("Tên đăng nhập '" + request.getUsername() + "' đã tồn tại!");
-        }
-        if (userRepository.existsByPhoneNumber(request.getPhoneNumber())) {
-            throw new IllegalArgumentException("Số điện thoại '" + request.getPhoneNumber() + "' đã được sử dụng!");
-        }
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException("Email '" + request.getEmail() + "' đã được sử dụng!");
-        }
-
         boolean isAdmin = hasRole(currentUser, "ROLE_ADMIN");
         boolean isBranchManager = hasRole(currentUser, "ROLE_BRANCH_MANAGER");
         boolean isPostOfficeManager = hasRole(currentUser, "ROLE_POST_OFFICE_MANAGER");
 
+        List<String> effectiveRoles = request.getRoles();
+        if (effectiveRoles == null || effectiveRoles.isEmpty()) {
+            throw new IllegalArgumentException("Phải chọn ít nhất một vai trò (Role)");
+        }
+
         // Kiểm tra phân quyền tạo vai trò:
-        // 1. Không ai được phép tạo tài khoản có ROLE_ADMIN (theo yêu cầu của đề bài)
-        for (String rName : request.getRoles()) {
-            if ("ROLE_ADMIN".equalsIgnoreCase(rName)) {
+        // 1. Chỉ Admin mới được phép tạo tài khoản có ROLE_ADMIN
+        for (String rName : effectiveRoles) {
+            if ("ROLE_ADMIN".equalsIgnoreCase(rName) && !isAdmin) {
                 throw new IllegalArgumentException("Không được phép tạo tài khoản với quyền Quản trị viên (ROLE_ADMIN)!");
             }
             if (isBranchManager && !isAdmin) {
@@ -148,7 +142,7 @@ public class StaffManagementServiceImpl implements StaffManagementService {
         }
 
         Set<Role> roles = new HashSet<>();
-        for (String roleName : request.getRoles()) {
+        for (String roleName : effectiveRoles) {
             Role role = roleRepository.findByRoleName(roleName.toUpperCase())
                     .orElseGet(() -> roleRepository.save(Role.builder()
                             .roleName(roleName.toUpperCase())
@@ -177,22 +171,67 @@ public class StaffManagementServiceImpl implements StaffManagementService {
             poName = warehouseRepository.findById(assignedPoId).map(Warehouse::getName).orElse(null);
         }
 
-        User newUser = User.builder()
-                .username(request.getUsername())
-                .password(passwordEncoder.encode(request.getPassword()))
-                .fullName(request.getFullName())
-                .phoneNumber(request.getPhoneNumber())
-                .email(request.getEmail())
-                .roles(roles)
-                .managedProvinceId(managedProvId)
-                .managedProvinceName(provName)
-                .assignedPostOfficeId(assignedPoId)
-                .postOfficeName(poName)
-                .isActive(true)
-                .build();
+        // Kiểm tra tài khoản đã tồn tại hay chưa
+        Optional<User> existingUserOpt = userRepository.findByUsername(request.getUsername());
+        User userToSave;
+        if (existingUserOpt.isPresent()) {
+            User existing = existingUserOpt.get();
+            boolean isStaffAlready = existing.getRoles().stream()
+                    .anyMatch(r -> !r.getRoleName().equals("ROLE_MERCHANT"));
+            if (isStaffAlready) {
+                throw new IllegalArgumentException("Tên đăng nhập '" + request.getUsername() + "' đã tồn tại trong danh sách nhân sự!");
+            }
+            // Tài khoản khách hàng/Shop được Admin cấp thêm quyền nhân sự
+            if (request.getPhoneNumber() != null && !request.getPhoneNumber().equals(existing.getPhoneNumber())
+                    && userRepository.existsByPhoneNumber(request.getPhoneNumber())) {
+                throw new IllegalArgumentException("Số điện thoại '" + request.getPhoneNumber() + "' đã được sử dụng bởi tài khoản khác!");
+            }
+            if (request.getEmail() != null && !request.getEmail().equalsIgnoreCase(existing.getEmail())
+                    && userRepository.existsByEmail(request.getEmail())) {
+                throw new IllegalArgumentException("Email '" + request.getEmail() + "' đã được sử dụng bởi tài khoản khác!");
+            }
+            userToSave = existing;
+            userToSave.setFullName(request.getFullName());
+            if (request.getPhoneNumber() != null && !request.getPhoneNumber().isBlank()) {
+                userToSave.setPhoneNumber(request.getPhoneNumber());
+            }
+            if (request.getEmail() != null && !request.getEmail().isBlank()) {
+                userToSave.setEmail(request.getEmail());
+            }
+            if (request.getPassword() != null && !request.getPassword().isBlank()) {
+                userToSave.setPassword(passwordEncoder.encode(request.getPassword()));
+            }
+            userToSave.getRoles().addAll(roles);
+            userToSave.setManagedProvinceId(managedProvId);
+            userToSave.setManagedProvinceName(provName);
+            userToSave.setAssignedPostOfficeId(assignedPoId);
+            userToSave.setPostOfficeName(poName);
+            userToSave.setIsActive(true);
+        } else {
+            // Người dùng hoàn toàn mới
+            if (userRepository.existsByPhoneNumber(request.getPhoneNumber())) {
+                throw new IllegalArgumentException("Số điện thoại '" + request.getPhoneNumber() + "' đã được sử dụng!");
+            }
+            if (userRepository.existsByEmail(request.getEmail())) {
+                throw new IllegalArgumentException("Email '" + request.getEmail() + "' đã được sử dụng!");
+            }
+            userToSave = User.builder()
+                    .username(request.getUsername())
+                    .password(passwordEncoder.encode(request.getPassword()))
+                    .fullName(request.getFullName())
+                    .phoneNumber(request.getPhoneNumber())
+                    .email(request.getEmail())
+                    .roles(roles)
+                    .managedProvinceId(managedProvId)
+                    .managedProvinceName(provName)
+                    .assignedPostOfficeId(assignedPoId)
+                    .postOfficeName(poName)
+                    .isActive(true)
+                    .build();
+        }
 
-        User saved = userRepository.save(newUser);
-        log.info("Đã tạo nhân viên mới: {} ({}) bởi user: {}", saved.getFullName(), saved.getUsername(), currentUser.getUsername());
+        User saved = userRepository.save(userToSave);
+        log.info("Đã tạo/phân quyền nhân viên: {} ({}) bởi user: {}", saved.getFullName(), saved.getUsername(), currentUser.getUsername());
         return mapToResponse(saved);
     }
 
@@ -212,13 +251,15 @@ public class StaffManagementServiceImpl implements StaffManagementService {
         if (request.getEmail() != null) user.setEmail(request.getEmail());
         if (request.getIsActive() != null) user.setIsActive(request.getIsActive());
 
-        if (request.getNewPassword() != null && !request.getNewPassword().isBlank()) {
-            user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        String pwd = request.getEffectivePassword();
+        if (pwd != null && !pwd.isBlank()) {
+            user.setPassword(passwordEncoder.encode(pwd));
         }
 
         // Cập nhật Roles
-        if (request.getRoles() != null && !request.getRoles().isEmpty()) {
-            for (String rName : request.getRoles()) {
+        List<String> reqRoles = request.getRoles();
+        if (reqRoles != null && !reqRoles.isEmpty()) {
+            for (String rName : reqRoles) {
                 if ("ROLE_ADMIN".equalsIgnoreCase(rName) && !isAdmin) {
                     throw new IllegalArgumentException("Không được gán quyền ROLE_ADMIN!");
                 }
@@ -228,7 +269,7 @@ public class StaffManagementServiceImpl implements StaffManagementService {
             }
 
             Set<Role> newRoles = new HashSet<>();
-            for (String rName : request.getRoles()) {
+            for (String rName : reqRoles) {
                 Role r = roleRepository.findByRoleName(rName.toUpperCase()).orElse(null);
                 if (r != null) newRoles.add(r);
             }
