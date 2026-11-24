@@ -16,6 +16,7 @@ import vn.rikkei.post.repository.ShipperAssignmentRepository;
 import vn.rikkei.post.repository.UserRepository;
 import vn.rikkei.post.repository.WarehouseRepository;
 import vn.rikkei.post.service.ShipperService;
+import vn.rikkei.post.service.WebSocketNotificationService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -39,6 +40,7 @@ public class ShipperServiceImpl implements ShipperService {
     private final ShipperAssignmentRepository assignmentRepository;
     private final UserRepository userRepository;
     private final WarehouseRepository warehouseRepository;
+    private final WebSocketNotificationService webSocketNotificationService;
 
     @Override
     @Transactional(readOnly = true)
@@ -331,7 +333,13 @@ public class ShipperServiceImpl implements ShipperService {
 
         log.info("Bưu cục {} đã quét thu hồi đơn hàng {} sang RETURNING bởi {} lúc {}",
                 whName, cleanCode, actor.getFullName(), timeStr);
-        return mapToResponse(saved);
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, "DELIVERY_FAILED", actor.getFullName(), "Thu hồi hoàn kho: " + reasonStr);
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo WebSocket: {}", e.getMessage());
+        }
+        return res;
     }
 
     private boolean isMatchDate(Order o, String category, LocalDate startDate, LocalDate endDate) {
@@ -564,7 +572,13 @@ public class ShipperServiceImpl implements ShipperService {
         trackingLogRepository.save(logEntry);
 
         log.info("Shipper {} đã quét lấy hàng thành công đơn: {} vào lúc {}", shipper.getFullName(), cleanCode, timeStr);
-        return mapToResponse(saved);
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, "CREATED", shipper.getFullName(), "Bưu tá đã lấy hàng thành công tại Shop");
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo WebSocket: {}", e.getMessage());
+        }
+        return res;
     }
 
     @Override
@@ -631,7 +645,13 @@ public class ShipperServiceImpl implements ShipperService {
 
         log.info("Nhân sự kho {} ({}) đã quét nhập kho đơn hàng: {} tại {} vào lúc {}",
                 actor.getFullName(), roleTitle, cleanCode, whName, timeStr);
-        return mapToResponse(saved);
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, "PICKED_UP", actor.getFullName(), "Đã nhập kho bưu cục " + whName);
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo WebSocket: {}", e.getMessage());
+        }
+        return res;
     }
 
     @Override
@@ -797,7 +817,13 @@ public class ShipperServiceImpl implements ShipperService {
 
         log.info("User {} ({}) đã cập nhật trạng thái đơn {} sang {} vào lúc {}",
                 actor.getFullName(), roleTitle, cleanCode, status, timeStr);
-        return mapToResponse(saved);
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, order.getCurrentStatus(), actor.getFullName(), note);
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo WebSocket: {}", e.getMessage());
+        }
+        return res;
     }
 
     @Override
@@ -858,7 +884,13 @@ public class ShipperServiceImpl implements ShipperService {
         trackingLogRepository.save(logEntry);
 
         log.info("Shipper {} đã quét xuất kho đơn {} mang đi phát lúc {}", shipper.getFullName(), cleanCode, timeStr);
-        return mapToResponse(saved);
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, "AT_SORTING_HUB", shipper.getFullName(), "Bưu tá xuất kho mang đi phát");
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo WebSocket: {}", e.getMessage());
+        }
+        return res;
     }
 
     private OrderResponse mapToResponse(Order order) {

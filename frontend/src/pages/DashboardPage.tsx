@@ -20,6 +20,7 @@ import { orderApi } from '../api/order';
 import { DashboardStats, Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from '../components/ContinuousScannerModal';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
@@ -59,6 +60,14 @@ export const DashboardPage: React.FC = () => {
   useEffect(() => {
     fetchDashboardData(startDate, endDate);
   }, [startDate, endDate]);
+
+  // Lắng nghe cập nhật đơn hàng realtime qua WebSocket
+  useOrderWebSocket({
+    showNotification: false,
+    onEvent: () => {
+      fetchDashboardData(startDate, endDate);
+    },
+  });
 
   const fetchDashboardData = async (sDate?: string, eDate?: string) => {
     setLoading(true);

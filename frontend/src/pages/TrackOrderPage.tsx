@@ -4,6 +4,7 @@ import { Search, Package, MapPin, Clock, Truck, CheckCircle2, AlertCircle } from
 import { useParams, useNavigate } from 'react-router-dom';
 import { orderApi } from '../api/order';
 import { Order, OrderTrackingLog } from '../types';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 
 export const TrackOrderPage: React.FC = () => {
   const { trackingCode: paramCode } = useParams<{ trackingCode?: string }>();
@@ -19,6 +20,17 @@ export const TrackOrderPage: React.FC = () => {
       handleSearch(paramCode);
     }
   }, [paramCode]);
+
+  // Lắng nghe cập nhật hành trình đơn hàng realtime
+  useOrderWebSocket({
+    trackingCode: order?.trackingCode,
+    showNotification: true,
+    onEvent: () => {
+      if (order?.trackingCode) {
+        handleSearch(order.trackingCode);
+      }
+    },
+  });
 
   const handleSearch = async (codeToSearch?: string) => {
     const code = (codeToSearch || searchInput).trim();

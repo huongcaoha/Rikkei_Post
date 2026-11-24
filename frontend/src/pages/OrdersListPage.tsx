@@ -7,6 +7,7 @@ import { shipperApi } from '../api/shipper';
 import { Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from '../components/ContinuousScannerModal';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 
 export const OrdersListPage: React.FC = () => {
   const { user } = useAuth();
@@ -56,6 +57,14 @@ export const OrdersListPage: React.FC = () => {
       window.removeEventListener('rikkei-order-updated', handleOrderUpdated);
     };
   }, [page, pageSize, statusFilter]);
+
+  // Lắng nghe cập nhật đơn hàng realtime qua WebSocket
+  useOrderWebSocket({
+    showNotification: false,
+    onEvent: () => {
+      fetchOrders();
+    },
+  });
 
   const fetchOrders = async () => {
     setLoading(true);

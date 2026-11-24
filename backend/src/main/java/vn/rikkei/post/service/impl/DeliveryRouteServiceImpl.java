@@ -97,32 +97,26 @@ public class DeliveryRouteServiceImpl implements DeliveryRouteService {
             return null;
         }
 
+        // 1. Tìm tuyến đường khớp với Xã/Phường
         List<DeliveryRoute> candidateRoutes;
         if (wardName != null && !wardName.isBlank()) {
             candidateRoutes = routeRepository.findMatchingRoutes(provinceId, wardName.trim());
-        } else {
-            candidateRoutes = routeRepository.findByProvinceIdAndIsActiveTrue(provinceId);
+            if (!candidateRoutes.isEmpty()) {
+                return candidateRoutes.get(0);
+            }
         }
 
-        if (candidateRoutes.isEmpty()) {
-            // Thử lấy bất kỳ tuyến nào thuộc tỉnh
-            candidateRoutes = routeRepository.findByProvinceIdAndIsActiveTrue(provinceId);
-        }
-
-        if (candidateRoutes.isEmpty()) {
-            return null;
-        }
-
-        // Nếu có địa chỉ chi tiết, quét tìm tuyến có từ khóa đường phố khớp nhất
+        // 2. Nếu không khớp theo xã/phường, tìm theo từ khóa đường phố trong địa chỉ chi tiết
         if (detailedAddress != null && !detailedAddress.isBlank()) {
+            List<DeliveryRoute> allProvRoutes = routeRepository.findByProvinceIdAndIsActiveTrue(provinceId);
             String lowerAddr = detailedAddress.toLowerCase();
-            for (DeliveryRoute route : candidateRoutes) {
+            for (DeliveryRoute route : allProvRoutes) {
                 if (route.getStreetKeywords() != null && !route.getStreetKeywords().isBlank()) {
                     String[] keywords = route.getStreetKeywords().split("[,;]");
                     for (String kw : keywords) {
                         String cleanKw = kw.trim().toLowerCase();
                         if (!cleanKw.isEmpty() && lowerAddr.contains(cleanKw)) {
-                            log.info("Khớp tuyến đường thành công: {} (Từ khóa: {}) cho địa chỉ: {}",
+                            log.info("Khớp tuyến đường thành công theo từ khóa phố: {} (Từ khóa: {}) cho địa chỉ: {}",
                                     route.getRouteName(), cleanKw, detailedAddress);
                             return route;
                         }
@@ -131,8 +125,8 @@ public class DeliveryRouteServiceImpl implements DeliveryRouteService {
             }
         }
 
-        // Nếu không khớp từ khóa cụ thể, trả về tuyến đầu tiên của xã/phường đó
-        return candidateRoutes.get(0);
+        // 3. Nếu không khớp tuyến cụ thể nào, trả về null để bưu cục tự điều phối (tránh gán nhầm sang bưu cục/tuyến khác)
+        return null;
     }
 
     private void enrichPostOfficeAndShipper(DeliveryRoute route) {

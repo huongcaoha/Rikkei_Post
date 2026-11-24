@@ -26,7 +26,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // Endpoint WebSocket kết nối từ ReactJS Client
+        // Hỗ trợ cả Native WebSocket và SockJS Fallback
+        registry.addEndpoint("/ws-logistics")
+                .setAllowedOriginPatterns("*");
         registry.addEndpoint("/ws-logistics")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();

@@ -17,6 +17,7 @@ import vn.rikkei.post.entity.OrderTrackingLog;
 import vn.rikkei.post.entity.ShipperAssignment;
 import vn.rikkei.post.entity.User;
 import vn.rikkei.post.entity.Warehouse;
+import vn.rikkei.post.repository.DeliveryRouteRepository;
 import vn.rikkei.post.repository.MerchantAddressRepository;
 import vn.rikkei.post.repository.OrderRepository;
 import vn.rikkei.post.repository.OrderTrackingLogRepository;
@@ -28,14 +29,17 @@ import vn.rikkei.post.service.DeliveryRouteService;
 import vn.rikkei.post.service.EmailService;
 import vn.rikkei.post.service.OrderService;
 import vn.rikkei.post.service.PricingService;
+import vn.rikkei.post.service.WebSocketNotificationService;
 
 import java.math.BigDecimal;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -52,6 +56,8 @@ public class OrderServiceImpl implements OrderService {
     private final ShipperAssignmentRepository assignmentRepository;
     private final MerchantAddressRepository merchantAddressRepository;
     private final DeliveryRouteService deliveryRouteService;
+    private final DeliveryRouteRepository routeRepository;
+    private final WebSocketNotificationService webSocketNotificationService;
     private final Random random = new Random();
 
     @Override
@@ -104,7 +110,9 @@ public class OrderServiceImpl implements OrderService {
                 request.getSenderLat(),
                 request.getSenderLng(),
                 request.getSenderProvinceId(),
-                request.getSenderDistrictId()
+                request.getSenderDistrictId(),
+                request.getSenderWardName(),
+                request.getSenderAddress()
         );
 
         // 5. Kiểm tra tuyến đường phù hợp
@@ -123,9 +131,9 @@ public class OrderServiceImpl implements OrderService {
         User assignedShipper = findNearestShipper(nearestPostOffice, matchedRoute, request.getSenderProvinceId());
 
         Long finalPostOfficeId = nearestPostOffice != null ? nearestPostOffice.getId() : (matchedRoute != null ? matchedRoute.getPostOfficeId() : 1L);
-        Long finalShipperId = assignedShipper != null ? assignedShipper.getId() : (matchedRoute != null ? matchedRoute.getAssignedShipperId() : null);
-        String finalShipperName = assignedShipper != null ? assignedShipper.getFullName() : (matchedRoute != null ? matchedRoute.getAssignedShipperName() : null);
-        String finalShipperPhone = assignedShipper != null ? assignedShipper.getPhoneNumber() : (matchedRoute != null ? matchedRoute.getAssignedShipperPhone() : null);
+        Long finalShipperId = assignedShipper != null ? assignedShipper.getId() : null;
+        String finalShipperName = assignedShipper != null ? assignedShipper.getFullName() : null;
+        String finalShipperPhone = assignedShipper != null ? assignedShipper.getPhoneNumber() : null;
 
         // 7. Lưu thực thể Order
         Order order = Order.builder()
@@ -236,7 +244,13 @@ public class OrderServiceImpl implements OrderService {
             log.warn("Lỗi gửi email tạo đơn: {}", e.getMessage());
         }
 
-        return mapToResponse(savedOrder);
+        OrderResponse response = mapToResponse(savedOrder);
+        try {
+            webSocketNotificationService.notifyOrderCreated(response);
+        } catch (Exception e) {
+            log.warn("Không thể gửi thông báo WebSocket tạo đơn #{}: {}", savedOrder.getTrackingCode(), e.getMessage());
+        }
+        return response;
     }
 
     @Override
@@ -404,15 +418,15 @@ public class OrderServiceImpl implements OrderService {
 
     /**
      * Tự động tìm kiếm Bưu cục gần Shop nhất theo tọa độ (senderLat, senderLng)
-     * hoặc theo Tỉnh/Huyện người gửi.
+     * hoặc theo Xã/Phường, Địa chỉ chi tiết và Tỉnh/TP người gửi.
      */
-    private Warehouse findNearestPostOffice(Double lat, Double lng, Integer provinceId, Integer districtId) {
+    private Warehouse findNearestPostOffice(Double lat, Double lng, Integer provinceId, Integer districtId, String wardName, String senderAddress) {
         List<Warehouse> activeWhs = warehouseRepository.findByIsActiveTrue();
         if (activeWhs.isEmpty()) {
             return null;
         }
 
-        // 1. Nếu có tọa độ GPS hợp lệ, tính khoảng cách địa lý (Haversine)
+        // 1. Nếu có tọa độ GPS hợp lệ (lat, lng != 0), tính khoảng cách địa lý (Haversine)
         if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
             Warehouse closest = null;
             double minDistance = Double.MAX_VALUE;
@@ -429,25 +443,86 @@ public class OrderServiceImpl implements OrderService {
                 }
             }
             if (closest != null) {
+                log.info("Tìm thấy bưu cục gần nhất theo GPS: {} (khoảng cách: ~{} km)", closest.getName(), Math.round(minDistance * 10.0) / 10.0);
                 return closest;
             }
         }
 
-        // 2. Nếu không có tọa độ, tìm theo Tỉnh/TP và Quận/Huyện
+        // 2. Nếu không có tọa độ GPS (hoặc GPS không khớp), tìm kiếm thông minh theo Xã/Phường, Địa chỉ và Tỉnh/TP
         if (provinceId != null) {
             List<Warehouse> provinceWhs = activeWhs.stream()
                     .filter(w -> provinceId.equals(w.getProvinceId()))
                     .collect(Collectors.toList());
 
             if (!provinceWhs.isEmpty()) {
-                if (districtId != null && districtId > 0) {
-                    Optional<Warehouse> districtWh = provinceWhs.stream()
-                            .filter(w -> districtId.equals(w.getDistrictId()))
-                            .findFirst();
-                    if (districtWh.isPresent()) {
-                        return districtWh.get();
+                // 2.1. Quét tìm kiếm bưu cục khớp theo Xã/Phường hoặc Địa chỉ người gửi
+                String normWard = normalizeSearchText(wardName);
+                String normAddr = normalizeSearchText(senderAddress);
+
+                Warehouse bestMatchedWh = null;
+                int maxScore = 0;
+
+                for (Warehouse wh : provinceWhs) {
+                    int score = 0;
+                    String whName = normalizeSearchText(wh.getName());
+                    String whAddr = normalizeSearchText(wh.getAddress());
+                    String whCode = normalizeSearchText(wh.getCode());
+
+                    // Trích xuất các từ khóa đặc trưng từ wardName (loại bỏ "xa", "phuong", "thi tran")
+                    String cleanWardKeyword = normWard.replaceAll("^(xa|phuong|thi tran|tp|thanh pho|tinh)\\s+", "").trim();
+                    if (!cleanWardKeyword.isEmpty() && cleanWardKeyword.length() >= 3) {
+                        if (whName.contains(cleanWardKeyword)) score += 60;
+                        if (whAddr.contains(cleanWardKeyword)) score += 50;
+                        if (whCode.contains(cleanWardKeyword.replace(" ", ""))) score += 40;
+                    }
+
+                    // Kiểm tra từ khóa trong senderAddress
+                    if (!normAddr.isEmpty()) {
+                        if (whName.contains(normAddr)) score += 40;
+                        if (whAddr.contains(normAddr)) score += 30;
+
+                        if (senderAddress != null) {
+                            for (String part : senderAddress.split("[,;\\-]")) {
+                                String cleanPart = normalizeSearchText(part).trim();
+                                if (cleanPart.length() >= 3 && !cleanPart.matches("^(ha noi|tp hcm|viet nam|so \\d+.*)$")) {
+                                    if (whName.contains(cleanPart) || whAddr.contains(cleanPart)) {
+                                        score += 30;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Ưu tiên bưu cục giao dịch (SPOKE_POST_OFFICE)
+                    if ("SPOKE_POST_OFFICE".equalsIgnoreCase(wh.getType())) {
+                        score += 5;
+                    }
+
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestMatchedWh = wh;
                     }
                 }
+
+                if (bestMatchedWh != null && maxScore >= 30) {
+                    log.info("Khớp bưu cục thành công: {} (Score: {}) cho địa chỉ: {}, Xã/Phường: {}",
+                            bestMatchedWh.getName(), maxScore, senderAddress, wardName);
+                    return bestMatchedWh;
+                }
+
+                // 2.2. Kiểm tra nếu có tuyến đường trong tỉnh khớp với xã/phường này
+                if (wardName != null && !wardName.isBlank()) {
+                    List<DeliveryRoute> matchedRoutes = routeRepository.findMatchingRoutes(provinceId, wardName.trim());
+                    if (!matchedRoutes.isEmpty() && matchedRoutes.get(0).getPostOfficeId() != null) {
+                        Optional<Warehouse> whByRoute = warehouseRepository.findById(matchedRoutes.get(0).getPostOfficeId());
+                        if (whByRoute.isPresent() && Boolean.TRUE.equals(whByRoute.get().getIsActive())) {
+                            log.info("Khớp bưu cục qua tuyến đường phân bổ: {}", whByRoute.get().getName());
+                            return whByRoute.get();
+                        }
+                    }
+                }
+
+                // 2.3. Fallback: Chọn bưu cục giao dịch đầu tiên của tỉnh
                 return provinceWhs.stream()
                         .filter(w -> "SPOKE_POST_OFFICE".equalsIgnoreCase(w.getType()))
                         .findFirst()
@@ -462,39 +537,44 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * Tự động tìm kiếm Shipper gần Shop nhất phụ trách bưu cục/tuyến đường để đến lấy hàng
+     * Tự động tìm kiếm Shipper trực thuộc Bưu cục đó để đến lấy hàng.
+     * TUYỆT ĐỐI KHÔNG gán shipper của bưu cục khác sang!
      */
     private User findNearestShipper(Warehouse postOffice, DeliveryRoute matchedRoute, Integer provinceId) {
-        // 1. Nếu tuyến đường đã có bưu tá phụ trách, lấy bưu tá đó
-        if (matchedRoute != null && matchedRoute.getAssignedShipperId() != null) {
+        if (postOffice == null) {
+            return null;
+        }
+
+        // 1. Nếu tuyến đường đã có bưu tá phụ trách VÀ tuyến đường đó thuộc đúng bưu cục này
+        if (matchedRoute != null && postOffice.getId().equals(matchedRoute.getPostOfficeId()) && matchedRoute.getAssignedShipperId() != null) {
             Optional<User> shipperOpt = userRepository.findById(matchedRoute.getAssignedShipperId());
             if (shipperOpt.isPresent() && Boolean.TRUE.equals(shipperOpt.get().getIsActive())) {
+                log.info("Gán bưu tá theo tuyến đường phụ trách [{}] của bưu cục {}: {}",
+                        matchedRoute.getRouteName(), postOffice.getName(), shipperOpt.get().getFullName());
                 return shipperOpt.get();
             }
         }
 
-        // 2. Tìm bưu tá thuộc bưu cục gần nhất đó
-        if (postOffice != null) {
-            List<User> poShippers = userRepository.findByRoles_RoleNameAndAssignedPostOfficeId("ROLE_SHIPPER", postOffice.getId())
-                    .stream().filter(u -> Boolean.TRUE.equals(u.getIsActive())).collect(Collectors.toList());
-            if (!poShippers.isEmpty()) {
-                return poShippers.get(0);
-            }
-        }
-
-        // 3. Tìm bưu tá trong cùng Tỉnh/TP
-        if (provinceId != null) {
-            List<User> provShippers = userRepository.findByRoles_RoleNameAndManagedProvinceId("ROLE_SHIPPER", provinceId)
-                    .stream().filter(u -> Boolean.TRUE.equals(u.getIsActive())).collect(Collectors.toList());
-            if (!provShippers.isEmpty()) {
-                return provShippers.get(0);
-            }
-        }
-
-        // 4. Fallback: Lấy bưu tá bất kỳ đang hoạt động
-        List<User> allShippers = userRepository.findByRoles_RoleName("ROLE_SHIPPER")
+        // 2. Tìm bưu tá thuộc đúng bưu cục này
+        List<User> poShippers = userRepository.findByRoles_RoleNameAndAssignedPostOfficeId("ROLE_SHIPPER", postOffice.getId())
                 .stream().filter(u -> Boolean.TRUE.equals(u.getIsActive())).collect(Collectors.toList());
-        return allShippers.isEmpty() ? null : allShippers.get(0);
+        if (!poShippers.isEmpty()) {
+            log.info("Gán bưu tá trực thuộc bưu cục {}: {}", postOffice.getName(), poShippers.get(0).getFullName());
+            return poShippers.get(0);
+        }
+
+        // 3. Nếu bưu cục chưa có shipper nào, trả về null để Quản lý bưu cục phân công sau (không gán nhầm shipper bưu cục khác)
+        log.warn("Bưu cục [{}] (ID: {}) hiện chưa có bưu tá hoạt động. Đơn hàng sẽ chờ bưu cục điều phối.",
+                postOffice.getName(), postOffice.getId());
+        return null;
+    }
+
+    private String normalizeSearchText(String input) {
+        if (input == null) return "";
+        String temp = Normalizer.normalize(input, Normalizer.Form.NFD);
+        Pattern pattern = Pattern.compile("\\p{InCombiningDiacriticalMarks}+");
+        String normalized = pattern.matcher(temp).replaceAll("").toLowerCase();
+        return normalized.replace('đ', 'd').replace('Đ', 'd').replaceAll("[^a-z0-9\\s]", " ").replaceAll("\\s+", " ").trim();
     }
 
     private double calculateDistanceKm(double lat1, double lon1, double lat2, double lon2) {

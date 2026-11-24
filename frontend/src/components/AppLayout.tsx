@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 
 const { Header, Sider, Content } = Layout;
 
@@ -27,6 +28,9 @@ export const AppLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+
+  // Kích hoạt lắng nghe WebSocket toàn ứng dụng
+  useOrderWebSocket({ showNotification: true });
 
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false);
   const [globalScannerOpen, setGlobalScannerOpen] = useState<boolean>(false);
@@ -344,6 +348,9 @@ export const AppLayout: React.FC = () => {
                       {role.replace('ROLE_', '')}
                     </Tag>
                   ))}
+                  <Tag className="text-[11px] flex items-center gap-1 font-medium rounded-full px-2 py-0.5 border-none bg-green-50 text-green-700 select-none">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> WebSocket Live
+                  </Tag>
                 </div>
               </div>
 

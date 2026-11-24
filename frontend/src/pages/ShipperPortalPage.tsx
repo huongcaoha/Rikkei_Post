@@ -25,6 +25,7 @@ import { shipperApi } from '../api/shipper';
 import { Order, ShipperSummary } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from '../components/ContinuousScannerModal';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 
 const { RangePicker } = DatePicker;
 
@@ -120,6 +121,14 @@ export const ShipperPortalPage: React.FC = () => {
       window.removeEventListener('rikkei-order-updated', handleOrderUpdated);
     };
   }, [activeTab, startDate, endDate, selectedShipperId]);
+
+  // Lắng nghe cập nhật đơn hàng realtime qua WebSocket
+  useOrderWebSocket({
+    showNotification: false,
+    onEvent: () => {
+      loadTasksAndSummary();
+    },
+  });
 
   const handleApplyPreset = (preset: 'today' | '7days' | '30days' | 'all') => {
     setDatePreset(preset);
