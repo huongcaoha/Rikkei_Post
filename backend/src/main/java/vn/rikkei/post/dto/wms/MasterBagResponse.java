@@ -23,6 +23,14 @@ public class MasterBagResponse {
     private String destWarehouseName;
     private String sealNumber;
     private String status;
+    private String statusDescription;
+    private Long assignedDriverId;
+    private String assignedDriverName;
+    private String assignedDriverPhone;
+    private Long assignedTruckId;
+    private String assignedTruckPlate;
+    private LocalDateTime dispatchedAt;
+    private LocalDateTime arrivedAtHubAt;
     private Integer totalItems;
     private BigDecimal totalWeightKg;
     private Long sealedByUserId;

@@ -1174,10 +1174,13 @@ export const ShipperPortalPage: React.FC = () => {
         }}
       />
 
-      {/* Sprint 3 - US-17: Modal Bảng Kê Nộp Tiền Cuối Ca */}
+      {/* Sprint 3 - US-17 & Sprint 4: Modal Bảng Kê Nộp Tiền Cuối Ca & PayOS VietQR */}
       <CashReconciliationModal
         visible={cashReconciliationVisible}
-        onClose={() => setCashReconciliationVisible(false)}
+        onClose={() => {
+          setCashReconciliationVisible(false);
+          loadTasksAndSummary();
+        }}
         shipperId={selectedShipperId}
       />
 

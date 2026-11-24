@@ -71,6 +71,8 @@ public class SecurityConfig {
                                 "/api/v1/locations/**",
                                 "/api/v1/orders/track/**",
                                 "/api/v1/ai/**",
+                                "/api/v1/shipper/payos-webhook",
+                                "/api/v1/shipper/payment/callback/**",
                                 "/ws-logistics/**",
                                 "/actuator/**",
                                 "/error"

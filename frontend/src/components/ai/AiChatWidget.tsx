@@ -24,6 +24,17 @@ export const AiChatWidget: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Vị trí kéo thả tự do của Widget (Drag & Drop)
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const buttonRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingRef = useRef<boolean>(false);
+  const dragStartRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number }>({
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
+  });
+
   const [messages, setMessages] = useState<AiChatMessage[]>([
     {
       id: 'welcome',
@@ -165,29 +176,105 @@ export const AiChatWidget: React.FC = () => {
     });
   };
 
+  // Xử lý kéo thả tự do Widget bất kỳ vị trí trên màn hình (Desktop & Mobile)
+  const handlePointerDown = (clientX: number, clientY: number) => {
+    const el = buttonRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    dragStartRef.current = {
+      startX: clientX,
+      startY: clientY,
+      initialX: rect.left,
+      initialY: rect.top,
+    };
+    isDraggingRef.current = false;
+
+    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
+      const currentX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
+      const currentY = 'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
+      const dx = currentX - dragStartRef.current.startX;
+      const dy = currentY - dragStartRef.current.startY;
+
+      if (Math.hypot(dx, dy) > 6) {
+        isDraggingRef.current = true;
+      }
+
+      const nextX = Math.max(12, Math.min(window.innerWidth - rect.width - 12, dragStartRef.current.initialX + dx));
+      const nextY = Math.max(12, Math.min(window.innerHeight - rect.height - 12, dragStartRef.current.initialY + dy));
+      setPosition({ x: nextX, y: nextY });
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('touchend', handlePointerUp);
+
+      // Nếu không phải thao tác kéo di chuyển -> Mở chat
+      if (!isDraggingRef.current) {
+        setIsOpen(true);
+      }
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', handlePointerMove, { passive: false });
+    window.addEventListener('touchend', handlePointerUp);
+  };
+
   return (
     <>
-      {/* Floating Chat Button */}
+      {/* Floating Chat Button: Có thể kéo thả tự do, Mobile chỉ hiện icon Robot nhỏ gọn */}
       {!isOpen && (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 text-white px-4 py-3 rounded-full shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 group"
-          title="Mở Trợ lý AI Rikkei_Post"
+        <div
+          ref={buttonRef}
+          style={
+            position
+              ? { left: `${position.x}px`, top: `${position.y}px`, right: 'auto', bottom: 'auto' }
+              : undefined
+          }
+          onMouseDown={(e) => {
+            if (e.button === 0) {
+              handlePointerDown(e.clientX, e.clientY);
+            }
+          }}
+          onTouchStart={(e) => {
+            handlePointerDown(e.touches[0].clientX, e.touches[0].clientY);
+          }}
+          className={`fixed z-50 select-none cursor-grab active:cursor-grabbing transition-transform duration-75 ${
+            !position ? 'bottom-6 right-6' : ''
+          }`}
+          title="Kéo di chuyển hoặc bấm để mở Trợ lý AI Rikkei_Post"
         >
-          <div className="relative">
-            <Sparkles size={20} className="animate-pulse" />
+          {/* GIAO DIỆN MOBILE (< 640px): Chỉ hiển thị icon hình robot nhỏ gọn cực kỳ tinh tế */}
+          <div className="flex sm:hidden relative">
+            <div className="w-13 h-13 rounded-full bg-gradient-to-tr from-red-600 via-red-600 to-rose-500 text-white flex items-center justify-center shadow-2xl border-2 border-white ring-4 ring-red-500/25 active:scale-95 transition-transform duration-150">
+              <Bot size={28} className="animate-pulse" />
+              {/* Online Dot */}
+              <span className="absolute top-0 right-0 flex h-3.5 w-3.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-white"></span>
+              </span>
+            </div>
           </div>
-          <span className="font-semibold text-sm tracking-wide">Trợ lý AI CSKH</span>
-          <span className="flex h-2.5 w-2.5 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-          </span>
-        </button>
+
+          {/* GIAO DIỆN DESKTOP (>= 640px): Hiển thị đầy đủ icon Robot + Label Trợ lý AI CSKH */}
+          <div className="hidden sm:flex items-center gap-2.5 bg-gradient-to-r from-red-600 via-red-600 to-red-700 text-white px-4 py-3 rounded-full shadow-2xl hover:shadow-red-500/25 border border-white/20 hover:scale-105 active:scale-95 transition-all duration-200">
+            <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
+              <Bot size={18} className="text-white" />
+            </div>
+            <span className="font-semibold text-sm tracking-wide">Trợ lý AI CSKH</span>
+            <span className="flex h-2.5 w-2.5 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+            </span>
+          </div>
+        </div>
       )}
 
-      {/* Floating Chat Window */}
+      {/* Floating Chat Window (Tự động thích ứng Mobile full-screen / Desktop) */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 w-[380px] sm:w-[420px] h-[580px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-6 duration-200">
+        <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-50 w-[calc(100vw-24px)] sm:w-[420px] max-w-[420px] h-[calc(100vh-80px)] max-h-[580px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-6 duration-200">
           {/* Header */}
           <div className="bg-gradient-to-r from-red-600 via-red-700 to-red-800 text-white p-3.5 flex items-center justify-between shadow-sm">
             <div className="flex items-center gap-2.5">

@@ -75,6 +75,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   const lastScannedCodeRef = useRef<string>('');
   const lastScannedTimeRef = useRef<number>(0);
   const isPopupOpenRef = useRef<boolean>(false);
+  const isProcessingRef = useRef<boolean>(false);
 
   // Đồng bộ ref trạng thái popup để chặn quét camera khi popup đang mở
   useEffect(() => {
@@ -218,20 +219,59 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
 
   // Xử lý khi camera phát hiện mã
   const handleCameraDecoded = (decodedText: string) => {
-    // Nếu đang xử lý hoặc đang có Popup mở -> Không quét tiếp
-    if (isProcessing || isPopupOpenRef.current) {
+    // Nếu đang xử lý hoặc đang có Popup mở -> Chặn ngay lập tức bằng Ref đồng bộ
+    if (isProcessingRef.current || isPopupOpenRef.current) {
       return;
     }
 
     const cleanCode = decodedText.trim().toUpperCase();
     const now = Date.now();
-    // Chặn quét lặp cùng 1 mã trong vòng 2 giây
-    if (cleanCode === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2000) {
+    // Chặn quét lặp cùng 1 mã trong vòng 2.5 giây
+    if (cleanCode === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2500) {
       return;
     }
     lastScannedCodeRef.current = cleanCode;
     lastScannedTimeRef.current = now;
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+
+    // Tạm dừng quét khung hình để giải phóng camera và tránh đen màn hình
+    if (html5QrCodeRef.current) {
+      try {
+        html5QrCodeRef.current.pause(true);
+      } catch (e) {
+        // Ignore
+      }
+    }
+
     processBarcode(cleanCode);
+  };
+
+  const dismissFeedback = () => {
+    setPopupFeedback(null);
+    lastScannedCodeRef.current = '';
+    isProcessingRef.current = false;
+    setIsProcessing(false);
+
+    // Phục hồi mượt mà luồng camera không bao giờ bị đen hình
+    if (html5QrCodeRef.current) {
+      try {
+        html5QrCodeRef.current.resume();
+      } catch (e) {
+        startCamera();
+      }
+    }
+
+    // Đảm bảo video stream của trình duyệt tiếp tục play
+    const container = document.getElementById('qr-reader-container');
+    const video = container?.querySelector('video');
+    if (video && video.paused) {
+      video.play().catch(() => {});
+    }
+
+    if (inputMode === 'MANUAL') {
+      setTimeout(() => manualInputRef.current?.focus(), 150);
+    }
   };
 
   // Xử lý mã vận đơn (Gọi API và hiển thị Popup thông báo thành công hoặc lỗi)
@@ -354,14 +394,24 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
               <span>{getHeaderTitle()}</span>
             </div>
 
-            <Button
-              type="text"
-              size="small"
-              icon={isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-              onClick={() => setIsMuted(!isMuted)}
-              className="text-gray-400 hover:text-gray-700"
-              title={isMuted ? 'Bật âm thanh bíp' : 'Tắt âm thanh'}
-            />
+            <div className="flex items-center space-x-1">
+              <Button
+                type="text"
+                size="small"
+                icon={<RotateCcw size={16} />}
+                onClick={() => startCamera()}
+                className="text-gray-400 hover:text-gray-700"
+                title="Làm mới Camera (Khắc phục đứng hình)"
+              />
+              <Button
+                type="text"
+                size="small"
+                icon={isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                onClick={() => setIsMuted(!isMuted)}
+                className="text-gray-400 hover:text-gray-700"
+                title={isMuted ? 'Bật âm thanh bíp' : 'Tắt âm thanh'}
+              />
+            </div>
           </div>
         }
       >
@@ -427,6 +477,58 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
                     <div className="w-full h-0.5 bg-red-500 shadow-lg animate-pulse" />
                   </div>
                 </div>
+
+                {/* OVERLAY KẾT QUẢ QUÉT TRỰC TIẾP TRÊN CAMERA - KHÔNG DÙNG MODAL NỀN ĐỂ KHÔNG BỊ ĐEN CAMERA */}
+                {popupFeedback && (
+                  <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center animate-in fade-in duration-150">
+                    <div className="flex justify-center mb-1.5">
+                      {popupFeedback.type === 'SUCCESS' ? (
+                        <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-inner">
+                          <CheckCircle2 size={28} />
+                        </div>
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 shadow-inner">
+                          <AlertTriangle size={28} />
+                        </div>
+                      )}
+                    </div>
+
+                    <h3 className={`text-base font-bold ${popupFeedback.type === 'SUCCESS' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      {popupFeedback.title || (popupFeedback.type === 'SUCCESS' ? 'Thành công' : 'Thông báo')}
+                    </h3>
+                    <p className="text-xs text-gray-700 font-medium leading-relaxed px-2 my-1 max-w-xs">
+                      {popupFeedback.message}
+                    </p>
+
+                    {popupFeedback.chuteGate && (
+                      <div className="bg-blue-50 border border-blue-400 p-2 rounded-xl text-center space-y-0.5 my-1.5 w-full max-w-xs shadow-xs">
+                        <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">
+                          Máng Chia Chọn / Cửa Xuất (Chute/Gate):
+                        </span>
+                        <div className="text-sm font-black text-blue-900 tracking-wide">
+                          {popupFeedback.chuteGate}
+                        </div>
+                        <div className="text-[10px] font-mono text-gray-600">
+                          Routing Code: <strong className="text-red-600">{popupFeedback.routingCode}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    <Button
+                      type="primary"
+                      size="middle"
+                      autoFocus
+                      onClick={dismissFeedback}
+                      className={`mt-1.5 min-w-[130px] h-8 rounded-lg font-bold text-xs shadow-md transition-all active:scale-95 ${
+                        popupFeedback.type === 'SUCCESS'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-amber-600 hover:bg-amber-700 text-white'
+                      }`}
+                    >
+                      OK (Tiếp tục quét)
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -449,6 +551,18 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
                 />
               </div>
 
+              {popupFeedback && (
+                <div className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
+                  popupFeedback.type === 'SUCCESS' ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-amber-50 border-amber-300 text-amber-800'
+                }`}>
+                  <div className="space-y-0.5">
+                    <div className="font-bold">{popupFeedback.title}</div>
+                    <div>{popupFeedback.message}</div>
+                  </div>
+                  <Button size="small" type="primary" onClick={dismissFeedback} className="ml-2 font-bold">OK</Button>
+                </div>
+              )}
+
               <Button
                 type="primary"
                 size="large"
@@ -461,86 +575,6 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
               </Button>
             </form>
           )}
-        </div>
-      </Modal>
-
-      {/* POPUP THÔNG BÁO KẾT QUẢ QUÉT MÃ (Thành công hoặc Lỗi có nút OK theo đúng yêu cầu) */}
-      <Modal
-        open={!!popupFeedback}
-        onCancel={() => {
-          setPopupFeedback(null);
-          lastScannedCodeRef.current = '';
-        }}
-        footer={null}
-        centered
-        closable={false}
-        width={360}
-        className="scanner-result-popup"
-      >
-        <div className="text-center py-4 px-1 space-y-4">
-          {/* Biểu tượng trạng thái */}
-          <div className="flex justify-center">
-            {popupFeedback?.type === 'SUCCESS' ? (
-              <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-inner">
-                <CheckCircle2 size={38} />
-              </div>
-            ) : (
-              <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 shadow-inner">
-                <AlertTriangle size={38} />
-              </div>
-            )}
-          </div>
-
-          {/* Tiêu đề & Nội dung thông báo */}
-          <div className="space-y-1.5">
-            <h3
-              className={`text-lg font-bold ${
-                popupFeedback?.type === 'SUCCESS' ? 'text-emerald-700' : 'text-amber-700'
-              }`}
-            >
-              {popupFeedback?.title || (popupFeedback?.type === 'SUCCESS' ? 'Thành công' : 'Thông báo')}
-            </h3>
-            <p className="text-sm text-gray-700 font-medium leading-relaxed px-2">
-              {popupFeedback?.message}
-            </p>
-          </div>
-
-          {/* Phân loại cửa xuất / Máng chia chọn (US-08: Routing Code & Chute/Gate) */}
-          {popupFeedback?.chuteGate && (
-            <div className="bg-blue-50 border-2 border-blue-400 p-3 rounded-2xl text-center space-y-1 shadow-sm">
-              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
-                Máng Chia Chọn / Cửa Xuất (Chute/Gate):
-              </span>
-              <div className="text-xl font-black text-blue-900 tracking-wide">
-                {popupFeedback.chuteGate}
-              </div>
-              <div className="text-xs font-mono text-gray-600">
-                Routing Code: <strong className="text-red-600">{popupFeedback.routingCode}</strong>
-              </div>
-            </div>
-          )}
-
-          {/* NÚT OKE ĐỂ TẮT POPUP THEO ĐÚNG YÊU CẦU */}
-          <Button
-            type="primary"
-            size="large"
-            autoFocus
-            onClick={() => {
-              setPopupFeedback(null);
-              // Reset để cho phép quét tiếp mã mới
-              lastScannedCodeRef.current = '';
-              if (inputMode === 'MANUAL') {
-                setTimeout(() => manualInputRef.current?.focus(), 150);
-              }
-            }}
-            className={`w-full h-11 rounded-xl font-bold text-base shadow-md transition-all active:scale-95 ${
-              popupFeedback?.type === 'SUCCESS'
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                : 'bg-amber-600 hover:bg-amber-700 text-white'
-            }`}
-          >
-            OK
-          </Button>
         </div>
       </Modal>
     </>

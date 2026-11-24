@@ -21,6 +21,9 @@ import { ProfilePage } from './pages/ProfilePage';
 import { BillingReconciliationPage } from './pages/BillingReconciliationPage';
 import { CarrierPartnerPage } from './pages/CarrierPartnerPage';
 import { VrpRouteOptimizationPage } from './pages/VrpRouteOptimizationPage';
+import { TruckManagementPage } from './pages/TruckManagementPage';
+import { TruckDriverPortalPage } from './pages/TruckDriverPortalPage';
+import { AreaSortingScannerPage } from './pages/AreaSortingScannerPage';
 
 const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -64,6 +67,9 @@ export const App: React.FC = () => {
               <Route path="/admin/warehouses" element={<WarehouseManagementPage />} />
               <Route path="/admin/pricing" element={<PricingManagementPage />} />
               <Route path="/wms/bags" element={<MasterBagPage />} />
+              <Route path="/wms/trucks" element={<TruckManagementPage />} />
+              <Route path="/wms/sorting-scanner" element={<AreaSortingScannerPage />} />
+              <Route path="/driver/portal" element={<TruckDriverPortalPage />} />
               <Route path="/tms/manifests" element={<ShipmentManifestPage />} />
               <Route path="/tms/carriers" element={<CarrierPartnerPage />} />
               <Route path="/tms/route-optimizer" element={<VrpRouteOptimizationPage />} />

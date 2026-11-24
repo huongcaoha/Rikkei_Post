@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -18,5 +20,9 @@ public class CreateMasterBagRequest {
     @NotNull(message = "Kho / Hub đích không được để trống")
     private Long destWarehouseId;
 
+    private String sealNumber;
+
     private String notes;
+
+    private List<String> trackingCodes;
 }

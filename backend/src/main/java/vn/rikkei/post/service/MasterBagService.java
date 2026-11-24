@@ -17,4 +17,9 @@ public interface MasterBagService {
     MasterBagResponse removeItemFromBag(Long bagId, String trackingCode);
     MasterBagResponse sealBag(Long bagId, SealMasterBagRequest request, Long userId);
     MasterBagResponse unsealBag(Long bagId, Long userId);
+    MasterBagResponse assignDriver(Long bagId, vn.rikkei.post.dto.wms.AssignBagDriverRequest request, Long userId);
+    MasterBagResponse driverScanTransit(String bagCode, Long driverId);
+    MasterBagResponse hubScanInbound(String bagCode, Long hubWarehouseId, Long operatorId);
+    List<MasterBagResponse> getDriverBags(Long driverId);
+    List<MasterBagResponse> getIncomingBagsForHub(Long hubWarehouseId);
 }

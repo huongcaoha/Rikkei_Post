@@ -5,6 +5,7 @@ import {
   CompleteDeliveryRequest,
   DeliveryFailureRequest,
   CashReconciliationResponse,
+  CashSubmission,
 } from '../types';
 
 export const shipperApi = {
@@ -86,17 +87,54 @@ export const shipperApi = {
     return res.data.data;
   },
 
-  // Sprint 3 - US-17: Cash Reconciliation & End-of-shift Submit
-  getCashReconciliation: async (shipperId?: number, date?: string): Promise<CashReconciliationResponse> => {
+  // Sprint 3 - US-17 & Sprint 4: Cash Reconciliation & PayOS Online Submit
+  getCashReconciliation: async (
+    shipperId?: number,
+    date?: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<CashReconciliationResponse> => {
     const params: any = {};
     if (shipperId) params.shipperId = shipperId;
     if (date) params.date = date;
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
     const res = await apiClient.get('/shipper/cash-reconciliation', { params });
     return res.data.data;
   },
 
-  submitCash: async (amountSubmitted: number, notes?: string): Promise<{ message: string }> => {
-    const res = await apiClient.post('/shipper/submit-cash', { amountSubmitted, notes });
+  submitCash: async (data: {
+    amountSubmitted?: number;
+    shiftDate?: string;
+    paymentMethod?: 'PAYOS' | 'CASH';
+    notes?: string;
+    returnUrl?: string;
+    cancelUrl?: string;
+    trackingCodes?: string[];
+  }): Promise<any> => {
+    const res = await apiClient.post('/shipper/submit-cash', data);
+    return res.data.data;
+  },
+
+  getCashSubmissions: async (params?: {
+    shipperId?: number;
+    postOfficeId?: number;
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    size?: number;
+  }): Promise<{ content: CashSubmission[]; totalElements: number; totalPages: number }> => {
+    const res = await apiClient.get('/shipper/cash-submissions', { params });
+    return res.data.data;
+  },
+
+  checkSubmissionStatus: async (submissionCode: string): Promise<any> => {
+    const res = await apiClient.get(`/shipper/cash-submissions/check/${submissionCode}`);
+    return res.data.data;
+  },
+
+  approveCashSubmission: async (submissionCode: string): Promise<any> => {
+    const res = await apiClient.post(`/shipper/cash-submissions/approve/${submissionCode}`);
     return res.data.data;
   },
 };

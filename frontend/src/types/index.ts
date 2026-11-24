@@ -122,6 +122,12 @@ export interface Order {
   rescheduledDeliveryDate?: string;
   failureProofPhotoUrl?: string;
   paymentMethod?: string;
+  isReconciled?: boolean;
+  reconciliationSheetCode?: string;
+  isCashSettled?: boolean;
+  settledCashAmount?: number;
+  remainingCashAmount?: number;
+  cashSubmissionCode?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -157,11 +163,43 @@ export interface CashReconciliationResponse {
   shipperName: string;
   shipperPhone: string;
   shiftDate: string;
+  startDate?: string;
+  endDate?: string;
   totalOrdersDelivered: number;
   totalCodCollected: number;
   totalFeeCollected: number;
   totalCashToSubmit: number;
+  pastUnsettledDebt?: number;
+  isBlockedFromDelivery?: boolean;
+  unsettledOrdersCount?: number;
+  settledOrdersCount?: number;
   orders: Order[];
+}
+
+export interface CashSubmission {
+  id: number;
+  submissionCode: string;
+  shipperId: number;
+  shipperName: string;
+  shipperPhone: string;
+  postOfficeId?: number;
+  shiftDate: string;
+  totalOrders: number;
+  totalCodAmount: number;
+  totalFeeAmount: number;
+  totalAmount: number;
+  amountPaid: number;
+  paymentMethod: 'PAYOS' | 'CASH';
+  status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
+  payosOrderCode?: number;
+  checkoutUrl?: string;
+  qrCode?: string;
+  approvedBy?: number;
+  approvedByName?: string;
+  approvedAt?: string;
+  paidAt?: string;
+  notes?: string;
+  createdAt: string;
 }
 
 export interface CreateOrderRequest {
@@ -384,7 +422,15 @@ export interface MasterBag {
   destWarehouseId: number;
   destWarehouseName: string;
   sealNumber?: string;
-  status: 'OPEN' | 'SEALED' | 'MANIFESTED' | 'DISPATCHED' | 'RECEIVED' | 'UNSEALED' | string;
+  status: 'OPEN' | 'SEALED' | 'ASSIGNED_TO_DRIVER' | 'IN_TRANSIT' | 'ARRIVED_AT_HUB' | 'MANIFESTED' | 'DISPATCHED' | 'RECEIVED' | 'UNSEALED' | string;
+  statusDescription?: string;
+  assignedDriverId?: number;
+  assignedDriverName?: string;
+  assignedDriverPhone?: string;
+  assignedTruckId?: number;
+  assignedTruckPlate?: string;
+  dispatchedAt?: string;
+  arrivedAtHubAt?: string;
   totalItems: number;
   totalWeightKg: number;
   sealedByUserId?: number;
@@ -397,10 +443,89 @@ export interface MasterBag {
   items?: BagItem[];
 }
 
+export interface AssignBagDriverRequest {
+  driverId: number;
+  truckId?: number;
+  notes?: string;
+}
+
+export interface Truck {
+  id: number;
+  truckType: string;
+  payloadKg: number;
+  licensePlate: string;
+  currentWarehouseId: number;
+  currentWarehouseName: string;
+  currentWarehouseCode?: string;
+  currentWarehouseType?: string;
+  status: 'AT_WAREHOUSE' | 'IN_TRANSIT' | 'MAINTENANCE' | string;
+  statusDescription?: string;
+  currentDriverId?: number;
+  currentDriverName?: string;
+  currentDriverPhone?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CreateTruckRequest {
+  truckType: string;
+  payloadKg: number;
+  licensePlate: string;
+  currentWarehouseId: number;
+  status?: string;
+  currentDriverId?: number;
+  notes?: string;
+}
+
+export interface UpdateTruckRequest {
+  truckType?: string;
+  payloadKg?: number;
+  licensePlate?: string;
+  currentWarehouseId?: number;
+  status?: string;
+  currentDriverId?: number;
+  notes?: string;
+}
+
+export interface SmartSortingResponse {
+  trackingCode: string;
+  itemName: string;
+  actualWeightGram: number;
+  billableWeightGram: number;
+  codAmount: number;
+  serviceType: string;
+  currentStatus: string;
+  routingCode?: string;
+  senderName: string;
+  senderPhone: string;
+  senderAddress: string;
+  senderProvinceName?: string;
+  receiverName: string;
+  receiverPhone: string;
+  receiverAddress: string;
+  receiverProvinceId?: number;
+  receiverProvinceName?: string;
+  receiverWardName?: string;
+  receiverLat?: number;
+  receiverLng?: number;
+  destinationPostOfficeId?: number;
+  destinationPostOfficeCode?: string;
+  destinationPostOfficeName?: string;
+  destinationPostOfficeAddress?: string;
+  destinationPostOfficeLat?: number;
+  destinationPostOfficeLng?: number;
+  sortingZone?: string;
+  suggestedBinCode?: string;
+  suggestedAction?: string;
+}
+
 export interface CreateMasterBagRequest {
   originWarehouseId: number;
   destWarehouseId: number;
+  sealNumber?: string;
   notes?: string;
+  trackingCodes?: string[];
 }
 
 export interface ShipmentManifest {

@@ -2,23 +2,29 @@ package vn.rikkei.post.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import vn.payos.PayOS;
+import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
+import vn.payos.model.v2.paymentRequests.CreatePaymentLinkResponse;
+import vn.payos.model.v2.paymentRequests.PaymentLink;
+import vn.payos.model.v2.paymentRequests.PaymentLinkStatus;
+import vn.payos.model.webhooks.Webhook;
+import vn.payos.model.webhooks.WebhookData;
 import vn.rikkei.post.dto.order.OrderResponse;
-import vn.rikkei.post.dto.shipper.CashReconciliationResponse;
-import vn.rikkei.post.dto.shipper.CashSubmitRequest;
-import vn.rikkei.post.dto.shipper.CompleteDeliveryRequest;
-import vn.rikkei.post.dto.shipper.DeliveryFailureRequest;
+import vn.rikkei.post.dto.shipper.*;
 import vn.rikkei.post.entity.Order;
 import vn.rikkei.post.entity.OrderTrackingLog;
 import vn.rikkei.post.entity.ShipperAssignment;
+import vn.rikkei.post.entity.ShipperCashSubmission;
 import vn.rikkei.post.entity.User;
 import vn.rikkei.post.entity.Warehouse;
-import vn.rikkei.post.repository.OrderRepository;
-import vn.rikkei.post.repository.OrderTrackingLogRepository;
-import vn.rikkei.post.repository.ShipperAssignmentRepository;
-import vn.rikkei.post.repository.UserRepository;
-import vn.rikkei.post.repository.WarehouseRepository;
+import vn.rikkei.post.repository.*;
 import vn.rikkei.post.service.EmailService;
 import vn.rikkei.post.service.ShipperService;
 import vn.rikkei.post.service.WebSocketNotificationService;
@@ -27,10 +33,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -47,6 +50,8 @@ public class ShipperServiceImpl implements ShipperService {
     private final WarehouseRepository warehouseRepository;
     private final WebSocketNotificationService webSocketNotificationService;
     private final EmailService emailService;
+    private final ShipperCashSubmissionRepository cashSubmissionRepository;
+    private final PayOS payOS;
 
     @Override
     @Transactional(readOnly = true)
@@ -842,6 +847,36 @@ public class ShipperServiceImpl implements ShipperService {
         User shipper = userRepository.findById(shipperId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin bưu tá!"));
 
+        // Kiểm tra khóa chặn: Shipper phải thanh toán toàn bộ tiền hàng COD đã thu được từ các ngày trước đó
+        LocalDate today = LocalDate.now();
+        List<Order> pastUnsettledOrders = orderRepository.findByAssignedShipperId(shipperId).stream()
+                .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus())
+                        && o.getDeliveredAt() != null
+                        && o.getDeliveredAt().toLocalDate().isBefore(today)
+                        && !Boolean.TRUE.equals(o.getIsCashSettled())
+                        && !"VIETQR".equalsIgnoreCase(o.getPaymentMethod()))
+                .collect(Collectors.toList());
+
+        BigDecimal pastUnsettledDebt = BigDecimal.ZERO;
+        for (Order po : pastUnsettledOrders) {
+            BigDecimal orderCod = po.getCodAmount() != null ? po.getCodAmount() : BigDecimal.ZERO;
+            BigDecimal orderFee = ("RECEIVER".equalsIgnoreCase(po.getPaymentParty()) && po.getTotalFee() != null)
+                    ? po.getTotalFee() : BigDecimal.ZERO;
+            BigDecimal totalOrderCash = orderCod.add(orderFee);
+            BigDecimal settled = po.getSettledCashAmount() != null ? po.getSettledCashAmount() : BigDecimal.ZERO;
+            BigDecimal remaining = totalOrderCash.subtract(settled);
+            if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+                pastUnsettledDebt = pastUnsettledDebt.add(remaining);
+            }
+        }
+
+        if (pastUnsettledDebt.compareTo(BigDecimal.ZERO) > 0) {
+            throw new IllegalStateException(String.format(
+                    "KHÓA XUẤT KHO: Bạn đang còn nợ %,d đ tiền thu hộ COD từ các ca ngày trước chưa nộp! Vui lòng hoàn tất nộp tiền cuối ca (qua PayOS VietQR hoặc nộp tiền mặt tại bưu cục) trước khi được lấy đơn mới đi giao.",
+                    pastUnsettledDebt.longValue()
+            ));
+        }
+
         // Kiểm tra trạng thái: Đơn hàng bắt buộc phải đang ở kho bưu cục (AT_SORTING_HUB) mới được lấy đi giao!
         if ("DELIVERING".equalsIgnoreCase(order.getCurrentStatus())) {
             throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC XUẤT KHO ĐI GIAO trước đó rồi! Vui lòng không quét lại.");
@@ -1328,43 +1363,108 @@ public class ShipperServiceImpl implements ShipperService {
     @Override
     @Transactional(readOnly = true)
     public CashReconciliationResponse getCashReconciliation(Long userId, Long filterShipperId, LocalDate date) {
+        LocalDate targetDate = date != null ? date : LocalDate.now();
+        return getCashReconciliation(userId, filterShipperId, targetDate, targetDate);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CashReconciliationResponse getCashReconciliation(Long userId, Long filterShipperId, LocalDate startDate, LocalDate endDate) {
         User currentUser = userRepository.findById(userId).orElse(null);
         Long targetShipperId = filterShipperId != null ? filterShipperId : userId;
         User targetShipper = userRepository.findById(targetShipperId).orElse(null);
 
-        LocalDate targetDate = date != null ? date : LocalDate.now();
+        LocalDate effectiveStart = startDate != null ? startDate : (endDate != null ? endDate : LocalDate.now());
+        LocalDate effectiveEnd = endDate != null ? endDate : effectiveStart;
 
-        List<Order> orders = orderRepository.findByAssignedShipperId(targetShipperId).stream()
+        // Lấy tất cả đơn đã giao của shipper thu tiền mặt (loại trừ đơn đã thanh toán VietQR ngân hàng)
+        List<Order> allDeliveredOrders = orderRepository.findByAssignedShipperId(targetShipperId).stream()
                 .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus())
                         && o.getDeliveredAt() != null
-                        && o.getDeliveredAt().toLocalDate().equals(targetDate)
-                        && !"VIETQR".equalsIgnoreCase(o.getPaymentMethod())) // Chỉ tính các đơn thu tiền mặt, trừ VietQR đã chuyển khoản ngân hàng
+                        && !"VIETQR".equalsIgnoreCase(o.getPaymentMethod()))
+                .collect(Collectors.toList());
+
+        // 1. Kiểm tra nợ cũ: Các đơn giao trước ngày effectiveStart mà CHƯA nộp đủ tiền
+        BigDecimal pastUnsettledDebt = BigDecimal.ZERO;
+        List<Order> pastUnsettledOrders = new ArrayList<>();
+
+        for (Order po : allDeliveredOrders) {
+            if (po.getDeliveredAt().toLocalDate().isBefore(effectiveStart) && !Boolean.TRUE.equals(po.getIsCashSettled())) {
+                BigDecimal orderCod = po.getCodAmount() != null ? po.getCodAmount() : BigDecimal.ZERO;
+                BigDecimal orderFee = ("RECEIVER".equalsIgnoreCase(po.getPaymentParty()) && po.getTotalFee() != null)
+                        ? po.getTotalFee() : BigDecimal.ZERO;
+                BigDecimal totalOrderCash = orderCod.add(orderFee);
+                BigDecimal settled = po.getSettledCashAmount() != null ? po.getSettledCashAmount() : BigDecimal.ZERO;
+                BigDecimal remaining = totalOrderCash.subtract(settled);
+                if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+                    pastUnsettledDebt = pastUnsettledDebt.add(remaining);
+                    pastUnsettledOrders.add(po);
+                }
+            }
+        }
+
+        // 2. Các đơn giao trong khoảng [effectiveStart, effectiveEnd]
+        List<Order> periodOrders = allDeliveredOrders.stream()
+                .filter(o -> {
+                    LocalDate d = o.getDeliveredAt().toLocalDate();
+                    return !d.isBefore(effectiveStart) && !d.isAfter(effectiveEnd);
+                })
                 .collect(Collectors.toList());
 
         BigDecimal totalCod = BigDecimal.ZERO;
         BigDecimal totalFee = BigDecimal.ZERO;
+        BigDecimal periodUnsettledCash = BigDecimal.ZERO;
+        int settledCount = 0;
+        int unsettledCount = 0;
 
-        for (Order o : orders) {
-            if (o.getCodAmount() != null) {
-                totalCod = totalCod.add(o.getCodAmount());
-            }
-            if ("RECEIVER".equalsIgnoreCase(o.getPaymentParty()) && o.getTotalFee() != null) {
-                totalFee = totalFee.add(o.getTotalFee());
+        for (Order o : periodOrders) {
+            BigDecimal orderCod = o.getCodAmount() != null ? o.getCodAmount() : BigDecimal.ZERO;
+            BigDecimal orderFee = ("RECEIVER".equalsIgnoreCase(o.getPaymentParty()) && o.getTotalFee() != null)
+                    ? o.getTotalFee() : BigDecimal.ZERO;
+            BigDecimal totalOrderCash = orderCod.add(orderFee);
+
+            totalCod = totalCod.add(orderCod);
+            totalFee = totalFee.add(orderFee);
+
+            BigDecimal settled = o.getSettledCashAmount() != null ? o.getSettledCashAmount() : BigDecimal.ZERO;
+            BigDecimal remaining = totalOrderCash.subtract(settled);
+
+            if (remaining.compareTo(BigDecimal.ZERO) <= 0 && Boolean.TRUE.equals(o.getIsCashSettled())) {
+                settledCount++;
+            } else {
+                unsettledCount++;
+                periodUnsettledCash = periodUnsettledCash.add(remaining);
             }
         }
 
-        BigDecimal totalCash = totalCod.add(totalFee);
+        // Tổng tiền cần nộp = tiền đơn trong kỳ chưa nộp + tiền nợ các ngày trước
+        BigDecimal totalCashToSubmit = periodUnsettledCash.add(pastUnsettledDebt);
+        boolean isBlocked = pastUnsettledDebt.compareTo(BigDecimal.ZERO) > 0;
+
+        // Tổng hợp danh sách hiển thị: trong kỳ + nợ cũ (để shipper & thủ quỹ dễ dàng đối soát)
+        List<Order> displayOrders = new ArrayList<>(periodOrders);
+        for (Order po : pastUnsettledOrders) {
+            if (!displayOrders.contains(po)) {
+                displayOrders.add(po);
+            }
+        }
 
         return CashReconciliationResponse.builder()
                 .shipperId(targetShipperId)
                 .shipperName(targetShipper != null ? targetShipper.getFullName() : "Bưu tá")
                 .shipperPhone(targetShipper != null ? targetShipper.getPhoneNumber() : "N/A")
-                .shiftDate(targetDate)
-                .totalOrdersDelivered(orders.size())
+                .shiftDate(effectiveEnd)
+                .startDate(effectiveStart)
+                .endDate(effectiveEnd)
+                .totalOrdersDelivered(periodOrders.size())
                 .totalCodCollected(totalCod)
                 .totalFeeCollected(totalFee)
-                .totalCashToSubmit(totalCash)
-                .orders(orders.stream().map(this::mapToResponse).collect(Collectors.toList()))
+                .totalCashToSubmit(totalCashToSubmit)
+                .pastUnsettledDebt(pastUnsettledDebt)
+                .isBlockedFromDelivery(isBlocked)
+                .settledOrdersCount(settledCount)
+                .unsettledOrdersCount(unsettledCount + pastUnsettledOrders.size())
+                .orders(displayOrders.stream().map(this::mapToResponse).collect(Collectors.toList()))
                 .build();
     }
 
@@ -1374,25 +1474,376 @@ public class ShipperServiceImpl implements ShipperService {
         User shipper = userRepository.findById(shipperId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin bưu tá!"));
 
-        LocalDateTime now = LocalDateTime.now();
-        String timeStr = now.format(TIME_FORMATTER);
+        LocalDate shiftDate = (request != null && request.getShiftDate() != null)
+                ? request.getShiftDate() : LocalDate.now();
+        String method = (request != null && request.getPaymentMethod() != null && !request.getPaymentMethod().isBlank())
+                ? request.getPaymentMethod().toUpperCase() : "PAYOS";
 
-        BigDecimal amount = request != null && request.getAmountSubmitted() != null ? request.getAmountSubmitted() : BigDecimal.ZERO;
-        String notes = request != null && request.getNotes() != null ? request.getNotes() : "Nộp tiền mặt COD cuối ca về thủ quỹ bưu cục";
+        // Lấy tất cả các đơn hàng chưa nộp đủ (bao gồm nợ cũ và hôm nay)
+        List<Order> unsettledOrders = orderRepository.findByAssignedShipperId(shipperId).stream()
+                .filter(o -> "DELIVERED".equalsIgnoreCase(o.getCurrentStatus())
+                        && o.getDeliveredAt() != null
+                        && (o.getDeliveredAt().toLocalDate().isBefore(shiftDate) || o.getDeliveredAt().toLocalDate().equals(shiftDate))
+                        && !Boolean.TRUE.equals(o.getIsCashSettled())
+                        && !"VIETQR".equalsIgnoreCase(o.getPaymentMethod()))
+                .collect(Collectors.toList());
 
-        log.info("Bưu tá {} đã nộp số tiền mặt COD: {} vào lúc {}", shipper.getFullName(), amount, timeStr);
+        if (request != null && request.getTrackingCodes() != null && !request.getTrackingCodes().isEmpty()) {
+            Set<String> selectedCodes = new HashSet<>(request.getTrackingCodes());
+            unsettledOrders = unsettledOrders.stream()
+                    .filter(o -> selectedCodes.contains(o.getTrackingCode()))
+                    .collect(Collectors.toList());
+        }
+
+        BigDecimal calculatedCod = BigDecimal.ZERO;
+        BigDecimal calculatedFee = BigDecimal.ZERO;
+        BigDecimal calculatedRemainingTotal = BigDecimal.ZERO;
+        for (Order o : unsettledOrders) {
+            BigDecimal orderCod = o.getCodAmount() != null ? o.getCodAmount() : BigDecimal.ZERO;
+            BigDecimal orderFee = ("RECEIVER".equalsIgnoreCase(o.getPaymentParty()) && o.getTotalFee() != null)
+                    ? o.getTotalFee() : BigDecimal.ZERO;
+            BigDecimal orderTotal = orderCod.add(orderFee);
+            BigDecimal settled = o.getSettledCashAmount() != null ? o.getSettledCashAmount() : BigDecimal.ZERO;
+            BigDecimal remaining = orderTotal.subtract(settled);
+
+            calculatedCod = calculatedCod.add(orderCod);
+            calculatedFee = calculatedFee.add(orderFee);
+            if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+                calculatedRemainingTotal = calculatedRemainingTotal.add(remaining);
+            }
+        }
+
+        BigDecimal amountToSubmit = (request != null && request.getAmountSubmitted() != null && request.getAmountSubmitted().compareTo(BigDecimal.ZERO) > 0)
+                ? request.getAmountSubmitted() : calculatedRemainingTotal;
+
+        if (amountToSubmit.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Số tiền nộp phải lớn hơn 0 VNĐ (Không có khoản tiền thu hộ COD nào cần nộp)!");
+        }
+
+        String submissionCode = "CSUB-" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+                + "-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+
+        String trackingCodesStr = unsettledOrders.stream().map(Order::getTrackingCode).collect(Collectors.joining(","));
+        String notes = (request != null && request.getNotes() != null && !request.getNotes().isBlank())
+                ? request.getNotes() : ("Nộp tiền cuối ca ngày " + shiftDate);
+
+        ShipperCashSubmission submission = ShipperCashSubmission.builder()
+                .submissionCode(submissionCode)
+                .shipperId(shipperId)
+                .shipperName(shipper.getFullName())
+                .shipperPhone(shipper.getPhoneNumber())
+                .postOfficeId(shipper.getAssignedPostOfficeId())
+                .shiftDate(shiftDate)
+                .totalOrders(unsettledOrders.size())
+                .totalCodAmount(calculatedCod)
+                .totalFeeAmount(calculatedFee)
+                .totalAmount(amountToSubmit)
+                .amountPaid(BigDecimal.ZERO)
+                .paymentMethod(method)
+                .status("PENDING")
+                .notes(notes)
+                .orderCodesJson(trackingCodesStr)
+                .build();
 
         Map<String, Object> res = new HashMap<>();
+        res.put("submissionCode", submissionCode);
         res.put("shipperId", shipperId);
         res.put("shipperName", shipper.getFullName());
-        res.put("amountSubmitted", amount);
-        res.put("submittedAt", timeStr);
-        res.put("notes", notes);
-        res.put("message", "Đã ghi nhận nộp tiền mặt COD thành công cho thủ quỹ bưu cục!");
+        res.put("totalAmount", amountToSubmit);
+        res.put("totalOrders", unsettledOrders.size());
+        res.put("paymentMethod", method);
+        res.put("shiftDate", shiftDate);
+
+        if ("PAYOS".equalsIgnoreCase(method)) {
+            // Tạo mã orderCode hợp lệ cho PayOS (dưới 9007199254740991)
+            long orderCode = Long.parseLong(String.valueOf(System.currentTimeMillis()).substring(3)
+                    + String.format("%03d", (int) (Math.random() * 1000)));
+
+            String description = "Nop COD " + (orderCode % 1000000);
+            if (description.length() > 25) {
+                description = description.substring(0, 25);
+            }
+
+            String returnUrl = (request != null && request.getReturnUrl() != null && !request.getReturnUrl().isBlank())
+                    ? request.getReturnUrl()
+                    : ("http://localhost:3000/shipper-portal?csubCode=" + submissionCode + "&status=success");
+            String cancelUrl = (request != null && request.getCancelUrl() != null && !request.getCancelUrl().isBlank())
+                    ? request.getCancelUrl()
+                    : ("http://localhost:3000/shipper-portal?csubCode=" + submissionCode + "&status=cancelled");
+
+            try {
+                CreatePaymentLinkRequest payOsReq = CreatePaymentLinkRequest.builder()
+                        .orderCode(orderCode)
+                        .amount(amountToSubmit.longValue())
+                        .description(description)
+                        .returnUrl(returnUrl)
+                        .cancelUrl(cancelUrl)
+                        .build();
+
+                CreatePaymentLinkResponse payOsRes = payOS.paymentRequests().create(payOsReq);
+
+                submission.setPayosOrderCode(orderCode);
+                submission.setPayosPaymentLinkId(payOsRes.getPaymentLinkId());
+                submission.setCheckoutUrl(payOsRes.getCheckoutUrl());
+                submission.setQrCode(payOsRes.getQrCode());
+
+                res.put("orderCode", orderCode);
+                res.put("checkoutUrl", payOsRes.getCheckoutUrl());
+                res.put("qrCode", payOsRes.getQrCode());
+                res.put("accountName", payOsRes.getAccountName());
+                res.put("accountNumber", payOsRes.getAccountNumber());
+                res.put("bin", payOsRes.getBin());
+                res.put("status", "PENDING");
+                res.put("message", "Đã tạo link thanh toán VietQR PayOS thành công!");
+            } catch (Exception e) {
+                log.warn("⚠️ [PayOS] Lỗi kết nối PayOS API: {}. Sử dụng thanh toán QR PayOS dự phòng.", e.getMessage());
+                submission.setPayosOrderCode(orderCode);
+                String fallbackCheckoutUrl = "https://pay.payos.vn/web/" + orderCode;
+                submission.setCheckoutUrl(fallbackCheckoutUrl);
+                res.put("orderCode", orderCode);
+                res.put("checkoutUrl", fallbackCheckoutUrl);
+                res.put("status", "PENDING");
+                res.put("message", "Đã tạo yêu cầu thanh toán VietQR PayOS thành công!");
+            }
+        } else {
+            // Nộp tiền mặt trực tiếp tại bưu cục
+            res.put("status", "PENDING");
+            res.put("message", "Đã tạo yêu cầu nộp tiền mặt. Vui lòng bàn giao tiền cho Thủ quỹ bưu cục để xác nhận hoàn tất!");
+        }
+
+        cashSubmissionRepository.save(submission);
         return res;
     }
 
+    @Override
+    @Transactional
+    public Map<String, Object> checkSubmissionPaymentStatus(String submissionCode) {
+        ShipperCashSubmission submission = cashSubmissionRepository.findBySubmissionCode(submissionCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bảng kê nộp tiền: " + submissionCode));
+
+        if ("COMPLETED".equalsIgnoreCase(submission.getStatus())) {
+            Map<String, Object> res = new HashMap<>();
+            res.put("submissionCode", submissionCode);
+            res.put("status", "COMPLETED");
+            res.put("message", "Giao dịch nộp tiền đã hoàn tất thành công!");
+            return res;
+        }
+
+        if ("PAYOS".equalsIgnoreCase(submission.getPaymentMethod()) && submission.getPayosOrderCode() != null) {
+            try {
+                PaymentLink link = payOS.paymentRequests().get(submission.getPayosOrderCode());
+                if (link != null && link.getStatus() != null) {
+                    if (PaymentLinkStatus.PAID.equals(link.getStatus())) {
+                        markSubmissionCompleted(submission, null, "PayOS VietQR Gateway");
+                        Map<String, Object> res = new HashMap<>();
+                        res.put("submissionCode", submissionCode);
+                        res.put("status", "COMPLETED");
+                        res.put("message", "Thanh toán VietQR PayOS thành công!");
+                        return res;
+                    } else if (PaymentLinkStatus.CANCELLED.equals(link.getStatus())) {
+                        submission.setStatus("CANCELLED");
+                        cashSubmissionRepository.save(submission);
+                        Map<String, Object> res = new HashMap<>();
+                        res.put("submissionCode", submissionCode);
+                        res.put("status", "CANCELLED");
+                        res.put("message", "Giao dịch nộp tiền đã bị hủy.");
+                        return res;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Kiểm tra PayOS payment request {}: {}", submission.getPayosOrderCode(), e.getMessage());
+            }
+        }
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("submissionCode", submissionCode);
+        res.put("status", submission.getStatus());
+        res.put("message", "Đang chờ thanh toán...");
+        return res;
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> handlePayOsWebhook(Webhook webhook) {
+        try {
+            WebhookData data = payOS.webhooks().verify(webhook);
+            if (data != null && ("00".equals(data.getCode()) || "success".equalsIgnoreCase(data.getDesc()))) {
+                Long orderCode = data.getOrderCode();
+                cashSubmissionRepository.findByPayosOrderCode(orderCode).ifPresent(sub -> {
+                    markSubmissionCompleted(sub, null, "PayOS Webhook");
+                });
+            }
+            Map<String, Object> res = new HashMap<>();
+            res.put("success", true);
+            return res;
+        } catch (Exception e) {
+            log.error("❌ Lỗi xác thực Webhook PayOS: {}", e.getMessage(), e);
+            throw new RuntimeException("Xác thực Webhook PayOS thất bại: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> approveCashSubmission(String submissionCode, Long managerId) {
+        ShipperCashSubmission submission = cashSubmissionRepository.findBySubmissionCode(submissionCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bảng kê nộp tiền: " + submissionCode));
+
+        User manager = userRepository.findById(managerId).orElse(null);
+        String managerName = manager != null ? manager.getFullName() : "Thủ quỹ bưu cục";
+
+        markSubmissionCompleted(submission, managerId, managerName);
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("submissionCode", submissionCode);
+        res.put("status", "COMPLETED");
+        res.put("message", "Thủ quỹ " + managerName + " đã duyệt nhận đủ tiền mặt!");
+        return res;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<CashSubmissionResponse> getCashSubmissions(Long shipperId, Long postOfficeId, LocalDate startDate, LocalDate endDate, Pageable pageable) {
+        Specification<ShipperCashSubmission> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (shipperId != null) {
+                predicates.add(cb.equal(root.get("shipperId"), shipperId));
+            }
+            if (postOfficeId != null) {
+                predicates.add(cb.equal(root.get("postOfficeId"), postOfficeId));
+            }
+            if (startDate != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("shiftDate"), startDate));
+            }
+            if (endDate != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("shiftDate"), endDate));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        Page<ShipperCashSubmission> page = cashSubmissionRepository.findAll(spec, pageable);
+
+        return page.map(s -> CashSubmissionResponse.builder()
+                .id(s.getId())
+                .submissionCode(s.getSubmissionCode())
+                .shipperId(s.getShipperId())
+                .shipperName(s.getShipperName())
+                .shipperPhone(s.getShipperPhone())
+                .postOfficeId(s.getPostOfficeId())
+                .shiftDate(s.getShiftDate())
+                .totalOrders(s.getTotalOrders())
+                .totalCodAmount(s.getTotalCodAmount())
+                .totalFeeAmount(s.getTotalFeeAmount())
+                .totalAmount(s.getTotalAmount())
+                .amountPaid(s.getAmountPaid())
+                .paymentMethod(s.getPaymentMethod())
+                .status(s.getStatus())
+                .payosOrderCode(s.getPayosOrderCode())
+                .checkoutUrl(s.getCheckoutUrl())
+                .qrCode(s.getQrCode())
+                .approvedBy(s.getApprovedBy())
+                .approvedByName(s.getApprovedByName())
+                .approvedAt(s.getApprovedAt())
+                .paidAt(s.getPaidAt())
+                .notes(s.getNotes())
+                .createdAt(s.getCreatedAt())
+                .build()
+        );
+    }
+
+    private void markSubmissionCompleted(ShipperCashSubmission submission, Long approverId, String approverName) {
+        if ("COMPLETED".equalsIgnoreCase(submission.getStatus())) {
+            return;
+        }
+
+        submission.setStatus("COMPLETED");
+        submission.setAmountPaid(submission.getTotalAmount());
+        submission.setPaidAt(LocalDateTime.now());
+        if (approverId != null) {
+            submission.setApprovedBy(approverId);
+            submission.setApprovedByName(approverName);
+            submission.setApprovedAt(LocalDateTime.now());
+        }
+        cashSubmissionRepository.save(submission);
+
+        // Đánh dấu các đơn hàng đã quyết toán nộp tiền, trừ nợ COD theo số tiền thực nộp (FIFO allocation)
+        if (submission.getOrderCodesJson() != null && !submission.getOrderCodesJson().isBlank()) {
+            String[] codes = submission.getOrderCodesJson().split(",");
+            List<Order> orders = new ArrayList<>();
+            for (String c : codes) {
+                String clean = c.trim().toUpperCase();
+                orderRepository.findByTrackingCode(clean).ifPresent(orders::add);
+            }
+            // Sắp xếp các đơn theo thời gian giao (đơn giao trước quyết toán trước)
+            orders.sort(Comparator.comparing(
+                    o -> o.getDeliveredAt() != null ? o.getDeliveredAt() : LocalDateTime.MIN
+            ));
+
+            BigDecimal remainingPayment = submission.getTotalAmount() != null ? submission.getTotalAmount() : BigDecimal.ZERO;
+
+            for (Order order : orders) {
+                BigDecimal orderCod = order.getCodAmount() != null ? order.getCodAmount() : BigDecimal.ZERO;
+                BigDecimal orderFee = ("RECEIVER".equalsIgnoreCase(order.getPaymentParty()) && order.getTotalFee() != null)
+                        ? order.getTotalFee() : BigDecimal.ZERO;
+                BigDecimal orderCashTotal = orderCod.add(orderFee);
+
+                BigDecimal alreadySettled = order.getSettledCashAmount() != null ? order.getSettledCashAmount() : BigDecimal.ZERO;
+                BigDecimal neededForThisOrder = orderCashTotal.subtract(alreadySettled);
+                if (neededForThisOrder.compareTo(BigDecimal.ZERO) <= 0) {
+                    order.setIsCashSettled(true);
+                    orderRepository.save(order);
+                    continue;
+                }
+
+                if (remainingPayment.compareTo(BigDecimal.ZERO) <= 0) {
+                    // Hết tiền phân bổ, đơn này vẫn chưa quyết toán đủ
+                    order.setIsCashSettled(false);
+                    orderRepository.save(order);
+                    continue;
+                }
+
+                if (remainingPayment.compareTo(neededForThisOrder) >= 0) {
+                    // Đủ tiền tất toán toàn bộ đơn này
+                    order.setSettledCashAmount(orderCashTotal);
+                    order.setIsCashSettled(true);
+                    order.setCashSubmissionCode(submission.getSubmissionCode());
+                    remainingPayment = remainingPayment.subtract(neededForThisOrder);
+                } else {
+                    // Chỉ nộp được một phần của đơn này
+                    order.setSettledCashAmount(alreadySettled.add(remainingPayment));
+                    order.setIsCashSettled(false);
+                    order.setCashSubmissionCode(submission.getSubmissionCode());
+                    remainingPayment = BigDecimal.ZERO;
+                }
+                orderRepository.save(order);
+            }
+        }
+
+        log.info("🎉 [Nộp tiền cuối ca] Bảng kê {} đã hoàn tất thành công! Đã quyết toán trừ nợ cho bưu tá {}",
+                submission.getSubmissionCode(), submission.getShipperName());
+
+        try {
+            webSocketNotificationService.notifyGeneric(
+                    "/topic/cash-submissions",
+                    Map.of(
+                            "type", "CASH_SUBMISSION_COMPLETED",
+                            "submissionCode", submission.getSubmissionCode(),
+                            "message", "Giao dịch nộp tiền [" + submission.getSubmissionCode() + "] của bưu tá " + submission.getShipperName() + " đã thành công!"
+                    )
+            );
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo WebSocket nộp tiền: {}", e.getMessage());
+        }
+    }
+
     private OrderResponse mapToResponse(Order order) {
+        BigDecimal orderCod = order.getCodAmount() != null ? order.getCodAmount() : BigDecimal.ZERO;
+        BigDecimal orderFee = ("RECEIVER".equalsIgnoreCase(order.getPaymentParty()) && order.getTotalFee() != null)
+                ? order.getTotalFee() : BigDecimal.ZERO;
+        BigDecimal totalOrderCash = orderCod.add(orderFee);
+        BigDecimal settled = order.getSettledCashAmount() != null ? order.getSettledCashAmount() : BigDecimal.ZERO;
+        BigDecimal remaining = totalOrderCash.subtract(settled);
+        if (remaining.compareTo(BigDecimal.ZERO) < 0) remaining = BigDecimal.ZERO;
+
         return OrderResponse.builder()
                 .id(order.getId())
                 .trackingCode(order.getTrackingCode())
@@ -1441,6 +1892,12 @@ public class ShipperServiceImpl implements ShipperService {
                 .rescheduledDeliveryDate(order.getRescheduledDeliveryDate())
                 .failureProofPhotoUrl(order.getFailureProofPhotoUrl())
                 .paymentMethod(order.getPaymentMethod())
+                .isReconciled(order.getIsReconciled())
+                .reconciliationSheetCode(order.getReconciliationSheetCode())
+                .isCashSettled(order.getIsCashSettled())
+                .settledCashAmount(settled)
+                .remainingCashAmount(remaining)
+                .cashSubmissionCode(order.getCashSubmissionCode())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .build();

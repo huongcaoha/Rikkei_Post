@@ -7,14 +7,13 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import vn.rikkei.post.dto.common.ApiResponse;
 import vn.rikkei.post.dto.order.OrderResponse;
-import vn.rikkei.post.dto.shipper.CashReconciliationResponse;
-import vn.rikkei.post.dto.shipper.CashSubmitRequest;
-import vn.rikkei.post.dto.shipper.CompleteDeliveryRequest;
-import vn.rikkei.post.dto.shipper.DeliveryFailureRequest;
-import vn.rikkei.post.dto.shipper.SendOtpRequest;
-import vn.rikkei.post.dto.shipper.SmartDispatchRequest;
+import vn.rikkei.post.dto.shipper.*;
 import vn.rikkei.post.security.CustomUserDetails;
 import vn.rikkei.post.service.ShipperService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import vn.payos.model.webhooks.Webhook;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -181,10 +180,14 @@ public class ShipperController {
     public ResponseEntity<ApiResponse<CashReconciliationResponse>> getCashReconciliation(
             @RequestParam(required = false) Long shipperId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
-        CashReconciliationResponse response = shipperService.getCashReconciliation(currentUserId, shipperId, date);
+        LocalDate effectiveStart = startDate != null ? startDate : date;
+        LocalDate effectiveEnd = endDate != null ? endDate : date;
+        CashReconciliationResponse response = shipperService.getCashReconciliation(currentUserId, shipperId, effectiveStart, effectiveEnd);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
@@ -196,5 +199,48 @@ public class ShipperController {
         Long shipperId = userDetails != null ? userDetails.getId() : 1L;
         Map<String, Object> result = shipperService.submitCashReconciliation(shipperId, request);
         return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
+    }
+
+    @GetMapping("/cash-submissions")
+    public ResponseEntity<ApiResponse<Page<CashSubmissionResponse>>> getCashSubmissions(
+            @RequestParam(required = false) Long shipperId,
+            @RequestParam(required = false) Long postOfficeId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<CashSubmissionResponse> result = shipperService.getCashSubmissions(shipperId, postOfficeId, startDate, endDate, pageable);
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @GetMapping("/cash-submissions/check/{submissionCode}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> checkSubmissionStatus(
+            @PathVariable String submissionCode
+    ) {
+        Map<String, Object> result = shipperService.checkSubmissionPaymentStatus(submissionCode);
+        return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
+    }
+
+    @PostMapping("/cash-submissions/approve/{submissionCode}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> approveCashSubmission(
+            @PathVariable String submissionCode,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long managerId = userDetails != null ? userDetails.getId() : 1L;
+        Map<String, Object> result = shipperService.approveCashSubmission(submissionCode, managerId);
+        return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
+    }
+
+    @PostMapping("/payos-webhook")
+    public ResponseEntity<String> handlePayOsWebhook(@RequestBody Webhook webhook) {
+        try {
+            shipperService.handlePayOsWebhook(webhook);
+            return ResponseEntity.ok("OK");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Webhook Error: " + e.getMessage());
+        }
     }
 }

@@ -86,3 +86,10 @@ oauth2:
     client-id: ${GOOGLE_CLIENT_ID:146681352133-vlqosog6vd92leukas8mn7sitooqerfd.apps.googleusercontent.com}
   facebook:
     app-id: ${FACEBOOK_APP_ID:1263761462121053}
+
+# PayOS Configuration for VietQR Online Payment & Cash Settlement
+payos:
+  client-id: ${PAYOS_CLIENT_ID:e5c0e0cc-0052-48c5-812f-b7af34f6e754}
+  api-key: ${PAYOS_API_KEY:99d78ade-4004-4f9a-bf98-9b6779465c16}
+  checksum-key: ${PAYOS_CHECKSUM_KEY:51535e322adeb6f11211e3221246aa90b42862e014417132a29940b0246d6200}
+

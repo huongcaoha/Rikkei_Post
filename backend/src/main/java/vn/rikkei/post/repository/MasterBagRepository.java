@@ -16,6 +16,8 @@ public interface MasterBagRepository extends JpaRepository<MasterBag, Long> {
     List<MasterBag> findByDestWarehouseIdOrderByCreatedAtDesc(Long destWarehouseId);
     List<MasterBag> findByManifestId(Long manifestId);
     List<MasterBag> findByStatus(String status);
+    List<MasterBag> findByAssignedDriverIdOrderByCreatedAtDesc(Long assignedDriverId);
+    List<MasterBag> findByDestWarehouseIdAndStatusInOrderByCreatedAtDesc(Long destWarehouseId, List<String> statuses);
     boolean existsByBagCode(String bagCode);
     boolean existsBySealNumber(String sealNumber);
 }

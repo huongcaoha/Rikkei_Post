@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -52,11 +53,27 @@ public class DataInitializer implements CommandLineRunner {
     private final WardRepository wardRepository;
     private final DeliveryRouteRepository routeRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JdbcTemplate jdbcTemplate;
+    private final vn.rikkei.post.repository.TruckRepository truckRepository;
 
     @Override
     @Transactional
     public void run(String... args) {
         log.info("Bắt đầu kiểm tra và khởi tạo dữ liệu mẫu cho Rikkei_Post...");
+
+        try {
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ALTER COLUMN seal_number DROP NOT NULL;");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS orders ADD COLUMN IF NOT EXISTS settled_cash_amount NUMERIC(12, 2) DEFAULT 0.00;");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS assigned_driver_id BIGINT;");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS assigned_driver_name VARCHAR(100);");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS assigned_driver_phone VARCHAR(20);");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS assigned_truck_id BIGINT;");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS assigned_truck_plate VARCHAR(30);");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMP;");
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS master_bags ADD COLUMN IF NOT EXISTS arrived_at_hub_at TIMESTAMP;");
+        } catch (Exception e) {
+            log.warn("Migration warning: {}", e.getMessage());
+        }
 
         // 1. Khởi tạo danh mục Roles chuẩn
         Role roleMerchant = initRole("ROLE_MERCHANT", "Khách hàng / Chủ Shop tạo đơn bưu chính");
@@ -66,6 +83,7 @@ public class DataInitializer implements CommandLineRunner {
         Role roleAccountant = initRole("ROLE_ACCOUNTANT", "Kế toán đối soát công nợ & tiền COD");
         Role roleBranchManager = initRole("ROLE_BRANCH_MANAGER", "Quản lý chi nhánh Tỉnh / Thành phố");
         Role rolePostOfficeManager = initRole("ROLE_POST_OFFICE_MANAGER", "Quản lý bưu cục kho vận");
+        Role roleTruckDriver = initRole("ROLE_TRUCK_DRIVER", "Tài xế lái xe tải trung chuyển liên bưu cục và Hub");
         Role roleAdmin = initRole("ROLE_ADMIN", "Quản trị viên toàn quyền hệ thống");
 
         // 2. Khởi tạo tài khoản Demo cho Chủ shop (merchant_demo)
@@ -171,6 +189,62 @@ public class DataInitializer implements CommandLineRunner {
                     .build();
             userRepository.save(staffCg);
             log.info("Đã tạo tài khoản demo: staff_cg / Password@123 (ROLE_WAREHOUSE_STAFF)");
+        }
+
+        // 8. Khởi tạo tài khoản Tài xế xe tải (driver_demo)
+        User driverDemo = userRepository.findByUsername("driver_demo").orElse(null);
+        if (driverDemo == null) {
+            driverDemo = User.builder()
+                    .username("driver_demo")
+                    .password(passwordEncoder.encode("Password@123"))
+                    .fullName("Tài xế Nguyễn Văn Tải")
+                    .phoneNumber("0988112233")
+                    .email("driver_demo@rikkeipost.vn")
+                    .assignedPostOfficeId(cgWarehouseId)
+                    .postOfficeName("Bưu cục Cầu Giấy")
+                    .isActive(true)
+                    .roles(new HashSet<>(Set.of(roleTruckDriver)))
+                    .build();
+            driverDemo = userRepository.save(driverDemo);
+            log.info("Đã tạo tài khoản demo: driver_demo / Password@123 (ROLE_TRUCK_DRIVER)");
+        }
+
+        // 9. Khởi tạo danh sách xe ô tô tải mẫu
+        if (truckRepository.count() == 0) {
+            Warehouse hubHn = warehouseRepository.findByCode("HUB_HN_NORTH").orElse(spokeCgWh);
+            Warehouse hubHd = warehouseRepository.findByCode("SPOKE_HN_HOAIDUC").orElse(spokeCgWh);
+
+            List<vn.rikkei.post.entity.Truck> sampleTrucks = List.of(
+                    vn.rikkei.post.entity.Truck.builder()
+                            .truckType("Xe tải 2.5 tấn thùng kín")
+                            .payloadKg(2500.0)
+                            .licensePlate("29C-888.88")
+                            .currentWarehouse(spokeCgWh != null ? spokeCgWh : hubHn)
+                            .status("AT_WAREHOUSE")
+                            .currentDriverId(driverDemo.getId())
+                            .currentDriverName(driverDemo.getFullName())
+                            .currentDriverPhone(driverDemo.getPhoneNumber())
+                            .notes("Xe trung chuyển tuyến Cầu Giấy - Hub Bắc Hà Nội")
+                            .build(),
+                    vn.rikkei.post.entity.Truck.builder()
+                            .truckType("Xe tải 5 tấn thùng bạt")
+                            .payloadKg(5000.0)
+                            .licensePlate("29C-999.99")
+                            .currentWarehouse(hubHn != null ? hubHn : spokeCgWh)
+                            .status("AT_WAREHOUSE")
+                            .notes("Xe tải đường trục chuyên tuyến Hub liên tỉnh")
+                            .build(),
+                    vn.rikkei.post.entity.Truck.builder()
+                            .truckType("Xe tải 1.25 tấn gọn nhẹ")
+                            .payloadKg(1250.0)
+                            .licensePlate("29D-123.45")
+                            .currentWarehouse(hubHd != null ? hubHd : spokeCgWh)
+                            .status("AT_WAREHOUSE")
+                            .notes("Xe trung chuyển bưu cục Hoài Đức - Cầu Giấy")
+                            .build()
+            );
+            truckRepository.saveAll(sampleTrucks);
+            log.info("Đã khởi tạo danh sách 3 xe tải mẫu thành công!");
         }
 
         // 4. Khởi tạo bảng giá cước chuẩn

@@ -36,14 +36,14 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     public List<String> getAssignableRoles(CustomUserDetails currentUser) {
         if (hasRole(currentUser, "ROLE_ADMIN")) {
-            // Admin có quyền phân quyền tất cả vai trò bao gồm cả Quản trị viên
-            return List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_MERCHANT");
+            // Admin có quyền phân quyền tất cả vai trò bao gồm cả Quản trị viên và Tài xế ô tô
+            return List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_TRUCK_DRIVER", "ROLE_MERCHANT");
         } else if (hasRole(currentUser, "ROLE_BRANCH_MANAGER")) {
             // Quản lý chi nhánh có quyền tạo các tài khoản cấp thấp hơn thuộc địa bàn
-            return List.of("ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF");
+            return List.of("ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_TRUCK_DRIVER");
         } else if (hasRole(currentUser, "ROLE_POST_OFFICE_MANAGER")) {
-            // Quản lý bưu cục chỉ tạo shipper và nhân viên kho
-            return List.of("ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF");
+            // Quản lý bưu cục tạo shipper, nhân viên kho và tài xế xe tải
+            return List.of("ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_TRUCK_DRIVER");
         }
         return Collections.emptyList();
     }
@@ -243,6 +243,11 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     @Transactional
     public StaffUserResponse updateStaff(Long id, UpdateStaffRequest request, CustomUserDetails currentUser) {
+        if (!hasRole(currentUser, "ROLE_ADMIN")) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Từ chối quyền hạn: Quản lý chi nhánh và Quản lý bưu cục chỉ có quyền tạo tài khoản nhân viên mới, không có quyền chỉnh sửa thông tin của các tài khoản khác!");
+        }
+
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhân viên với ID: " + id));
 
@@ -306,6 +311,11 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     @Transactional
     public StaffUserResponse toggleStaffStatus(Long id, CustomUserDetails currentUser) {
+        if (!hasRole(currentUser, "ROLE_ADMIN")) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Từ chối quyền hạn: Quản lý chi nhánh và Quản lý bưu cục chỉ có quyền tạo tài khoản nhân viên mới, không có quyền khóa/mở khóa tài khoản!");
+        }
+
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhân viên với ID: " + id));
         checkAccessPermission(user, currentUser);
@@ -318,6 +328,11 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     @Transactional
     public void deleteStaff(Long id, CustomUserDetails currentUser) {
+        if (!hasRole(currentUser, "ROLE_ADMIN")) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Từ chối quyền hạn: Quản lý chi nhánh và Quản lý bưu cục chỉ có quyền tạo tài khoản nhân viên mới, không có quyền xóa tài khoản!");
+        }
+
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhân viên với ID: " + id));
         checkAccessPermission(user, currentUser);

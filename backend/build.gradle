@@ -37,6 +37,9 @@ dependencies {
     // Database Driver
     runtimeOnly 'org.postgresql:postgresql'
 
+    // PayOS SDK for VietQR Online Top-up & Shipper Cash Settlement
+    implementation 'vn.payos:payos-java:2.0.1'
+
     // Lombok
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'

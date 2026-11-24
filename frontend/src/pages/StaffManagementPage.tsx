@@ -222,6 +222,8 @@ export const StaffManagementPage: React.FC = () => {
         return <Tag color="blue">Bưu tá (Shipper)</Tag>;
       case 'ROLE_WAREHOUSE_STAFF':
         return <Tag color="green">Nhân viên kho</Tag>;
+      case 'ROLE_TRUCK_DRIVER':
+        return <Tag color="orange">Tài xế xe tải</Tag>;
       default:
         return <Tag>{roleName.replace('ROLE_', '')}</Tag>;
     }
@@ -297,16 +299,25 @@ export const StaffManagementPage: React.FC = () => {
     {
       title: 'Thao tác',
       key: 'action',
-      render: (_: any, record: StaffUser) => (
-        <Button
-          type="link"
-          icon={<Edit2 size={15} />}
-          onClick={() => handleOpenEditModal(record)}
-          className="text-blue-600 hover:text-blue-800"
-        >
-          Cập nhật
-        </Button>
-      ),
+      render: (_: any, record: StaffUser) => {
+        if (!isAdmin) {
+          return (
+            <span className="text-gray-400 text-xs italic">
+              Chỉ xem
+            </span>
+          );
+        }
+        return (
+          <Button
+            type="link"
+            icon={<Edit2 size={15} />}
+            onClick={() => handleOpenEditModal(record)}
+            className="text-blue-600 hover:text-blue-800"
+          >
+            Cập nhật
+          </Button>
+        );
+      },
     },
   ];
 
@@ -346,6 +357,7 @@ export const StaffManagementPage: React.FC = () => {
               { label: 'Quản lý Bưu cục (POST_OFFICE_MANAGER)', value: 'ROLE_POST_OFFICE_MANAGER' },
               { label: 'Bưu tá giao nhận (SHIPPER)', value: 'ROLE_SHIPPER' },
               { label: 'Nhân viên kho (WAREHOUSE_STAFF)', value: 'ROLE_WAREHOUSE_STAFF' },
+              { label: 'Tài xế xe tải (TRUCK_DRIVER)', value: 'ROLE_TRUCK_DRIVER' },
             ]}
           />
         </div>
@@ -436,12 +448,14 @@ export const StaffManagementPage: React.FC = () => {
                       {r === 'ROLE_POST_OFFICE_MANAGER' && 'Quản lý Bưu cục kho vận'}
                       {r === 'ROLE_SHIPPER' && 'Bưu tá (Shipper)'}
                       {r === 'ROLE_WAREHOUSE_STAFF' && 'Nhân viên khai thác kho'}
+                      {r === 'ROLE_TRUCK_DRIVER' && 'Tài xế xe tải trung chuyển (TRUCK_DRIVER)'}
                       {r === 'ROLE_MERCHANT' && 'Khách hàng / Shop'}
                       {r !== 'ROLE_ADMIN' &&
                         r !== 'ROLE_BRANCH_MANAGER' &&
                         r !== 'ROLE_POST_OFFICE_MANAGER' &&
                         r !== 'ROLE_SHIPPER' &&
                         r !== 'ROLE_WAREHOUSE_STAFF' &&
+                        r !== 'ROLE_TRUCK_DRIVER' &&
                         r !== 'ROLE_MERCHANT' &&
                         r.replace('ROLE_', '')}
                     </Select.Option>
@@ -510,7 +524,8 @@ export const StaffManagementPage: React.FC = () => {
                     required:
                       selectedRole === 'ROLE_POST_OFFICE_MANAGER' ||
                       selectedRole === 'ROLE_SHIPPER' ||
-                      selectedRole === 'ROLE_WAREHOUSE_STAFF',
+                      selectedRole === 'ROLE_WAREHOUSE_STAFF' ||
+                      selectedRole === 'ROLE_TRUCK_DRIVER',
                     message: 'Vui lòng chọn bưu cục / kho trực thuộc',
                   },
                 ]}
@@ -524,8 +539,8 @@ export const StaffManagementPage: React.FC = () => {
                     selectedRole === 'ROLE_BRANCH_MANAGER'
                       ? 'Quản lý toàn bộ bưu cục trong chi nhánh'
                       : warehouses.length > 0
-                      ? 'Chọn bưu cục / kho thuộc chi nhánh'
-                      : 'Chọn tỉnh thành trước (hoặc chưa có kho)'
+                        ? 'Chọn bưu cục / kho thuộc chi nhánh'
+                        : 'Chọn tỉnh thành trước (hoặc chưa có kho)'
                   }
                   filterOption={(input, option) =>
                     (option?.label ?? '').toString().toLowerCase().includes(input.toLowerCase())

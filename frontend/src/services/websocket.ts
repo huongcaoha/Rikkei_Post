@@ -2,7 +2,14 @@ import { Client, IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 
 export interface OrderEvent {
-  type: 'ORDER_CREATED' | 'ORDER_STATUS_UPDATED' | 'SHIPPER_ASSIGNED';
+  type:
+    | 'ORDER_CREATED'
+    | 'ORDER_STATUS_UPDATED'
+    | 'SHIPPER_ASSIGNED'
+    | 'MASTER_BAG_CREATED'
+    | 'BAG_SEALED'
+    | 'BAG_UNSEALED'
+    | string;
   trackingCode: string;
   status: string;
   assignedPostOfficeId?: number;

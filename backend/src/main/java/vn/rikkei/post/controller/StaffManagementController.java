@@ -62,6 +62,7 @@ public class StaffManagementController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<StaffUserResponse>> updateStaff(
             @PathVariable Long id,
             @RequestBody UpdateStaffRequest request,
@@ -72,6 +73,7 @@ public class StaffManagementController {
     }
 
     @PutMapping("/{id}/toggle-status")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<StaffUserResponse>> toggleStaffStatus(
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails currentUser
@@ -81,6 +83,7 @@ public class StaffManagementController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Void>> deleteStaff(
             @PathVariable Long id,
             @AuthenticationPrincipal CustomUserDetails currentUser

@@ -54,7 +54,11 @@ export function useOrderWebSocket(options: UseOrderWebSocketOptions = {}) {
       // Kênh riêng của bưu cục phụ trách
       if (user.assignedPostOfficeId) {
         unsubscribes.push(webSocketService.subscribe(`/topic/post-office/${user.assignedPostOfficeId}`, handleEvent));
+        unsubscribes.push(webSocketService.subscribe(`/topic/warehouse/${user.assignedPostOfficeId}`, handleEvent));
       }
+
+      // Kênh bao tải gom hàng Master Bag
+      unsubscribes.push(webSocketService.subscribe('/topic/master-bags', handleEvent));
 
       // Kênh riêng của shipper
       const isShipper = user.roles?.includes('ROLE_SHIPPER');

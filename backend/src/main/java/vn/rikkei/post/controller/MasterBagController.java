@@ -19,7 +19,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/wms/bags")
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER', 'WAREHOUSE_STAFF')")
+@PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER', 'WAREHOUSE_STAFF', 'TRUCK_DRIVER')")
 public class MasterBagController {
 
     private final MasterBagService masterBagService;
@@ -95,5 +95,60 @@ public class MasterBagController {
         Long userId = userDetails != null ? userDetails.getId() : 1L;
         MasterBagResponse res = masterBagService.unsealBag(id, userId);
         return ResponseEntity.ok(ApiResponse.success(res, "Cắt chì mở bao và nhập kho thành công"));
+    }
+
+    @PostMapping("/{id}/assign-driver")
+    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER', 'WAREHOUSE_STAFF')")
+    public ResponseEntity<ApiResponse<MasterBagResponse>> assignDriver(
+            @PathVariable Long id,
+            @Valid @RequestBody vn.rikkei.post.dto.wms.AssignBagDriverRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long userId = userDetails != null ? userDetails.getId() : 1L;
+        MasterBagResponse res = masterBagService.assignDriver(id, request, userId);
+        return ResponseEntity.ok(ApiResponse.success(res, "Gán tài xế xe tải nhận bao thành công"));
+    }
+
+    @PostMapping("/driver-scan-transit")
+    public ResponseEntity<ApiResponse<MasterBagResponse>> driverScanTransit(
+            @RequestBody java.util.Map<String, String> payload,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long driverId = userDetails != null ? userDetails.getId() : 1L;
+        String bagCode = payload.get("bagCode");
+        MasterBagResponse res = masterBagService.driverScanTransit(bagCode, driverId);
+        return ResponseEntity.ok(ApiResponse.success(res, "Đã quét nhận bao tải lên xe! Toàn bộ đơn hàng đã chuyển sang trạng thái đang trung chuyển qua Kafka."));
+    }
+
+    @PostMapping("/hub-scan-inbound")
+    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER', 'WAREHOUSE_STAFF')")
+    public ResponseEntity<ApiResponse<MasterBagResponse>> hubScanInbound(
+            @RequestBody java.util.Map<String, Object> payload,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long operatorId = userDetails != null ? userDetails.getId() : 1L;
+        String bagCode = (String) payload.get("bagCode");
+        Long hubWarehouseId = payload.get("hubWarehouseId") != null
+                ? Long.valueOf(payload.get("hubWarehouseId").toString())
+                : (userDetails != null && userDetails.getAssignedPostOfficeId() != null ? userDetails.getAssignedPostOfficeId() : 1L);
+
+        MasterBagResponse res = masterBagService.hubScanInbound(bagCode, hubWarehouseId, operatorId);
+        return ResponseEntity.ok(ApiResponse.success(res, "Kho Hub đã quét tiếp nhận bao tải thành công! Toàn bộ đơn hàng đã chuyển về trạng thái đang ở kho Hub qua Kafka."));
+    }
+
+    @GetMapping("/driver-tasks")
+    public ResponseEntity<ApiResponse<List<MasterBagResponse>>> getDriverTasks(
+            @RequestParam(required = false) Long driverId,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long effectiveDriverId = driverId != null ? driverId : (userDetails != null ? userDetails.getId() : 1L);
+        List<MasterBagResponse> list = masterBagService.getDriverBags(effectiveDriverId);
+        return ResponseEntity.ok(ApiResponse.success(list));
+    }
+
+    @GetMapping("/hub/{hubId}/incoming")
+    public ResponseEntity<ApiResponse<List<MasterBagResponse>>> getIncomingBagsForHub(@PathVariable Long hubId) {
+        List<MasterBagResponse> list = masterBagService.getIncomingBagsForHub(hubId);
+        return ResponseEntity.ok(ApiResponse.success(list));
     }
 }

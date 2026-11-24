@@ -232,6 +232,18 @@ public class Order {
     @Column(name = "reconciliation_sheet_code", length = 30)
     private String reconciliationSheetCode;
 
+    // --- Nộp tiền cuối ca bưu tá (Shipper Cash Settlement & PayOS Online) ---
+    @Column(name = "is_cash_settled", columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean isCashSettled = false;
+
+    @Column(name = "settled_cash_amount", precision = 12, scale = 2)
+    @Builder.Default
+    private BigDecimal settledCashAmount = BigDecimal.ZERO;
+
+    @Column(name = "cash_submission_code", length = 50)
+    private String cashSubmissionCode;
+
     // --- US-23: Mô hình AI Dự báo Thời gian Giao hàng (Predictive ETA) ---
     @Column(name = "estimated_delivery_at")
     private LocalDateTime estimatedDeliveryAt;

@@ -39,7 +39,12 @@ import {
 } from 'lucide-react';
 import { wmsApi } from '../api/wms';
 import { locationApi } from '../api/location';
-import { MasterBag, Warehouse } from '../types';
+import { orderApi } from '../api/order';
+import { truckApi } from '../api/truck';
+import { useAuth } from '../context/AuthContext';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
+import { MasterBag, Warehouse, Truck as TruckType } from '../types';
+import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -47,6 +52,9 @@ const { Option } = Select;
 const STATUS_TAGS: Record<string, { label: string; color: string }> = {
   OPEN: { label: 'Đang mở đóng kiện', color: 'blue' },
   SEALED: { label: 'Đã kẹp chì (Seal)', color: 'orange' },
+  ASSIGNED_TO_DRIVER: { label: 'Đã gán tài xế xe tải', color: 'gold' },
+  IN_TRANSIT: { label: 'Đang trên xe trung chuyển', color: 'purple' },
+  ARRIVED_AT_HUB: { label: 'Đã đến kho Hub', color: 'cyan' },
   MANIFESTED: { label: 'Đã lên bảng kê xe', color: 'cyan' },
   DISPATCHED: { label: 'Đang luân chuyển xe', color: 'purple' },
   RECEIVED: { label: 'Đã nhận tại kho đích', color: 'green' },
@@ -54,16 +62,52 @@ const STATUS_TAGS: Record<string, { label: string; color: string }> = {
 };
 
 export const MasterBagPage: React.FC = () => {
+  const { user } = useAuth();
   const [bags, setBags] = useState<MasterBag[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchKeyword, setSearchKeyword] = useState<string>('');
 
-  // Modal tạo bao mới
+  // Tự động lắng nghe sự kiện WebSocket cập nhật danh sách bao tải
+  useOrderWebSocket({
+    onEvent: (event) => {
+      if (
+        event.type === 'MASTER_BAG_CREATED' ||
+        event.type === 'BAG_SEALED' ||
+        event.type === 'BAG_UNSEALED' ||
+        event.type === 'BAG_ASSIGNED_TO_DRIVER' ||
+        event.type === 'MASTER_BAG_IN_TRANSIT' ||
+        event.type === 'MASTER_BAG_ARRIVED_AT_HUB'
+      ) {
+        fetchData();
+      }
+    },
+    showNotification: false,
+  });
+
+  // Modal tạo bao mới kèm quét kiện trực tiếp
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
   const [createForm] = Form.useForm();
   const [creating, setCreating] = useState<boolean>(false);
+  const [scannedItems, setScannedItems] = useState<
+    Array<{ trackingCode: string; itemName: string; weightGram: number; receiverAddress?: string }>
+  >([]);
+  const [newBagScanInput, setNewBagScanInput] = useState<string>('');
+  const [checkingItem, setCheckingItem] = useState<boolean>(false);
+
+  // Modal gán tài xế xe tải
+  const [assignDriverModalOpen, setAssignDriverModalOpen] = useState<boolean>(false);
+  const [assigningBag, setAssigningBag] = useState<MasterBag | null>(null);
+  const [assignDriverForm] = Form.useForm();
+  const [drivers, setDrivers] = useState<Array<{ id: number; fullName: string; phoneNumber: string }>>([]);
+  const [trucks, setTrucks] = useState<TruckType[]>([]);
+  const [assigningDriver, setAssigningDriver] = useState<boolean>(false);
+
+  // Modal quét nhập kho Hub
+  const [hubScanModalOpen, setHubScanModalOpen] = useState<boolean>(false);
+  const [hubScanInput, setHubScanInput] = useState<string>('');
+  const [hubScanning, setHubScanning] = useState<boolean>(false);
 
   // Drawer chi tiết bàn đóng bao
   const [activeBag, setActiveBag] = useState<MasterBag | null>(null);
@@ -100,6 +144,64 @@ export const MasterBagPage: React.FC = () => {
     }
   };
 
+  const handleOpenCreateModal = () => {
+    const defaultOrigin = user?.assignedPostOfficeId || (warehouses.length > 0 ? warehouses[0].id : undefined);
+    const suggestedSeal = 'SEAL' + dayjs().format('YYYYMMDD') + '-' + Math.floor(1000 + Math.random() * 9000);
+    setScannedItems([]);
+    setNewBagScanInput('');
+    createForm.setFieldsValue({
+      originWarehouseId: defaultOrigin,
+      sealNumber: suggestedSeal,
+      destWarehouseId: undefined,
+      notes: '',
+    });
+    setCreateModalOpen(true);
+  };
+
+  const handleAddTrackingToNewBag = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const code = newBagScanInput.trim().toUpperCase();
+    if (!code) return;
+
+    if (scannedItems.some((item) => item.trackingCode === code)) {
+      message.warning(`Đơn hàng [${code}] đã có trong danh sách đóng bao này rồi!`);
+      return;
+    }
+
+    setCheckingItem(true);
+    try {
+      const order = await orderApi.getOrderByTrackingCode(code);
+      setScannedItems((prev) => [
+        ...prev,
+        {
+          trackingCode: code,
+          itemName: order.itemName || 'Hàng hóa tổng hợp',
+          weightGram: order.billableWeightGram || order.actualWeightGram || 500,
+          receiverAddress: order.receiverAddress,
+        },
+      ]);
+      message.success(`Đã quét đơn hàng [${code}] vào bao thành công!`);
+      setNewBagScanInput('');
+    } catch (err: any) {
+      setScannedItems((prev) => [
+        ...prev,
+        {
+          trackingCode: code,
+          itemName: 'Kiện hàng gom bao',
+          weightGram: 500,
+        },
+      ]);
+      message.info(`Đã thêm mã vận đơn [${code}] vào danh sách đóng bao.`);
+      setNewBagScanInput('');
+    } finally {
+      setCheckingItem(false);
+    }
+  };
+
+  const handleRemoveTrackingFromNewBag = (trackingCode: string) => {
+    setScannedItems((prev) => prev.filter((item) => item.trackingCode !== trackingCode));
+  };
+
   const handleCreateBag = async () => {
     try {
       const values = await createForm.validateFields();
@@ -107,14 +209,17 @@ export const MasterBagPage: React.FC = () => {
       const newBag = await wmsApi.createBag({
         originWarehouseId: values.originWarehouseId,
         destWarehouseId: values.destWarehouseId,
+        sealNumber: values.sealNumber,
         notes: values.notes,
+        trackingCodes: scannedItems.map((item) => item.trackingCode),
       });
-      message.success(`Đã tạo bao tải mới [${newBag.bagCode}] thành công!`);
+      message.success(
+        `Đã tạo bao tải gom hàng [${newBag.bagCode}] kẹp chì [${newBag.sealNumber}] gồm ${newBag.totalItems} kiện thành công! Đã gửi thông báo tới kho đích.`
+      );
       setCreateModalOpen(false);
       createForm.resetFields();
+      setScannedItems([]);
       fetchData();
-      // Mở ngay drawer đóng hàng cho bao mới tạo
-      openBagDrawer(newBag);
     } catch (err: any) {
       message.error(err.response?.data?.message || 'Có lỗi khi tạo bao tải');
     } finally {
@@ -167,6 +272,73 @@ export const MasterBagPage: React.FC = () => {
       setBags((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
     } catch (err: any) {
       message.error(err.response?.data?.message || 'Lỗi khi gỡ kiện hàng');
+    }
+  };
+
+  const handleOpenAssignDriverModal = async (bag: MasterBag) => {
+    setAssigningBag(bag);
+    assignDriverForm.resetFields();
+    if (bag.assignedDriverId) {
+      assignDriverForm.setFieldsValue({
+        driverId: bag.assignedDriverId,
+        truckId: bag.assignedTruckId
+      });
+    }
+    setAssignDriverModalOpen(true);
+    try {
+      const [driversRes, trucksRes] = await Promise.all([
+        truckApi.getTruckDrivers(),
+        truckApi.getTrucks()
+      ]);
+      if (driversRes.success) setDrivers(driversRes.data);
+      if (trucksRes.success) setTrucks(trucksRes.data);
+    } catch (err: any) {
+      console.warn('Lỗi tải danh sách tài xế/xe:', err);
+    }
+  };
+
+  const handleSaveAssignDriver = async () => {
+    try {
+      if (!assigningBag) return;
+      const values = await assignDriverForm.validateFields();
+      setAssigningDriver(true);
+      const updated = await wmsApi.assignDriver(assigningBag.id, {
+        driverId: values.driverId,
+        truckId: values.truckId,
+        notes: values.notes
+      });
+      message.success(`Đã gán tài xế ${updated.assignedDriverName || ''} cho bao tải ${updated.bagCode}!`);
+      setAssignDriverModalOpen(false);
+      setBags(prev => prev.map(b => b.id === updated.id ? updated : b));
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Không thể gán tài xế cho bao tải');
+    } finally {
+      setAssigningDriver(false);
+    }
+  };
+
+  const handleOpenHubScanModal = (bag?: MasterBag) => {
+    setHubScanInput(bag ? bag.bagCode : '');
+    setHubScanModalOpen(true);
+  };
+
+  const handleHubScanInbound = async () => {
+    if (!hubScanInput.trim()) {
+      message.warning('Vui lòng nhập hoặc quét mã bao tải!');
+      return;
+    }
+    setHubScanning(true);
+    try {
+      const hubWhId = user?.assignedPostOfficeId || 1;
+      const updated = await wmsApi.hubScanInbound(hubScanInput.trim(), hubWhId);
+      message.success(`Kho Hub đã tiếp nhận bao tải [${updated.bagCode}] thành công! Toàn bộ đơn hàng đã chuyển sang trạng thái ở kho Hub qua Kafka.`);
+      setHubScanModalOpen(false);
+      setHubScanInput('');
+      fetchData();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Lỗi khi quét tiếp nhận bao tải tại Hub');
+    } finally {
+      setHubScanning(false);
     }
   };
 
@@ -273,6 +445,27 @@ export const MasterBagPage: React.FC = () => {
       ),
     },
     {
+      title: 'Tài xế & Xe tải',
+      key: 'driverTruck',
+      render: (_: any, record: MasterBag) => (
+        <div className="text-xs">
+          {record.assignedDriverName ? (
+            <div>
+              <div className="font-semibold text-gray-800">{record.assignedDriverName}</div>
+              <div className="text-gray-500">{record.assignedDriverPhone}</div>
+              {record.assignedTruckPlate && (
+                <Tag color="gold" className="text-xs mt-0.5 font-bold">
+                  Xe: {record.assignedTruckPlate}
+                </Tag>
+              )}
+            </div>
+          ) : (
+            <span className="text-gray-400 italic">Chưa gán tài xế</span>
+          )}
+        </div>
+      ),
+    },
+    {
       title: 'Trạng Thái',
       dataIndex: 'status',
       key: 'status',
@@ -303,7 +496,7 @@ export const MasterBagPage: React.FC = () => {
             onClick={() => openBagDrawer(record)}
             className="bg-blue-600 hover:bg-blue-700 text-xs"
           >
-            Đóng hàng
+            {record.status === 'OPEN' ? 'Đóng hàng' : 'Xem chi tiết'}
           </Button>
 
           {record.status === 'OPEN' && record.totalItems > 0 && (
@@ -317,7 +510,30 @@ export const MasterBagPage: React.FC = () => {
             </Button>
           )}
 
-          {['DISPATCHED', 'RECEIVED'].includes(record.status) && (
+          {['SEALED', 'ASSIGNED_TO_DRIVER'].includes(record.status) && (
+            <Button
+              size="small"
+              icon={<Truck size={14} />}
+              onClick={() => handleOpenAssignDriverModal(record)}
+              className="border-yellow-600 text-yellow-700 hover:bg-yellow-50 text-xs font-medium"
+            >
+              {record.assignedDriverId ? 'Đổi tài xế' : 'Gán tài xế'}
+            </Button>
+          )}
+
+          {record.status === 'IN_TRANSIT' && (
+            <Button
+              size="small"
+              type="primary"
+              icon={<CheckCircle2 size={14} />}
+              onClick={() => handleOpenHubScanModal(record)}
+              className="bg-purple-600 hover:bg-purple-700 text-xs"
+            >
+              Quét nhập Hub
+            </Button>
+          )}
+
+          {['SEALED', 'ASSIGNED_TO_DRIVER', 'ARRIVED_AT_HUB', 'MANIFESTED', 'DISPATCHED', 'RECEIVED'].includes(record.status) && (
             <Popconfirm
               title="Xác nhận cắt chì mở bao"
               description="Các kiện hàng bên trong sẽ được tự động nhập kho tại Hub đích."
@@ -370,12 +586,17 @@ export const MasterBagPage: React.FC = () => {
             Làm mới
           </Button>
           <Button
+            type="default"
+            icon={<CheckCircle2 size={16} className="text-purple-600" />}
+            onClick={() => handleOpenHubScanModal()}
+            className="border-purple-600 text-purple-700 hover:bg-purple-50"
+          >
+            Quét tiếp nhận tại Hub
+          </Button>
+          <Button
             type="primary"
             icon={<Plus size={16} />}
-            onClick={() => {
-              createForm.resetFields();
-              setCreateModalOpen(true);
-            }}
+            onClick={handleOpenCreateModal}
             className="bg-red-600 hover:bg-red-700"
           >
             Tạo bao tải mới
@@ -636,54 +857,203 @@ export const MasterBagPage: React.FC = () => {
         )}
       </Drawer>
 
-      {/* Modal Tạo Bao Tải Mới */}
+      {/* Modal Tạo Bao Tải Mới & Kẹp Chì */}
       <Modal
         title={
-          <div className="flex items-center gap-2 text-base font-bold">
-            <Plus size={18} className="text-red-600" />
-            Khởi Tạo Bao Tải Gom Hàng Mới
+          <div className="flex items-center gap-2 text-base font-bold text-red-600">
+            <Plus size={20} />
+            Khởi Tạo Bao Tải Gom Hàng & Kẹp Chì Niêm Phong
           </div>
         }
         open={createModalOpen}
         onCancel={() => setCreateModalOpen(false)}
-        onOk={handleCreateBag}
-        confirmLoading={creating}
-        okText="Tạo bao tải"
-        cancelText="Hủy"
+        footer={[
+          <Button key="cancel" onClick={() => setCreateModalOpen(false)}>
+            Hủy
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
+            loading={creating}
+            onClick={handleCreateBag}
+            icon={<Lock size={16} />}
+            className="bg-red-600 hover:bg-red-700 font-bold"
+          >
+            Tạo bao tải & Kẹp chì ({scannedItems.length} kiện)
+          </Button>,
+        ]}
+        width={720}
         destroyOnClose
       >
-        <Form form={createForm} layout="vertical" className="mt-4">
-          <Form.Item
-            name="originWarehouseId"
-            label="Kho / Bưu cục xuất phát (Nơi gom hàng)"
-            rules={[{ required: true, message: 'Vui lòng chọn kho xuất phát' }]}
-          >
-            <Select placeholder="Chọn kho / bưu cục xuất phát" showSearch optionFilterProp="children">
-              {warehouses.map((w) => (
-                <Option key={w.id} value={w.id}>
-                  {w.name} ({w.type})
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
+        <Form form={createForm} layout="vertical" className="mt-2 space-y-3">
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="originWarehouseId"
+                label={
+                  <span className="font-semibold text-xs text-gray-700">
+                    Kho / Bưu cục xuất phát (Nơi gom hàng){' '}
+                    <Tag color="blue" className="ml-1 text-[10px]">
+                      Cố định địa điểm của bạn
+                    </Tag>
+                  </span>
+                }
+                rules={[{ required: true, message: 'Vui lòng chọn kho xuất phát' }]}
+              >
+                <Select disabled placeholder="Kho / bưu cục xuất phát">
+                  {warehouses.map((w) => (
+                    <Option key={w.id} value={w.id}>
+                      {w.name} ({w.type})
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
 
-          <Form.Item
-            name="destWarehouseId"
-            label="Kho / Hub đích đến (Nơi tiếp nhận bao)"
-            rules={[{ required: true, message: 'Vui lòng chọn kho đích đến' }]}
-          >
-            <Select placeholder="Chọn kho / Hub đích đến" showSearch optionFilterProp="children">
-              {warehouses.map((w) => (
-                <Option key={w.id} value={w.id}>
-                  {w.name} ({w.type})
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="destWarehouseId"
+                label={
+                  <span className="font-semibold text-xs text-red-700">
+                    * Kho / Hub đích đến (Nơi tiếp nhận bao)
+                  </span>
+                }
+                rules={[{ required: true, message: 'Vui lòng chọn kho đích đến' }]}
+              >
+                <Select placeholder="Chọn kho / Hub đích đến" showSearch optionFilterProp="children">
+                  {warehouses
+                    .filter((w) => w.id !== createForm.getFieldValue('originWarehouseId'))
+                    .map((w) => (
+                      <Option key={w.id} value={w.id}>
+                        {w.name} ({w.type})
+                      </Option>
+                    ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
-          <Form.Item name="notes" label="Ghi chú bao tải">
-            <Input.TextArea placeholder="Ví dụ: Hàng dễ vỡ, bưu phẩm hỏa tốc..." rows={2} />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="sealNumber"
+                label={
+                  <span className="font-semibold text-xs text-orange-700">
+                    * Mã số kẹp chì kim loại / Seal nhựa
+                  </span>
+                }
+                rules={[{ required: true, message: 'Vui lòng nhập mã số kẹp chì' }]}
+              >
+                <Input
+                  prefix={<Barcode size={18} className="text-gray-400" />}
+                  placeholder="Nhập hoặc quét mã chì niêm phong..."
+                  className="font-mono font-bold"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="notes"
+                label={<span className="font-semibold text-xs text-gray-700">Ghi chú bao tải</span>}
+              >
+                <Input placeholder="Ví dụ: Hàng dễ vỡ, bưu phẩm hỏa tốc..." />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider className="my-2" />
+
+          {/* Phần quét mã đơn hàng gom vào bao */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-xs text-gray-800 flex items-center gap-1.5">
+                <Barcode size={16} className="text-blue-600" />
+                Quét / Nhập mã vận đơn muốn cho vào bao tải:
+              </span>
+              <span className="text-xs text-gray-500">
+                Đã quét: <strong className="text-blue-700 font-bold">{scannedItems.length}</strong> kiện | Tổng cân nặng:{' '}
+                <strong className="text-gray-800 font-bold">
+                  {(scannedItems.reduce((acc, it) => acc + (it.weightGram || 500), 0) / 1000).toFixed(2)} kg
+                </strong>
+              </span>
+            </div>
+
+            <div className="flex gap-2">
+              <Input
+                size="large"
+                prefix={<Barcode size={20} className="text-gray-400" />}
+                placeholder="Quét mã vận đơn (VD: RKP261124...) rồi nhấn Enter"
+                value={newBagScanInput}
+                onChange={(e) => setNewBagScanInput(e.target.value)}
+                onPressEnter={handleAddTrackingToNewBag}
+                className="font-mono font-bold"
+                disabled={checkingItem}
+              />
+              <Button
+                type="primary"
+                size="large"
+                onClick={handleAddTrackingToNewBag}
+                loading={checkingItem}
+                className="bg-blue-600 hover:bg-blue-700 font-semibold"
+              >
+                Thêm đơn
+              </Button>
+            </div>
+
+            {/* Bảng danh sách các đơn đã quét */}
+            <div className="border rounded-xl overflow-hidden mt-2">
+              <Table
+                dataSource={scannedItems}
+                rowKey="trackingCode"
+                size="small"
+                pagination={{ pageSize: 5 }}
+                locale={{ emptyText: 'Chưa có đơn hàng nào được quét vào bao tải' }}
+                columns={[
+                  {
+                    title: 'STT',
+                    key: 'stt',
+                    width: 50,
+                    align: 'center' as const,
+                    render: (_: any, __: any, index: number) => index + 1,
+                  },
+                  {
+                    title: 'Mã Vận Đơn',
+                    dataIndex: 'trackingCode',
+                    key: 'trackingCode',
+                    render: (c: string) => <span className="font-mono font-bold text-blue-700 text-xs">{c}</span>,
+                  },
+                  {
+                    title: 'Hàng Hóa',
+                    dataIndex: 'itemName',
+                    key: 'itemName',
+                    render: (name: string) => <span className="text-xs text-gray-800 font-medium">{name}</span>,
+                  },
+                  {
+                    title: 'Trọng lượng',
+                    dataIndex: 'weightGram',
+                    key: 'weightGram',
+                    align: 'right' as const,
+                    render: (w: number) => <span className="text-xs font-semibold text-gray-700">{w || 500}g</span>,
+                  },
+                  {
+                    title: '',
+                    key: 'action',
+                    width: 50,
+                    align: 'center' as const,
+                    render: (_: any, record: any) => (
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<Trash2 size={14} />}
+                        onClick={() => handleRemoveTrackingFromNewBag(record.trackingCode)}
+                      />
+                    ),
+                  },
+                ]}
+              />
+            </div>
+          </div>
         </Form>
       </Modal>
 
@@ -722,6 +1092,108 @@ export const MasterBagPage: React.FC = () => {
                 prefix={<Barcode size={20} className="text-gray-400" />}
                 placeholder="Nhập hoặc quét mã số kẹp chì..."
                 className="font-mono font-bold text-base"
+              />
+            </Form.Item>
+          </Form>
+        </div>
+      </Modal>
+
+      {/* Modal Gán Tài Xế Xe Tải */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-base font-bold text-blue-600">
+            <Truck size={20} />
+            Gán Tài Xế Xe Tải Vận Chuyển Bao [{assigningBag?.bagCode}]
+          </div>
+        }
+        open={assignDriverModalOpen}
+        onCancel={() => setAssignDriverModalOpen(false)}
+        onOk={handleSaveAssignDriver}
+        confirmLoading={assigningDriver}
+        okText="Xác nhận gán tài xế"
+        cancelText="Hủy"
+        destroyOnClose
+        width={550}
+      >
+        <div className="my-2 space-y-4">
+          <Alert
+            type="info"
+            message="Chỉ định tài xế trung chuyển"
+            description="Chỉ tài xế được chọn mới có quyền quét mã code trên bao tải để chuyển trạng thái đang trung chuyển và mang bao tải đi."
+            showIcon
+          />
+          <Form form={assignDriverForm} layout="vertical">
+            <Form.Item
+              name="driverId"
+              label="Chọn tài xế xe tải (ROLE_TRUCK_DRIVER)"
+              rules={[{ required: true, message: 'Vui lòng chọn tài xế' }]}
+            >
+              <Select placeholder="Chọn tài xế xe tải" showSearch optionFilterProp="children">
+                {drivers.map(d => (
+                  <Select.Option key={d.id} value={d.id}>
+                    {d.fullName} (SĐT: {d.phoneNumber})
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item
+              name="truckId"
+              label="Chọn xe ô tô tải vận chuyển (tùy chọn)"
+            >
+              <Select placeholder="Chọn xe tải trung chuyển" allowClear showSearch optionFilterProp="children">
+                {trucks.map(t => (
+                  <Select.Option key={t.id} value={t.id}>
+                    {t.licensePlate} - {t.truckType} ({t.payloadKg} kg) - [{t.status === 'AT_WAREHOUSE' ? 'Ở kho' : t.status}]
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item name="notes" label="Ghi chú điều phối chuyến xe">
+              <Input.TextArea rows={2} placeholder="Ghi chú về giờ xuất bến, lộ trình đường trục..." />
+            </Form.Item>
+          </Form>
+        </div>
+      </Modal>
+
+      {/* Modal Quét Tiếp Nhận Tại Kho Hub */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-base font-bold text-purple-600">
+            <CheckCircle2 size={20} />
+            Quét Tiếp Nhận Bao Tải Tại Kho Hub Trung Chuyển
+          </div>
+        }
+        open={hubScanModalOpen}
+        onCancel={() => setHubScanModalOpen(false)}
+        onOk={handleHubScanInbound}
+        confirmLoading={hubScanning}
+        okText="Tiếp nhận bao tải vào Hub"
+        cancelText="Hủy"
+        destroyOnClose
+      >
+        <div className="my-2 space-y-4">
+          <Alert
+            type="success"
+            message="Tiếp nhận bao tải trung chuyển"
+            description="Khi quét mã bao tải, hệ thống sẽ tự động sử dụng Kafka để chuyển toàn bộ đơn hàng trong bao tải về trạng thái đang ở kho Hub hiện tại và ghi log nhật ký hành trình."
+            showIcon
+          />
+          <Form layout="vertical">
+            <Form.Item
+              label="Nhập hoặc quét mã bao tải / mã kẹp chì (Seal)"
+              required
+            >
+              <Input
+                size="large"
+                prefix={<Barcode size={20} className="text-gray-400" />}
+                placeholder="Vd: BAG261124xxxx hoặc SEAL-..."
+                value={hubScanInput}
+                onChange={e => setHubScanInput(e.target.value)}
+                onPressEnter={handleHubScanInbound}
+                autoFocus
+                className="font-mono font-bold text-base uppercase"
               />
             </Form.Item>
           </Form>

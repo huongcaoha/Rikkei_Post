@@ -47,12 +47,14 @@ export const AppLayout: React.FC = () => {
   const isPostOfficeManager = userRoles.includes('ROLE_POST_OFFICE_MANAGER');
   const isWarehouseStaff = userRoles.includes('ROLE_WAREHOUSE_STAFF');
   const isShipper = userRoles.includes('ROLE_SHIPPER');
+  const isTruckDriver = userRoles.includes('ROLE_TRUCK_DRIVER');
   const isStaffOrAdmin = userRoles.some((r) =>
-    ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF'].includes(r)
+    ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF', 'ROLE_TRUCK_DRIVER'].includes(r)
   );
   const canCreateOrder = !isStaffOrAdmin && (userRoles.includes('ROLE_MERCHANT') || userRoles.includes('ROLE_CUSTOMER') || userRoles.length === 0);
 
   const canInbound = isAdmin || isBranchManager || isPostOfficeManager || isWarehouseStaff;
+  const canManageBags = isAdmin || isPostOfficeManager || isWarehouseStaff;
   const canPickup = isShipper || isAdmin;
   const showQuickScan = canInbound || canPickup;
 
@@ -144,12 +146,39 @@ export const AppLayout: React.FC = () => {
     });
   }
 
-  // Quy trình Đóng bao tải Master Bag & Kẹp chì Seal (WMS Hub & Kho)
-  if (canInbound) {
+  // Quy trình Đóng bao tải Master Bag & Kẹp chì Seal (Chỉ Quản lý bưu cục / Nhân viên kho / Admin)
+  if (canManageBags) {
     menuItems.push({
       key: '/wms/bags',
       icon: <Layers size={18} />,
       label: 'Đóng bao tải & Kẹp chì (WMS)',
+    });
+  }
+
+  // Quản lý Đội xe tải (Fleet Management)
+  if (isAdmin || isBranchManager || isPostOfficeManager) {
+    menuItems.push({
+      key: '/wms/trucks',
+      icon: <Truck size={18} />,
+      label: 'Quản lý Đội xe tải (Fleet)',
+    });
+  }
+
+  // Quét mã phân loại đơn khu vực (Smart Sorting by Map)
+  if (canInbound) {
+    menuItems.push({
+      key: '/wms/sorting-scanner',
+      icon: <Scan size={18} />,
+      label: 'Quét phân loại đơn khu vực (Map)',
+    });
+  }
+
+  // Cổng tác nghiệp dành cho Tài xế xe tải
+  if (isTruckDriver || isAdmin) {
+    menuItems.push({
+      key: '/driver/portal',
+      icon: <Truck size={18} />,
+      label: 'Cổng tác nghiệp Tài xế xe tải',
     });
   }
 

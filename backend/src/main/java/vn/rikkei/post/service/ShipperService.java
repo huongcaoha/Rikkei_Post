@@ -35,7 +35,12 @@ public interface ShipperService {
     // Sprint 3 - US-18: Báo cáo ngoại lệ giao thất bại & Tự động tăng lần phát / Hàng hoàn
     OrderResponse reportDeliveryFailure(Long shipperId, DeliveryFailureRequest request);
 
-    // Sprint 3 - US-17: Quản lý Thu hộ COD & Bảng kê nộp tiền cuối ca
+    // Sprint 3 - US-17 & Sprint 4: Quản lý Thu hộ COD, Nộp tiền cuối ca PayOS & Đối soát
     CashReconciliationResponse getCashReconciliation(Long userId, Long filterShipperId, LocalDate date);
+    CashReconciliationResponse getCashReconciliation(Long userId, Long filterShipperId, LocalDate startDate, LocalDate endDate);
     Map<String, Object> submitCashReconciliation(Long shipperId, CashSubmitRequest request);
+    org.springframework.data.domain.Page<vn.rikkei.post.dto.shipper.CashSubmissionResponse> getCashSubmissions(Long shipperId, Long postOfficeId, LocalDate startDate, LocalDate endDate, org.springframework.data.domain.Pageable pageable);
+    Map<String, Object> checkSubmissionPaymentStatus(String submissionCode);
+    Map<String, Object> handlePayOsWebhook(vn.payos.model.webhooks.Webhook webhook);
+    Map<String, Object> approveCashSubmission(String submissionCode, Long managerId);
 }

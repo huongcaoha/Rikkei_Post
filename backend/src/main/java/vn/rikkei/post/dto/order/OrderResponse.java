@@ -72,9 +72,13 @@ public class OrderResponse {
     private LocalDateTime deliveredAt;
     private LocalDateTime estimatedDeliveryAt;
 
-    // Đối soát COD
+    // Đối soát COD & Nộp tiền cuối ca
     private Boolean isReconciled;
     private String reconciliationSheetCode;
+    private Boolean isCashSettled;
+    private BigDecimal settledCashAmount;
+    private BigDecimal remainingCashAmount;
+    private String cashSubmissionCode;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
