@@ -70,6 +70,7 @@ public class SecurityConfig {
                                 "/api/v1/pricing/**",
                                 "/api/v1/locations/**",
                                 "/api/v1/orders/track/**",
+                                "/api/v1/ai/**",
                                 "/ws-logistics/**",
                                 "/actuator/**",
                                 "/error"

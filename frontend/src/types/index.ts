@@ -113,8 +113,55 @@ export interface Order {
   assignedRouteId?: number;
   pickupCompletedAt?: string;
   deliveredAt?: string;
+  podPhotoUrl?: string;
+  podSignatureUrl?: string;
+  podLatitude?: number;
+  podLongitude?: number;
+  podReceiverName?: string;
+  deliveryOtp?: string;
+  rescheduledDeliveryDate?: string;
+  failureProofPhotoUrl?: string;
+  paymentMethod?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CompleteDeliveryRequest {
+  trackingCode: string;
+  podPhotoUrl?: string;
+  podSignatureUrl?: string;
+  podLatitude?: number;
+  podLongitude?: number;
+  receiverName?: string;
+  notes?: string;
+  otpCode?: string;
+  paymentMethod?: 'CASH' | 'VIETQR' | string;
+}
+
+export interface DeliveryFailureRequest {
+  trackingCode: string;
+  reason: string;
+  notes?: string;
+  failureProofPhotoUrl?: string;
+  rescheduledDate?: string;
+}
+
+export interface SmartDispatchRequest {
+  trackingCode: string;
+  shipperId?: number;
+  postOfficeId?: number;
+}
+
+export interface CashReconciliationResponse {
+  shipperId: number;
+  shipperName: string;
+  shipperPhone: string;
+  shiftDate: string;
+  totalOrdersDelivered: number;
+  totalCodCollected: number;
+  totalFeeCollected: number;
+  totalCashToSubmit: number;
+  orders: Order[];
 }
 
 export interface CreateOrderRequest {
@@ -282,4 +329,261 @@ export interface ShipperSummary {
   totalCollected?: number;
   codOrdersCount?: number;
 }
+
+export interface PricingMatrixItem {
+  id: number;
+  serviceType: string;
+  zoneType: string;
+  baseWeightGram: number;
+  basePrice: number;
+  stepWeightGram: number;
+  stepPrice: number;
+  estimatedDeliveryHours: number;
+  isActive: boolean;
+}
+
+export interface PricingMatrixRequest {
+  serviceType: string;
+  zoneType: string;
+  baseWeightGram: number;
+  basePrice: number;
+  stepWeightGram: number;
+  stepPrice: number;
+  estimatedDeliveryHours: number;
+  isActive?: boolean;
+}
+
+export interface PricingPolicy {
+  id?: number;
+  doorPickupBaseFee: number;
+  freePickupOrderThreshold: number;
+  bulkyWeightThresholdGram: number;
+  bulkyMaxDimensionCm: number;
+  bulkySumDimensionsCm: number;
+  bulkyExtraPricePerKg: number;
+  oversizeDimensionFee: number;
+  insuranceValueThreshold: number;
+  insurancePercentRate: number;
+}
+
+export interface BagItem {
+  id: number;
+  trackingCode: string;
+  weightGram: number;
+  itemName?: string;
+  receiverAddress?: string;
+  routingCode?: string;
+  scannedAt: string;
+}
+
+export interface MasterBag {
+  id: number;
+  bagCode: string;
+  originWarehouseId: number;
+  originWarehouseName: string;
+  destWarehouseId: number;
+  destWarehouseName: string;
+  sealNumber?: string;
+  status: 'OPEN' | 'SEALED' | 'MANIFESTED' | 'DISPATCHED' | 'RECEIVED' | 'UNSEALED' | string;
+  totalItems: number;
+  totalWeightKg: number;
+  sealedByUserId?: number;
+  sealedByUserName?: string;
+  sealedAt?: string;
+  manifestId?: number;
+  manifestCode?: string;
+  notes?: string;
+  createdAt: string;
+  items?: BagItem[];
+}
+
+export interface CreateMasterBagRequest {
+  originWarehouseId: number;
+  destWarehouseId: number;
+  notes?: string;
+}
+
+export interface ShipmentManifest {
+  id: number;
+  manifestCode: string;
+  tripCode: string;
+  vehiclePlate: string;
+  driverName: string;
+  driverPhone: string;
+  originHubId: number;
+  originHubName: string;
+  destHubId: number;
+  destHubName: string;
+  truckSealNumber: string;
+  departureScheduledAt: string;
+  departureActualAt?: string;
+  arrivalEstimatedAt: string;
+  arrivalActualAt?: string;
+  totalBags: number;
+  totalPackages: number;
+  status: 'SCHEDULED' | 'LOADING' | 'DISPATCHED' | 'ARRIVED' | 'COMPLETED' | string;
+  notes?: string;
+  createdAt: string;
+  bags?: MasterBag[];
+}
+
+export interface CreateManifestRequest {
+  tripCode: string;
+  vehiclePlate: string;
+  driverName: string;
+  driverPhone: string;
+  originHubId: number;
+  destHubId: number;
+  truckSealNumber: string;
+  departureScheduledAt: string;
+  arrivalEstimatedAt: string;
+  notes?: string;
+  bagCodes?: string[];
+}
+
+// ==========================================
+// SPRINT 4: BILLING, CARRIER, VRP & AI TYPES
+// ==========================================
+
+export interface MerchantWallet {
+  id: number;
+  merchantId: number;
+  merchantName: string;
+  availableBalance: number;
+  holdingCodBalance: number;
+  totalWithdrawn: number;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountHolder: string;
+  updatedAt: string;
+}
+
+export interface ReconciliationSheet {
+  id: number;
+  sheetCode: string;
+  merchantId: number;
+  merchantName: string;
+  merchantEmail: string;
+  startDate: string;
+  endDate: string;
+  totalOrders: number;
+  totalCod: number;
+  totalShippingFee: number;
+  totalInsuranceFee: number;
+  netPayout: number;
+  status: 'PENDING' | 'APPROVED' | 'TRANSFERRED' | 'REJECTED' | string;
+  paidAt?: string;
+  bankTransactionCode?: string;
+  createdAt: string;
+}
+
+export interface ReconciliationItem {
+  id: number;
+  orderId: number;
+  trackingCode: string;
+  receiverName: string;
+  codAmount: number;
+  shippingFee: number;
+  insuranceFee: number;
+  netAmount: number;
+  deliveredAt?: string;
+}
+
+export interface ReconciliationDetail {
+  sheet: ReconciliationSheet;
+  items: ReconciliationItem[];
+}
+
+export interface WalletTransaction {
+  id: number;
+  merchantId: number;
+  transactionCode: string;
+  transactionType: 'COD_PAYOUT' | 'FEE_DEDUCTION' | 'WITHDRAWAL' | 'DEPOSIT' | string;
+  amount: number;
+  balanceAfter: number;
+  status: string;
+  referenceCode?: string;
+  description?: string;
+  createdAt: string;
+}
+
+export interface CarrierPartner {
+  id: number;
+  partnerCode: string;
+  companyName: string;
+  contactPerson?: string;
+  contactPhone?: string;
+  email?: string;
+  vehicleFleetCount: number;
+  routesOperated?: string;
+  contractPricePerKm: number;
+  onTimeDeliveryRate: number;
+  slaScore: number;
+  status: 'ACTIVE' | 'PAUSED' | 'TERMINATED' | string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CarrierTrip {
+  id: number;
+  tripCode: string;
+  carrierId: number;
+  carrierName?: string;
+  manifestCode?: string;
+  sourceHubId: number;
+  sourceHubName?: string;
+  destinationHubId: number;
+  destinationHubName?: string;
+  driverName?: string;
+  driverPhone?: string;
+  licensePlate?: string;
+  distanceKm?: number;
+  tripCost?: number;
+  departureTime?: string;
+  estimatedArrivalTime?: string;
+  actualArrivalTime?: string;
+  status: 'SCHEDULED' | 'IN_TRANSIT' | 'COMPLETED_ON_TIME' | 'DELAYED' | string;
+  slaCompliant?: boolean;
+  createdAt: string;
+}
+
+export interface VrpStop {
+  stopNumber: number;
+  trackingCode: string;
+  receiverName: string;
+  receiverPhone: string;
+  receiverAddress: string;
+  lat: number;
+  lng: number;
+  distanceFromPrevKm: number;
+  estimatedTravelMinutes: number;
+  codAmount: number;
+  currentStatus: string;
+}
+
+export interface VrpOptimizeResult {
+  totalStops: number;
+  totalDistanceKm: number;
+  totalEstimatedMinutes: number;
+  originalDistanceKm: number;
+  distanceSavedKm: number;
+  savingsPercent: number;
+  stops: VrpStop[];
+  algorithmUsed: string;
+  polylineSummary?: string;
+}
+
+export interface AiChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  content: string;
+  timestamp: string;
+  detectedIntent?: string;
+  suggestions?: string[];
+  structuredData?: any;
+}
+
+
+
 

@@ -173,6 +173,35 @@ public class Order {
     @Column(name = "notes", columnDefinition = "TEXT")
     private String notes;
 
+    // --- Bằng chứng giao hàng POD (Proof of Delivery) & Xác thực OTP ---
+    @Column(name = "pod_photo_url", columnDefinition = "TEXT")
+    private String podPhotoUrl;
+
+    @Column(name = "pod_signature_url", columnDefinition = "TEXT")
+    private String podSignatureUrl;
+
+    @Column(name = "pod_latitude")
+    private Double podLatitude;
+
+    @Column(name = "pod_longitude")
+    private Double podLongitude;
+
+    @Column(name = "pod_receiver_name", length = 100)
+    private String podReceiverName;
+
+    @Column(name = "delivery_otp", length = 10)
+    private String deliveryOtp;
+
+    @Column(name = "rescheduled_delivery_date")
+    private java.time.LocalDate rescheduledDeliveryDate;
+
+    @Column(name = "failure_proof_photo_url", columnDefinition = "TEXT")
+    private String failureProofPhotoUrl;
+
+    @Column(name = "payment_method", length = 30)
+    @Builder.Default
+    private String paymentMethod = "CASH"; // "CASH", "VIETQR", "BANK_TRANSFER"
+
     // --- Phân bổ Tuyến & Bưu tá (Shipper Assignment) ---
     @Column(name = "assigned_shipper_id")
     private Long assignedShipperId;
@@ -194,6 +223,18 @@ public class Order {
 
     @Column(name = "delivered_at")
     private LocalDateTime deliveredAt;
+
+    // --- US-19: Đối soát COD & Đối soát Ví Shop ---
+    @Column(name = "is_reconciled", columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean isReconciled = false;
+
+    @Column(name = "reconciliation_sheet_code", length = 30)
+    private String reconciliationSheetCode;
+
+    // --- US-23: Mô hình AI Dự báo Thời gian Giao hàng (Predictive ETA) ---
+    @Column(name = "estimated_delivery_at")
+    private LocalDateTime estimatedDeliveryAt;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

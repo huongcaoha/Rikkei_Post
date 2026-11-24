@@ -37,7 +37,7 @@ public class MasterBag {
     @JoinColumn(name = "dest_warehouse_id", nullable = false)
     private Warehouse destWarehouse;
 
-    @Column(name = "seal_number", unique = true, nullable = false, length = 50)
+    @Column(name = "seal_number", length = 50)
     private String sealNumber;
 
     @Column(nullable = false, length = 20)
@@ -52,11 +52,17 @@ public class MasterBag {
     @Builder.Default
     private BigDecimal totalWeightKg = BigDecimal.ZERO;
 
-    @Column(name = "sealed_by_user_id", nullable = false)
+    @Column(name = "sealed_by_user_id")
     private Long sealedByUserId;
 
     @Column(name = "sealed_at")
     private LocalDateTime sealedAt;
+
+    @Column(name = "manifest_id")
+    private Long manifestId;
+
+    @Column(name = "notes")
+    private String notes;
 
     @OneToMany(mappedBy = "masterBag", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default

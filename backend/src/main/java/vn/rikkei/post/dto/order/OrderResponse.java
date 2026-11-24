@@ -51,6 +51,17 @@ public class OrderResponse {
     private Integer deliveryAttempts;
     private String notes;
 
+    // Bằng chứng giao hàng POD & Xác thực
+    private String podPhotoUrl;
+    private String podSignatureUrl;
+    private Double podLatitude;
+    private Double podLongitude;
+    private String podReceiverName;
+    private String deliveryOtp;
+    private java.time.LocalDate rescheduledDeliveryDate;
+    private String failureProofPhotoUrl;
+    private String paymentMethod;
+
     // Phân bổ Tuyến & Bưu tá
     private Long assignedShipperId;
     private String assignedShipperName;
@@ -59,6 +70,11 @@ public class OrderResponse {
     private Long assignedRouteId;
     private LocalDateTime pickupCompletedAt;
     private LocalDateTime deliveredAt;
+    private LocalDateTime estimatedDeliveryAt;
+
+    // Đối soát COD
+    private Boolean isReconciled;
+    private String reconciliationSheetCode;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

@@ -26,6 +26,12 @@ import { Order, ShipperSummary } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from '../components/ContinuousScannerModal';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
+import { PodModal } from '../components/PodModal';
+import { VietQrModal } from '../components/VietQrModal';
+import { DeliveryFailureModal } from '../components/DeliveryFailureModal';
+import { CashReconciliationModal } from '../components/CashReconciliationModal';
+import { SmartDispatchModal } from '../components/SmartDispatchModal';
+import { QrCode, PenTool, Cpu, FileSpreadsheet, Sparkles, Camera } from 'lucide-react';
 
 const { RangePicker } = DatePicker;
 
@@ -82,6 +88,28 @@ export const ShipperPortalPage: React.FC = () => {
   const [failedModalVisible, setFailedModalVisible] = useState<boolean>(false);
   const [selectedTrackingCode, setSelectedTrackingCode] = useState<string>('');
   const [failedReason, setFailedReason] = useState<string>('Không liên lạc được với người nhận');
+
+  // Sprint 3 - US-15 POD Modal states
+  const [podModalVisible, setPodModalVisible] = useState<boolean>(false);
+  const [selectedPodOrder, setSelectedPodOrder] = useState<Order | null>(null);
+
+  // Sprint 3 - US-17 VietQR Modal states
+  const [vietQrModalVisible, setVietQrModalVisible] = useState<boolean>(false);
+  const [selectedVietQrOrder, setSelectedVietQrOrder] = useState<Order | null>(null);
+
+  // Sprint 3 - US-18 Delivery Failure Modal states
+  const [failureModalVisible, setFailureModalVisible] = useState<boolean>(false);
+  const [selectedFailureOrder, setSelectedFailureOrder] = useState<Order | null>(null);
+
+  // Sprint 3 - US-17 Cash Reconciliation Modal states
+  const [cashReconciliationVisible, setCashReconciliationVisible] = useState<boolean>(false);
+
+  // Sprint 3 - US-13 Smart Dispatch Modal states
+  const [smartDispatchVisible, setSmartDispatchVisible] = useState<boolean>(false);
+
+  // Modal xem ảnh & chữ ký POD
+  const [viewPodModalVisible, setViewPodModalVisible] = useState<boolean>(false);
+  const [viewPodOrder, setViewPodOrder] = useState<Order | null>(null);
 
   // Tải danh sách bưu tá thuộc bưu cục
   useEffect(() => {
@@ -336,8 +364,25 @@ export const ShipperPortalPage: React.FC = () => {
             Quét mã lấy đơn đi giao
           </Button>
 
+          <Button
+            size="large"
+            icon={<Banknote size={18} className="text-emerald-400" />}
+            onClick={() => setCashReconciliationVisible(true)}
+            className="bg-emerald-800 text-white hover:bg-emerald-900 border-emerald-500 font-bold h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
+          >
+            Nộp tiền cuối ca
+          </Button>
+
           {canInboundWarehouse && (
             <>
+              <Button
+                size="large"
+                icon={<Cpu size={18} className="text-indigo-300" />}
+                onClick={() => setSmartDispatchVisible(true)}
+                className="bg-indigo-800 text-white hover:bg-indigo-900 border-indigo-500 font-bold h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
+              >
+                Smart Dispatch
+              </Button>
               <Button
                 size="large"
                 icon={<Building2 size={18} />}
@@ -567,6 +612,46 @@ export const ShipperPortalPage: React.FC = () => {
           </div>
         </Col>
       </Row>
+
+      {/* Mobile 3-Tab Navigator (Mobile-First US-14) */}
+      <div className="flex bg-gray-100 p-1 rounded-2xl gap-1 md:hidden shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('PICKUP_PENDING')}
+          className={`flex-1 py-2 px-1 rounded-xl font-bold text-xs flex flex-col items-center justify-center transition ${
+            activeTab === 'PICKUP_PENDING' || activeTab === 'PICKED_UP'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-gray-600 hover:text-black'
+          }`}
+        >
+          <PackagePlus size={16} />
+          <span className="mt-0.5">Cần lấy ({summary?.pickupPending ?? 0})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('DELIVERING')}
+          className={`flex-1 py-2 px-1 rounded-xl font-bold text-xs flex flex-col items-center justify-center transition ${
+            activeTab === 'DELIVERING'
+              ? 'bg-orange-500 text-white shadow-sm'
+              : 'text-gray-600 hover:text-black'
+          }`}
+        >
+          <Truck size={16} />
+          <span className="mt-0.5">Đang giao ({summary?.delivering ?? 0})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('DELIVERED')}
+          className={`flex-1 py-2 px-1 rounded-xl font-bold text-xs flex flex-col items-center justify-center transition ${
+            activeTab === 'DELIVERED' || activeTab === 'COD_COLLECTED'
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'text-gray-600 hover:text-black'
+          }`}
+        >
+          <CheckCircle2 size={16} />
+          <span className="mt-0.5">Đã xong ({summary?.delivered ?? 0})</span>
+        </button>
+      </div>
 
       {/* Main Content Area */}
       <Card className="shadow-xs border-gray-200 rounded-2xl bg-white overflow-hidden">
@@ -798,45 +883,61 @@ export const ShipperPortalPage: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Mục 4: Đơn đã lấy ở kho mang đi giao -> Giao thành công hoặc Thất bại */}
+                  {/* Mục 4: Đơn đã lấy ở kho mang đi giao -> Giao hàng POD, VietQR, Báo thất bại */}
                   {task.currentStatus === 'DELIVERING' && (
-                    <div className="flex flex-col gap-2 w-full">
+                    <div className="flex flex-col gap-1.5 w-full">
                       <Button
                         type="primary"
-                        icon={<CheckCircle2 size={16} />}
-                        onClick={() => handleQuickUpdateStatus(task.trackingCode, 'DELIVERED', 'Khách đã nhận hàng và thanh toán')}
-                        className="bg-emerald-600 hover:bg-emerald-700 font-bold h-9 w-full rounded-xl shadow-xs"
+                        icon={<PenTool size={15} />}
+                        onClick={() => {
+                          setSelectedPodOrder(task);
+                          setPodModalVisible(true);
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-700 font-bold h-9 w-full rounded-xl shadow-xs text-xs"
                       >
-                        Giao thành công
+                        Giao hàng POD (Ký + OTP)
+                      </Button>
+                      <Button
+                        icon={<QrCode size={15} />}
+                        onClick={() => {
+                          setSelectedVietQrOrder(task);
+                          setVietQrModalVisible(true);
+                        }}
+                        className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-300 font-bold h-8 w-full rounded-xl text-xs flex items-center justify-center space-x-1"
+                      >
+                        <span>Mã VietQR thu COD</span>
                       </Button>
                       <Button
                         danger
-                        icon={<XCircle size={16} />}
-                        onClick={() => openFailedModal(task.trackingCode)}
-                        className="h-9 w-full rounded-xl font-semibold"
+                        icon={<XCircle size={15} />}
+                        onClick={() => {
+                          setSelectedFailureOrder(task);
+                          setFailureModalVisible(true);
+                        }}
+                        className="h-8 w-full rounded-xl font-medium text-xs"
                       >
-                        Giao thất bại
+                        Báo phát thất bại
                       </Button>
                     </div>
                   )}
 
                   {/* Mục 6: Đơn không giao được -> Bưu tá có thể bấm đi phát lại hoặc Quản lý kho thu hồi hoàn về */}
                   {task.currentStatus === 'DELIVERY_FAILED' && (
-                    <div className="flex flex-col gap-2 w-full">
+                    <div className="flex flex-col gap-1.5 w-full">
                       {canInboundWarehouse && (
                         <Button
                           type="primary"
-                          icon={<RotateCcw size={16} />}
+                          icon={<RotateCcw size={15} />}
                           onClick={() => openReturnModal(task.trackingCode)}
-                          className="bg-orange-600 hover:bg-orange-700 font-bold h-9 w-full rounded-xl shadow-xs"
+                          className="bg-orange-600 hover:bg-orange-700 font-bold h-9 w-full rounded-xl shadow-xs text-xs"
                         >
                           Thu hồi hoàn về kho
                         </Button>
                       )}
                       <Button
-                        icon={<RotateCcw size={16} />}
+                        icon={<RotateCcw size={15} />}
                         onClick={() => handleQuickUpdateStatus(task.trackingCode, 'DELIVERING', 'Bưu tá lên lịch đi giao lại')}
-                        className="bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold h-9 w-full rounded-xl border border-rose-200"
+                        className="bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold h-9 w-full rounded-xl border border-rose-200 text-xs"
                       >
                         Giao lại đơn này
                       </Button>
@@ -851,8 +952,23 @@ export const ShipperPortalPage: React.FC = () => {
 
                   {/* Mục 5 & 7: Đơn đã giao cho khách / Đã thu tiền */}
                   {task.currentStatus === 'DELIVERED' && (
-                    <div className="w-full text-center py-2 px-3 bg-emerald-50 text-emerald-800 font-bold rounded-xl border border-emerald-200 text-xs">
-                      Đã hoàn tất phát hàng
+                    <div className="w-full flex flex-col gap-1.5">
+                      <div className="text-center py-1.5 px-3 bg-emerald-50 text-emerald-800 font-bold rounded-xl border border-emerald-200 text-xs">
+                        ✓ Giao thành công
+                      </div>
+                      {(task.podSignatureUrl || task.podPhotoUrl) && (
+                        <Button
+                          size="small"
+                          icon={<Sparkles size={13} className="text-emerald-600" />}
+                          onClick={() => {
+                            setViewPodOrder(task);
+                            setViewPodModalVisible(true);
+                          }}
+                          className="text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 rounded-lg font-medium"
+                        >
+                          Xem bằng chứng POD
+                        </Button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1011,6 +1127,143 @@ export const ShipperPortalPage: React.FC = () => {
         canReturn={canInboundWarehouse}
         onOrderUpdated={loadTasksAndSummary}
       />
+
+      {/* Sprint 3 - US-15 & US-16: Bằng chứng giao hàng POD & Xác thực OTP */}
+      <PodModal
+        visible={podModalVisible}
+        order={selectedPodOrder}
+        onClose={() => {
+          setPodModalVisible(false);
+          setSelectedPodOrder(null);
+        }}
+        onSuccess={() => {
+          loadTasksAndSummary();
+        }}
+        onOpenVietQr={() => {
+          if (selectedPodOrder) {
+            setSelectedVietQrOrder(selectedPodOrder);
+            setVietQrModalVisible(true);
+          }
+        }}
+      />
+
+      {/* Sprint 3 - US-17: Modal Mã VietQR Thu Tiền Động NAPAS */}
+      <VietQrModal
+        visible={vietQrModalVisible}
+        order={selectedVietQrOrder}
+        onClose={() => {
+          setVietQrModalVisible(false);
+          setSelectedVietQrOrder(null);
+        }}
+        onConfirmPaid={() => {
+          message.success('Đã xác nhận khách chuyển khoản VietQR thành công!');
+          loadTasksAndSummary();
+        }}
+      />
+
+      {/* Sprint 3 - US-18: Modal Báo Cáo Giao Thất Bại & Hẹn Ngày Phát / Hàng Hoàn */}
+      <DeliveryFailureModal
+        visible={failureModalVisible}
+        order={selectedFailureOrder}
+        onClose={() => {
+          setFailureModalVisible(false);
+          setSelectedFailureOrder(null);
+        }}
+        onSuccess={() => {
+          loadTasksAndSummary();
+        }}
+      />
+
+      {/* Sprint 3 - US-17: Modal Bảng Kê Nộp Tiền Cuối Ca */}
+      <CashReconciliationModal
+        visible={cashReconciliationVisible}
+        onClose={() => setCashReconciliationVisible(false)}
+        shipperId={selectedShipperId}
+      />
+
+      {/* Sprint 3 - US-13: Modal Điều Phối Thông Minh Smart Dispatch TMS */}
+      <SmartDispatchModal
+        visible={smartDispatchVisible}
+        onClose={() => setSmartDispatchVisible(false)}
+        onSuccess={() => {
+          loadTasksAndSummary();
+        }}
+      />
+
+      {/* Modal Xem Chi Tiết Bằng Chứng POD Đã Lưu */}
+      <Modal
+        open={viewPodModalVisible}
+        onCancel={() => {
+          setViewPodModalVisible(false);
+          setViewPodOrder(null);
+        }}
+        footer={null}
+        width={500}
+        centered
+        title={
+          <div className="flex items-center space-x-2 text-emerald-700">
+            <CheckCircle2 size={20} />
+            <span>Bằng Chứng Giao Hàng POD #{viewPodOrder?.trackingCode}</span>
+          </div>
+        }
+      >
+        <div className="space-y-3 py-2 text-xs">
+          <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+            <div className="flex justify-between mb-1">
+              <span className="text-gray-500">Người nhận hàng:</span>
+              <span className="font-bold text-gray-800">{viewPodOrder?.podReceiverName || viewPodOrder?.receiverName}</span>
+            </div>
+            <div className="flex justify-between mb-1">
+              <span className="text-gray-500">Hình thức thanh toán:</span>
+              <span className="font-bold text-blue-700">{viewPodOrder?.paymentMethod || 'Tiền mặt (CASH)'}</span>
+            </div>
+            {viewPodOrder?.podLatitude && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Tọa độ GPS POD:</span>
+                <span className="font-mono font-bold text-green-700">
+                  {viewPodOrder.podLatitude.toFixed(6)}, {viewPodOrder.podLongitude?.toFixed(6)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {viewPodOrder?.podSignatureUrl && (
+            <div>
+              <div className="font-bold text-gray-700 mb-1 flex items-center space-x-1">
+                <PenTool size={13} className="text-blue-600" />
+                <span>Chữ ký số cảm ứng của người nhận:</span>
+              </div>
+              <div className="border border-gray-200 rounded-xl p-2 bg-white text-center">
+                <img
+                  src={viewPodOrder.podSignatureUrl}
+                  alt="Chữ ký POD"
+                  className="max-h-28 mx-auto object-contain"
+                />
+              </div>
+            </div>
+          )}
+
+          {viewPodOrder?.podPhotoUrl && (
+            <div>
+              <div className="font-bold text-gray-700 mb-1 flex items-center space-x-1">
+                <Camera size={13} className="text-green-600" />
+                <span>Ảnh hiện trường đóng dấu Watermark GPS:</span>
+              </div>
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <img
+                  src={viewPodOrder.podPhotoUrl}
+                  alt="Ảnh POD Watermark"
+                  className="w-full max-h-60 object-cover"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2 border-t">
+            <Button onClick={() => setViewPodModalVisible(false)}>Đóng</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

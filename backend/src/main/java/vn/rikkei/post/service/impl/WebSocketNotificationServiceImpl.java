@@ -51,6 +51,23 @@ public class WebSocketNotificationServiceImpl implements WebSocketNotificationSe
     }
 
     @Override
+    public void notifyOrderTracking(String trackingCode, String status, String message) {
+        try {
+            Map<String, Object> payload = Map.of(
+                    "type", "ORDER_STATUS_UPDATED",
+                    "trackingCode", trackingCode,
+                    "status", status,
+                    "message", message,
+                    "timestamp", LocalDateTime.now().toString()
+            );
+            messagingTemplate.convertAndSend("/topic/orders/" + trackingCode, payload);
+            messagingTemplate.convertAndSend("/topic/orders", payload);
+        } catch (Exception e) {
+            log.error("Lỗi gửi thông báo WebSocket tracking: {}", e.getMessage());
+        }
+    }
+
+    @Override
     public void notifyGeneric(String destination, Object payload) {
         try {
             messagingTemplate.convertAndSend(destination, payload);

@@ -31,7 +31,23 @@ interface PopupFeedback {
   type: 'SUCCESS' | 'WARNING' | 'ERROR';
   title?: string;
   message: string;
+  routingCode?: string;
+  chuteGate?: string;
 }
+
+const getChuteGate = (routingCode?: string, receiverProvinceId?: number): string => {
+  const provId = receiverProvinceId || parseInt(routingCode?.split('-')?.[1] || '1', 10) || 1;
+  if (provId <= 37) {
+    const chuteNum = (provId % 10) + 1;
+    return `Máng C0${chuteNum} (Khu vực Miền Bắc / Hà Nội)`;
+  } else if (provId <= 68) {
+    const chuteNum = (provId % 5) + 11;
+    return `Máng C${chuteNum} (Khu vực Miền Trung / Đà Nẵng)`;
+  } else {
+    const chuteNum = (provId % 5) + 21;
+    return `Máng C${chuteNum} (Khu vực Miền Nam / TP.HCM)`;
+  }
+};
 
 export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   open,
@@ -231,6 +247,8 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
     try {
       let updatedOrder: Order;
       let successMsg = '';
+      let routingCodeInfo: string | undefined;
+      let chuteGateInfo: string | undefined;
 
       if (scanMode === 'PICKUP') {
         updatedOrder = await shipperApi.scanPickup(code);
@@ -243,6 +261,8 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         successMsg = `Đã quét thu hồi hoàn kho thành công đơn [${code}]!`;
       } else {
         updatedOrder = await shipperApi.scanInbound(code);
+        routingCodeInfo = updatedOrder.routingCode || 'RKP-01-001';
+        chuteGateInfo = getChuteGate(updatedOrder.routingCode, updatedOrder.receiverProvinceId);
         successMsg = `Đã nhập kho bưu cục thành công đơn [${code}]!`;
       }
 
@@ -258,6 +278,8 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         type: 'SUCCESS',
         title: successTitle,
         message: successMsg,
+        routingCode: routingCodeInfo,
+        chuteGate: chuteGateInfo,
       });
 
       // Báo bên ngoài cập nhật lại danh sách đơn hàng
@@ -482,6 +504,21 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
               {popupFeedback?.message}
             </p>
           </div>
+
+          {/* Phân loại cửa xuất / Máng chia chọn (US-08: Routing Code & Chute/Gate) */}
+          {popupFeedback?.chuteGate && (
+            <div className="bg-blue-50 border-2 border-blue-400 p-3 rounded-2xl text-center space-y-1 shadow-sm">
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+                Máng Chia Chọn / Cửa Xuất (Chute/Gate):
+              </span>
+              <div className="text-xl font-black text-blue-900 tracking-wide">
+                {popupFeedback.chuteGate}
+              </div>
+              <div className="text-xs font-mono text-gray-600">
+                Routing Code: <strong className="text-red-600">{popupFeedback.routingCode}</strong>
+              </div>
+            </div>
+          )}
 
           {/* NÚT OKE ĐỂ TẮT POPUP THEO ĐÚNG YÊU CẦU */}
           <Button

@@ -24,6 +24,14 @@ public class ApiResponse<T> {
         return success(data, "Thành công");
     }
 
+    public static <T> ApiResponse<T> ok(String message, T data) {
+        return success(data, message);
+    }
+
+    public static <T> ApiResponse<T> ok(T data) {
+        return success(data, "Thành công");
+    }
+
     public static <T> ApiResponse<T> error(String message) {
         return ApiResponse.<T>builder()
                 .success(false)

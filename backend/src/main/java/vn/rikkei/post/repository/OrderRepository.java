@@ -29,6 +29,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     java.util.List<Order> findByAssignedShipperIdAndCurrentStatusIn(Long shipperId, java.util.List<String> statuses);
     java.util.List<Order> findByAssignedPostOfficeId(Long postOfficeId);
     java.util.List<Order> findByAssignedPostOfficeIdAndAssignedShipperId(Long postOfficeId, Long shipperId);
+    java.util.List<Order> findByMerchantIdAndCurrentStatusAndIsReconciledFalse(Long merchantId, String currentStatus);
+    java.util.List<Order> findByCurrentStatusAndIsReconciledFalse(String currentStatus);
+    java.util.List<Order> findByTrackingCodeIn(java.util.List<String> trackingCodes);
     boolean existsByTrackingCode(String trackingCode);
     long countByMerchantId(Long merchantId);
     long countByAssignedShipperIdAndCurrentStatus(Long shipperId, String status);

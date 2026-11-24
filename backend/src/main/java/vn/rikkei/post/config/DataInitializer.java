@@ -14,6 +14,7 @@ import vn.rikkei.post.entity.Ward;
 import vn.rikkei.post.entity.Warehouse;
 import vn.rikkei.post.repository.DeliveryRouteRepository;
 import vn.rikkei.post.repository.PricingMatrixRepository;
+import vn.rikkei.post.repository.PricingPolicyRepository;
 import vn.rikkei.post.repository.ProvinceRepository;
 import vn.rikkei.post.repository.RoleRepository;
 import vn.rikkei.post.repository.UserRepository;
@@ -45,6 +46,7 @@ public class DataInitializer implements CommandLineRunner {
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
     private final PricingMatrixRepository pricingMatrixRepository;
+    private final PricingPolicyRepository pricingPolicyRepository;
     private final WarehouseRepository warehouseRepository;
     private final ProvinceRepository provinceRepository;
     private final WardRepository wardRepository;
@@ -194,6 +196,23 @@ public class DataInitializer implements CommandLineRunner {
                             .stepPrice(BigDecimal.valueOf(9500)).estimatedDeliveryHours(24).isActive(true).build());
             pricingMatrixRepository.saveAll(matrices);
             log.info("Đã khởi tạo ma trận giá cước tiêu chuẩn (Standard & Express)");
+        }
+
+        // 4.1 Khởi tạo chính sách phụ phí vận hành động
+        if (pricingPolicyRepository.count() == 0) {
+            vn.rikkei.post.entity.PricingPolicy defaultPolicy = vn.rikkei.post.entity.PricingPolicy.builder()
+                    .doorPickupBaseFee(BigDecimal.valueOf(15000))
+                    .freePickupOrderThreshold(5)
+                    .bulkyWeightThresholdGram(2000)
+                    .bulkyMaxDimensionCm(40)
+                    .bulkySumDimensionsCm(80)
+                    .bulkyExtraPricePerKg(BigDecimal.valueOf(5000))
+                    .oversizeDimensionFee(BigDecimal.valueOf(10000))
+                    .insuranceValueThreshold(BigDecimal.valueOf(1000000))
+                    .insurancePercentRate(BigDecimal.valueOf(0.005))
+                    .build();
+            pricingPolicyRepository.save(defaultPolicy);
+            log.info("Đã khởi tạo chính sách phụ phí vận hành tiêu chuẩn (PricingPolicy)");
         }
 
         // 5. Khởi tạo danh mục Bưu cục & Hub mẫu

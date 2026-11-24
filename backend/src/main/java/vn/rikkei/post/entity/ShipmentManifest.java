@@ -40,8 +40,14 @@ public class ShipmentManifest {
     @Column(name = "origin_hub_id", nullable = false)
     private Long originHubId;
 
+    @Column(name = "origin_hub_name")
+    private String originHubName;
+
     @Column(name = "dest_hub_id", nullable = false)
     private Long destHubId;
+
+    @Column(name = "dest_hub_name")
+    private String destHubName;
 
     @Column(name = "truck_seal_number", nullable = false, length = 50)
     private String truckSealNumber;
@@ -69,6 +75,9 @@ public class ShipmentManifest {
     @Column(nullable = false, length = 20)
     @Builder.Default
     private String status = "SCHEDULED"; // "SCHEDULED", "LOADING", "DISPATCHED", "ARRIVED", "COMPLETED"
+
+    @Column(name = "notes")
+    private String notes;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

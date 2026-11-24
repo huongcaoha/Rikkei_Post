@@ -9,7 +9,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import vn.rikkei.post.dto.pricing.CalculatePriceRequest;
 import vn.rikkei.post.dto.pricing.PriceEstimateResponse;
 import vn.rikkei.post.entity.PricingMatrix;
+import vn.rikkei.post.entity.PricingPolicy;
 import vn.rikkei.post.repository.PricingMatrixRepository;
+import vn.rikkei.post.repository.PricingPolicyRepository;
 import vn.rikkei.post.service.impl.PricingServiceImpl;
 
 import java.math.BigDecimal;
@@ -17,6 +19,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,11 +28,19 @@ class PricingServiceTest {
     @Mock
     private PricingMatrixRepository pricingMatrixRepository;
 
+    @Mock
+    private PricingPolicyRepository pricingPolicyRepository;
+
+    @Mock
+    private vn.rikkei.post.repository.OrderRepository orderRepository;
+
     private PricingService pricingService;
 
     @BeforeEach
     void setUp() {
-        pricingService = new PricingServiceImpl(pricingMatrixRepository);
+        pricingService = new PricingServiceImpl(pricingMatrixRepository, pricingPolicyRepository, orderRepository);
+        lenient().when(pricingPolicyRepository.findFirstByOrderByIdAsc())
+                .thenReturn(Optional.of(PricingPolicy.builder().build()));
     }
 
     @Test

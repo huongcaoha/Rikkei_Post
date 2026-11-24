@@ -17,10 +17,16 @@ import {
   Scan,
   UserCheck,
   Building2,
+  DollarSign,
+  Layers,
+  ScrollText,
+  Wallet,
+  Navigation,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
+import { AiChatWidget } from './ai/AiChatWidget';
 
 const { Header, Sider, Content } = Layout;
 
@@ -135,6 +141,60 @@ export const AppLayout: React.FC = () => {
       key: '/admin/warehouses',
       icon: <Building2 size={18} />,
       label: isAdmin ? 'Quản lý kho & Bưu cục' : 'Quản lý bưu cục Chi nhánh',
+    });
+  }
+
+  // Quy trình Đóng bao tải Master Bag & Kẹp chì Seal (WMS Hub & Kho)
+  if (canInbound) {
+    menuItems.push({
+      key: '/wms/bags',
+      icon: <Layers size={18} />,
+      label: 'Đóng bao tải & Kẹp chì (WMS)',
+    });
+  }
+
+  // Quản lý Xuất kho & Bảng kê chuyến xe tải (TMS Linehaul)
+  if (canInbound) {
+    menuItems.push({
+      key: '/tms/manifests',
+      icon: <ScrollText size={18} />,
+      label: 'Bảng kê xuất xe tải (TMS)',
+    });
+  }
+
+  // Quản lý Đối tác Vận tải 3PL & Chuyến xe
+  if (canInbound || isAdmin || isBranchManager) {
+    menuItems.push({
+      key: '/tms/carriers',
+      icon: <Truck size={18} />,
+      label: 'Đối tác Vận tải 3PL & SLA',
+    });
+  }
+
+  // Tối ưu Tuyến đường giao hàng VRP (AI)
+  if (isAdmin || isBranchManager || isPostOfficeManager || isShipper) {
+    menuItems.push({
+      key: '/tms/route-optimizer',
+      icon: <Navigation size={18} />,
+      label: 'Tối ưu Tuyến đường (VRP AI)',
+    });
+  }
+
+  // Đối soát COD & Ví Shop (Tất cả tài khoản đăng nhập)
+  if (user) {
+    menuItems.push({
+      key: '/billing/reconciliation',
+      icon: <Wallet size={18} />,
+      label: 'Đối soát COD & Ví Shop',
+    });
+  }
+
+  // Quản lý giá cước vận chuyển (Chỉ Admin)
+  if (isAdmin) {
+    menuItems.push({
+      key: '/admin/pricing',
+      icon: <DollarSign size={18} />,
+      label: 'Quản lý giá cước vận chuyển',
     });
   }
 
@@ -510,6 +570,8 @@ export const AppLayout: React.FC = () => {
           window.dispatchEvent(new CustomEvent('rikkei-order-updated'));
         }}
       />
+      {/* Trợ lý AI CSKH Tra cứu Thông minh Toàn Cục */}
+      <AiChatWidget />
     </Layout>
   );
 };

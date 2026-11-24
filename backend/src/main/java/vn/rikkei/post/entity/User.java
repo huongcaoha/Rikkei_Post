@@ -67,6 +67,20 @@ public class User {
     @Column(name = "otp", length = 10)
     private String otp;
 
+    @Column(name = "vehicle_type", length = 50)
+    @Builder.Default
+    private String vehicleType = "MOTORBIKE"; // "MOTORBIKE", "VAN_500KG", "TRUCK_1000KG"
+
+    @Column(name = "max_weight_capacity_gram")
+    @Builder.Default
+    private Integer maxWeightCapacityGram = 50000; // 50kg mặc định cho xe máy
+
+    @Column(name = "current_lat")
+    private Double currentLat;
+
+    @Column(name = "current_lng")
+    private Double currentLng;
+
     /**
      * Quan hệ Many-to-Many với Role:
      * ORM tự động tạo bảng trung gian "user_role" với 2 khóa ngoại:

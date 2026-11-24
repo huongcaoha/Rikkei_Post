@@ -3,10 +3,16 @@ package vn.rikkei.post.service.impl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import vn.rikkei.post.dto.pricing.CalculatePriceRequest;
 import vn.rikkei.post.dto.pricing.PriceEstimateResponse;
+import vn.rikkei.post.dto.pricing.PricingMatrixRequest;
+import vn.rikkei.post.dto.pricing.PricingPolicyRequest;
 import vn.rikkei.post.entity.PricingMatrix;
+import vn.rikkei.post.entity.PricingPolicy;
+import vn.rikkei.post.repository.OrderRepository;
 import vn.rikkei.post.repository.PricingMatrixRepository;
+import vn.rikkei.post.repository.PricingPolicyRepository;
 import vn.rikkei.post.service.PricingService;
 
 import java.math.BigDecimal;
@@ -19,7 +25,8 @@ import java.util.List;
 public class PricingServiceImpl implements PricingService {
 
     private final PricingMatrixRepository pricingMatrixRepository;
-    private final vn.rikkei.post.repository.OrderRepository orderRepository;
+    private final PricingPolicyRepository pricingPolicyRepository;
+    private final OrderRepository orderRepository;
 
     @Override
     public PriceEstimateResponse calculatePrice(CalculatePriceRequest request) {
@@ -27,7 +34,7 @@ public class PricingServiceImpl implements PricingService {
         int width = request.getWidthCm() != null && request.getWidthCm() > 0 ? request.getWidthCm() : 10;
         int height = request.getHeightCm() != null && request.getHeightCm() > 0 ? request.getHeightCm() : 10;
 
-        // Tính trọng lượng quy đổi: (Dài x Rộng x Cao) / 6000 * 1000 ra gram
+        // Tính trọng lượng quy đổi thể tích: (Dài x Rộng x Cao) / 6000 * 1000 ra gram
         double volWeightKg = (double) (length * width * height) / 6000.0;
         int volumetricWeightGram = (int) Math.ceil(volWeightKg * 1000.0);
 
@@ -35,9 +42,12 @@ public class PricingServiceImpl implements PricingService {
         int billableWeightGram = Math.max(actualWeightGram, volumetricWeightGram);
 
         String zoneType = determineZone(request.getSenderProvinceId(), request.getReceiverProvinceId());
-        String serviceType = request.getServiceType() != null ? request.getServiceType() : "STANDARD";
+        String serviceType = request.getServiceType() != null && !request.getServiceType().isBlank()
+                ? request.getServiceType().toUpperCase()
+                : "STANDARD";
 
-        PricingMatrix matrix = pricingMatrixRepository.findByServiceTypeAndZoneTypeAndIsActiveTrue(serviceType, zoneType)
+        PricingMatrix matrix = pricingMatrixRepository
+                .findByServiceTypeAndZoneTypeAndIsActiveTrue(serviceType, zoneType)
                 .orElseGet(() -> getDefaultPricing(serviceType, zoneType));
 
         BigDecimal shippingFee = matrix.getBasePrice();
@@ -48,20 +58,27 @@ public class PricingServiceImpl implements PricingService {
             shippingFee = shippingFee.add(extraFee);
         }
 
-        // Tính cước bảo hiểm khai giá: 0.5% nếu giá trị bưu gửi > 1,000,000 VNĐ
+        // Lấy chính sách phụ phí động từ Cơ sở dữ liệu (không hardcode vào code)
+        PricingPolicy policy = getPricingPolicy();
+
+        // 1. Tính cước bảo hiểm khai giá động theo cấu hình Admin
         BigDecimal insuranceFee = BigDecimal.ZERO;
-        if (request.getItemValue() != null && request.getItemValue().compareTo(BigDecimal.valueOf(1000000)) > 0) {
-            insuranceFee = request.getItemValue().multiply(BigDecimal.valueOf(0.005)).setScale(0, RoundingMode.HALF_UP);
+        if (request.getItemValue() != null
+                && request.getItemValue().compareTo(policy.getInsuranceValueThreshold()) > 0) {
+            insuranceFee = request.getItemValue().multiply(policy.getInsurancePercentRate()).setScale(0,
+                    RoundingMode.HALF_UP);
         }
 
-        // Tính phí phương thức lấy hàng (Shop giao đến bưu cục vs Bưu cục đến tận nơi lấy)
+        // 2. Tính phí phương thức lấy hàng động (Shop tự mang ra bưu cục vs Bưu tá đến
+        // lấy)
         String pickupType = request.getPickupType() != null ? request.getPickupType() : "DROP_OFF";
         BigDecimal pickupFee = BigDecimal.ZERO;
         boolean isPickupFree = false;
         String pickupFeeNote = "Shop tự mang hàng ra bưu cục gửi (0 đ)";
 
         if ("DOOR_PICKUP".equalsIgnoreCase(pickupType)) {
-            // Kiểm tra số lượng đơn của shop: Nếu > 5 đơn thì MIỄN PHÍ lấy hàng tận nơi
+            // Kiểm tra số lượng đơn của shop: Nếu > freePickupOrderThreshold thì MIỄN PHÍ
+            // lấy hàng
             long totalOrders = 0;
             if (request.getMerchantTotalOrders() != null) {
                 totalOrders = request.getMerchantTotalOrders();
@@ -69,38 +86,41 @@ public class PricingServiceImpl implements PricingService {
                 try {
                     totalOrders = orderRepository.countByMerchantId(request.getMerchantId());
                 } catch (Exception e) {
-                    log.warn("Không thể đếm số lượng đơn của merchant: {}", e.getMessage());
+                    log.warn("Không thể đếm số lượng đơn của merchant {}: {}", request.getMerchantId(), e.getMessage());
                 }
             }
 
-            if (totalOrders > 5) {
+            if (totalOrders > policy.getFreePickupOrderThreshold()) {
                 isPickupFree = true;
                 pickupFee = BigDecimal.ZERO;
-                pickupFeeNote = "🎉 Miễn phí lấy hàng tận nơi (Ưu đãi Shop thân thiết > 5 đơn hàng)";
+                pickupFeeNote = String.format("🎉 Miễn phí lấy hàng tận nơi (Ưu đãi Shop thân thiết > %d đơn hàng)",
+                        policy.getFreePickupOrderThreshold());
             } else {
-                // Đơn hàng nhỏ: trọng lượng tính cước <= 2000g và chiều dài nhất <= 40cm, tổng 3 chiều <= 80cm
+                // Kiểm tra hàng nhỏ hay cồng kềnh
                 int maxDim = Math.max(length, Math.max(width, height));
                 int sumDim = length + width + height;
-                boolean isBulky = billableWeightGram > 2000 || maxDim > 40 || sumDim > 80;
+                boolean isBulky = billableWeightGram > policy.getBulkyWeightThresholdGram()
+                        || maxDim > policy.getBulkyMaxDimensionCm()
+                        || sumDim > policy.getBulkySumDimensionsCm();
 
                 if (!isBulky) {
-                    pickupFee = BigDecimal.valueOf(15000);
-                    pickupFeeNote = "Phí bưu tá đến lấy (Đơn hàng nhỏ: 15.000 đ/lần)";
+                    pickupFee = policy.getDoorPickupBaseFee();
+                    pickupFeeNote = String.format("Phí bưu tá đến lấy (Đơn hàng nhỏ: %,d đ/lần)", pickupFee.intValue());
                 } else {
-                    // Đơn hàng to, cồng kềnh: Phí cơ sở 15.000 + phụ phí theo cân nặng & kích thước
-                    BigDecimal basePickup = BigDecimal.valueOf(15000);
-                    int extraWeightGram = Math.max(0, billableWeightGram - 2000);
+                    // Đơn hàng to, cồng kềnh: Phí cơ sở + phụ phí theo cân nặng & kích thước
+                    BigDecimal basePickup = policy.getDoorPickupBaseFee();
+                    int extraWeightGram = Math.max(0, billableWeightGram - policy.getBulkyWeightThresholdGram());
                     int extraKg = (int) Math.ceil((double) extraWeightGram / 1000.0);
-                    BigDecimal extraWeightFee = BigDecimal.valueOf(extraKg * 5000L); // 5.000 đ mỗi kg phụ trội
+                    BigDecimal extraWeightFee = policy.getBulkyExtraPricePerKg().multiply(BigDecimal.valueOf(extraKg));
 
                     BigDecimal dimensionFee = BigDecimal.ZERO;
                     if (maxDim > 50 || sumDim > 100) {
-                        dimensionFee = BigDecimal.valueOf(10000); // 10.000 đ phụ phí hàng quá khổ
+                        dimensionFee = policy.getOversizeDimensionFee();
                     }
 
                     pickupFee = basePickup.add(extraWeightFee).add(dimensionFee);
-                    pickupFeeNote = String.format("Phí bưu tá đến lấy (Đơn to/cồng kềnh: 15.000 đ cơ sở + %s đ phụ phí cân nặng/kích thước)",
-                            extraWeightFee.add(dimensionFee).intValue());
+                    pickupFeeNote = String.format("Phí bưu tá đến lấy (Đơn to/cồng kềnh: %,d đ cơ sở + %,d đ phụ phí)",
+                            basePickup.intValue(), extraWeightFee.add(dimensionFee).intValue());
                 }
             }
         }
@@ -180,6 +200,9 @@ public class PricingServiceImpl implements PricingService {
         if ("EXPRESS".equalsIgnoreCase(serviceType)) {
             base = base.multiply(BigDecimal.valueOf(1.5));
             hours = Math.max(12, hours / 2);
+        } else if ("ROAD_FREIGHT".equalsIgnoreCase(serviceType)) {
+            base = base.multiply(BigDecimal.valueOf(0.8));
+            hours = hours + 24;
         }
 
         return PricingMatrix.builder()
@@ -196,6 +219,106 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     public List<PricingMatrix> getAllActivePricing() {
-        return pricingMatrixRepository.findAll();
+        return pricingMatrixRepository.findAll().stream()
+                .filter(m -> Boolean.TRUE.equals(m.getIsActive()))
+                .toList();
+    }
+
+    @Override
+    public List<PricingMatrix> getAllPricingMatrices() {
+        return pricingMatrixRepository.findAllByOrderByServiceTypeAscZoneTypeAsc();
+    }
+
+    @Override
+    @Transactional
+    public PricingMatrix createPricingMatrix(PricingMatrixRequest request) {
+        String service = request.getServiceType().trim().toUpperCase();
+        String zone = request.getZoneType().trim().toUpperCase();
+
+        if (pricingMatrixRepository.existsByServiceTypeAndZoneType(service, zone)) {
+            throw new IllegalArgumentException(
+                    String.format("Đã tồn tại cấu hình cước cho dịch vụ '%s' và vùng cước '%s'", service, zone));
+        }
+
+        PricingMatrix matrix = PricingMatrix.builder()
+                .serviceType(service)
+                .zoneType(zone)
+                .baseWeightGram(request.getBaseWeightGram())
+                .basePrice(request.getBasePrice())
+                .stepWeightGram(request.getStepWeightGram())
+                .stepPrice(request.getStepPrice())
+                .estimatedDeliveryHours(request.getEstimatedDeliveryHours())
+                .isActive(request.getIsActive() != null ? request.getIsActive() : true)
+                .build();
+
+        return pricingMatrixRepository.save(matrix);
+    }
+
+    @Override
+    @Transactional
+    public PricingMatrix updatePricingMatrix(Long id, PricingMatrixRequest request) {
+        PricingMatrix matrix = pricingMatrixRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy cấu hình cước ID: " + id));
+
+        String service = request.getServiceType().trim().toUpperCase();
+        String zone = request.getZoneType().trim().toUpperCase();
+
+        if (pricingMatrixRepository.existsByServiceTypeAndZoneTypeAndIdNot(service, zone, id)) {
+            throw new IllegalArgumentException(
+                    String.format("Đã tồn tại cấu hình cước cho dịch vụ '%s' và vùng cước '%s'", service, zone));
+        }
+
+        matrix.setServiceType(service);
+        matrix.setZoneType(zone);
+        matrix.setBaseWeightGram(request.getBaseWeightGram());
+        matrix.setBasePrice(request.getBasePrice());
+        matrix.setStepWeightGram(request.getStepWeightGram());
+        matrix.setStepPrice(request.getStepPrice());
+        matrix.setEstimatedDeliveryHours(request.getEstimatedDeliveryHours());
+        if (request.getIsActive() != null) {
+            matrix.setIsActive(request.getIsActive());
+        }
+
+        return pricingMatrixRepository.save(matrix);
+    }
+
+    @Override
+    @Transactional
+    public void deletePricingMatrix(Long id) {
+        if (!pricingMatrixRepository.existsById(id)) {
+            throw new IllegalArgumentException("Không tìm thấy cấu hình cước ID: " + id);
+        }
+        pricingMatrixRepository.deleteById(id);
+    }
+
+    @Override
+    @Transactional
+    public PricingMatrix togglePricingMatrixActive(Long id) {
+        PricingMatrix matrix = pricingMatrixRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy cấu hình cước ID: " + id));
+        matrix.setIsActive(!Boolean.TRUE.equals(matrix.getIsActive()));
+        return pricingMatrixRepository.save(matrix);
+    }
+
+    @Override
+    public PricingPolicy getPricingPolicy() {
+        return pricingPolicyRepository.findFirstByOrderByIdAsc()
+                .orElseGet(() -> pricingPolicyRepository.save(PricingPolicy.builder().build()));
+    }
+
+    @Override
+    @Transactional
+    public PricingPolicy updatePricingPolicy(PricingPolicyRequest request) {
+        PricingPolicy policy = getPricingPolicy();
+        policy.setDoorPickupBaseFee(request.getDoorPickupBaseFee());
+        policy.setFreePickupOrderThreshold(request.getFreePickupOrderThreshold());
+        policy.setBulkyWeightThresholdGram(request.getBulkyWeightThresholdGram());
+        policy.setBulkyMaxDimensionCm(request.getBulkyMaxDimensionCm());
+        policy.setBulkySumDimensionsCm(request.getBulkySumDimensionsCm());
+        policy.setBulkyExtraPricePerKg(request.getBulkyExtraPricePerKg());
+        policy.setOversizeDimensionFee(request.getOversizeDimensionFee());
+        policy.setInsuranceValueThreshold(request.getInsuranceValueThreshold());
+        policy.setInsurancePercentRate(request.getInsurancePercentRate());
+        return pricingPolicyRepository.save(policy);
     }
 }

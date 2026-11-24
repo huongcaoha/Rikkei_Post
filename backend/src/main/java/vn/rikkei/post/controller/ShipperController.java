@@ -7,6 +7,12 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import vn.rikkei.post.dto.common.ApiResponse;
 import vn.rikkei.post.dto.order.OrderResponse;
+import vn.rikkei.post.dto.shipper.CashReconciliationResponse;
+import vn.rikkei.post.dto.shipper.CashSubmitRequest;
+import vn.rikkei.post.dto.shipper.CompleteDeliveryRequest;
+import vn.rikkei.post.dto.shipper.DeliveryFailureRequest;
+import vn.rikkei.post.dto.shipper.SendOtpRequest;
+import vn.rikkei.post.dto.shipper.SmartDispatchRequest;
 import vn.rikkei.post.security.CustomUserDetails;
 import vn.rikkei.post.service.ShipperService;
 
@@ -115,5 +121,80 @@ public class ShipperController {
         String note = payload.get("note");
         OrderResponse response = shipperService.scanReturnToWarehouse(currentUserId, trackingCode, reason, note);
         return ResponseEntity.ok(ApiResponse.success(response, "Đã quét thu hồi đơn hàng hoàn về kho thành công!"));
+    }
+
+    // ==========================================
+    // SPRINT 3: VẬN TẢI TMS, BƯU TÁ & POD
+    // ==========================================
+
+    @PostMapping("/smart-dispatch")
+    public ResponseEntity<ApiResponse<OrderResponse>> smartDispatch(
+            @RequestBody SmartDispatchRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        OrderResponse response = shipperService.smartDispatchOrder(request.getTrackingCode(), request.getShipperId(), currentUserId);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã điều phối bưu tá thành công!"));
+    }
+
+    @PostMapping("/smart-dispatch-batch")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> smartDispatchBatch(
+            @RequestParam(required = false) Long postOfficeId,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        Map<String, Object> result = shipperService.smartDispatchBatch(postOfficeId, currentUserId);
+        return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
+    }
+
+    @PostMapping("/send-otp")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> sendDeliveryOtp(
+            @RequestBody SendOtpRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        Map<String, Object> result = shipperService.sendDeliveryOtp(request.getTrackingCode(), currentUserId);
+        return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
+    }
+
+    @PostMapping("/complete-delivery")
+    public ResponseEntity<ApiResponse<OrderResponse>> completeDelivery(
+            @RequestBody CompleteDeliveryRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        OrderResponse response = shipperService.completeDelivery(shipperId, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Giao hàng thành công! Đã lưu bằng chứng POD an toàn."));
+    }
+
+    @PostMapping("/report-failure")
+    public ResponseEntity<ApiResponse<OrderResponse>> reportFailure(
+            @RequestBody DeliveryFailureRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        OrderResponse response = shipperService.reportDeliveryFailure(shipperId, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã ghi nhận báo cáo giao thất bại."));
+    }
+
+    @GetMapping("/cash-reconciliation")
+    public ResponseEntity<ApiResponse<CashReconciliationResponse>> getCashReconciliation(
+            @RequestParam(required = false) Long shipperId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        CashReconciliationResponse response = shipperService.getCashReconciliation(currentUserId, shipperId, date);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/submit-cash")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> submitCash(
+            @RequestBody CashSubmitRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        Map<String, Object> result = shipperService.submitCashReconciliation(shipperId, request);
+        return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
     }
 }

@@ -13,8 +13,14 @@ import { TrackOrderPage } from './pages/TrackOrderPage';
 import { StaffManagementPage } from './pages/StaffManagementPage';
 import { DeliveryRoutesPage } from './pages/DeliveryRoutesPage';
 import { WarehouseManagementPage } from './pages/WarehouseManagementPage';
+import { PricingManagementPage } from './pages/PricingManagementPage';
+import { MasterBagPage } from './pages/MasterBagPage';
+import { ShipmentManifestPage } from './pages/ShipmentManifestPage';
 import { ShipperPortalPage } from './pages/ShipperPortalPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { BillingReconciliationPage } from './pages/BillingReconciliationPage';
+import { CarrierPartnerPage } from './pages/CarrierPartnerPage';
+import { VrpRouteOptimizationPage } from './pages/VrpRouteOptimizationPage';
 
 const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -56,6 +62,12 @@ export const App: React.FC = () => {
               <Route path="/admin/staff" element={<StaffManagementPage />} />
               <Route path="/admin/routes" element={<DeliveryRoutesPage />} />
               <Route path="/admin/warehouses" element={<WarehouseManagementPage />} />
+              <Route path="/admin/pricing" element={<PricingManagementPage />} />
+              <Route path="/wms/bags" element={<MasterBagPage />} />
+              <Route path="/tms/manifests" element={<ShipmentManifestPage />} />
+              <Route path="/tms/carriers" element={<CarrierPartnerPage />} />
+              <Route path="/tms/route-optimizer" element={<VrpRouteOptimizationPage />} />
+              <Route path="/billing/reconciliation" element={<BillingReconciliationPage />} />
               <Route path="/shipper/tasks" element={<ShipperPortalPage />} />
               <Route path="/profile" element={<ProfilePage />} />
             </Route>

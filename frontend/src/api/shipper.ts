@@ -1,5 +1,11 @@
 import apiClient from './client';
-import { Order, ShipperSummary } from '../types';
+import {
+  Order,
+  ShipperSummary,
+  CompleteDeliveryRequest,
+  DeliveryFailureRequest,
+  CashReconciliationResponse,
+} from '../types';
 
 export const shipperApi = {
   getMyTasks: async (category?: string, startDate?: string, endDate?: string, shipperId?: number): Promise<Order[]> => {
@@ -48,6 +54,49 @@ export const shipperApi = {
 
   updateStatus: async (trackingCode: string, status: string, note?: string): Promise<Order> => {
     const res = await apiClient.post('/shipper/update-status', { trackingCode, status, note });
+    return res.data.data;
+  },
+
+  // Sprint 3 - US-13: Smart Dispatch
+  smartDispatch: async (trackingCode: string, shipperId?: number): Promise<Order> => {
+    const res = await apiClient.post('/shipper/smart-dispatch', { trackingCode, shipperId });
+    return res.data.data;
+  },
+
+  smartDispatchBatch: async (postOfficeId?: number): Promise<{ totalEligible: number; successCount: number; failureCount: number; message: string }> => {
+    const res = await apiClient.post('/shipper/smart-dispatch-batch', null, { params: { postOfficeId } });
+    return res.data.data;
+  },
+
+  // Sprint 3 - US-16: Send Delivery OTP
+  sendOtp: async (trackingCode: string): Promise<{ trackingCode: string; otpCode: string; message: string }> => {
+    const res = await apiClient.post('/shipper/send-otp', { trackingCode });
+    return res.data.data;
+  },
+
+  // Sprint 3 - US-15 & US-16 & US-17: Complete Delivery (POD + OTP + VietQR/Cash)
+  completeDelivery: async (data: CompleteDeliveryRequest): Promise<Order> => {
+    const res = await apiClient.post('/shipper/complete-delivery', data);
+    return res.data.data;
+  },
+
+  // Sprint 3 - US-18: Report Delivery Failure & Reschedule / Return
+  reportFailure: async (data: DeliveryFailureRequest): Promise<Order> => {
+    const res = await apiClient.post('/shipper/report-failure', data);
+    return res.data.data;
+  },
+
+  // Sprint 3 - US-17: Cash Reconciliation & End-of-shift Submit
+  getCashReconciliation: async (shipperId?: number, date?: string): Promise<CashReconciliationResponse> => {
+    const params: any = {};
+    if (shipperId) params.shipperId = shipperId;
+    if (date) params.date = date;
+    const res = await apiClient.get('/shipper/cash-reconciliation', { params });
+    return res.data.data;
+  },
+
+  submitCash: async (amountSubmitted: number, notes?: string): Promise<{ message: string }> => {
+    const res = await apiClient.post('/shipper/submit-cash', { amountSubmitted, notes });
     return res.data.data;
   },
 };

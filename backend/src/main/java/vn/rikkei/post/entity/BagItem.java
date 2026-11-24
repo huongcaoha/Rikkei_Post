@@ -32,6 +32,15 @@ public class BagItem {
     @Column(name = "weight_gram", nullable = false)
     private Integer weightGram;
 
+    @Column(name = "item_name")
+    private String itemName;
+
+    @Column(name = "receiver_address")
+    private String receiverAddress;
+
+    @Column(name = "routing_code")
+    private String routingCode;
+
     @CreationTimestamp
     @Column(name = "scanned_at", updatable = false)
     private LocalDateTime scannedAt;
