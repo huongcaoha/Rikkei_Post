@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Layout, Menu, Button, Tag, Drawer } from 'antd';
+import { Layout, Menu, Button, Tag, Drawer, Dropdown } from 'antd';
+import type { MenuProps } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -27,6 +28,7 @@ import {
   Receipt,
   Coins,
   CheckSquare,
+  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
@@ -375,6 +377,56 @@ export const AppLayout: React.FC = () => {
     }
   }, [location.pathname]);
 
+  // Menu dropdown người dùng với 3 lựa chọn theo yêu cầu: Chấm công, Hồ sơ cá nhân, Đăng xuất
+  const userMenuItems: MenuProps['items'] = [
+    {
+      key: 'user-summary',
+      type: 'group',
+      label: (
+        <div className="px-1 py-1 text-xs">
+          <div className="font-bold text-gray-800 text-sm truncate max-w-[200px]">{user?.fullName || user?.username}</div>
+          <div className="text-[11px] text-gray-400 font-mono mt-0.5 flex flex-wrap gap-1">
+            {user?.roles?.map((r) => (
+              <span key={r} className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-semibold text-[10px]">
+                {r.replace('ROLE_', '')}
+              </span>
+            ))}
+          </div>
+        </div>
+      ),
+    },
+    {
+      type: 'divider',
+    },
+    ...(isStaffOrAdmin ? [
+      {
+        key: 'attendance',
+        icon: <Camera size={16} className="text-emerald-600" />,
+        label: <span className="font-medium text-gray-700">Chấm công (FaceID & GPS)</span>,
+        onClick: () => setAttendanceModalOpen(true),
+      },
+    ] : []),
+    {
+      key: 'profile',
+      icon: <UserCheck size={16} className="text-blue-600" />,
+      label: <span className="font-medium text-gray-700">Hồ sơ cá nhân</span>,
+      onClick: () => navigate('/profile'),
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'logout',
+      icon: <LogOut size={16} className="text-red-500" />,
+      danger: true,
+      label: <span className="font-semibold">Đăng xuất</span>,
+      onClick: () => {
+        logout();
+        navigate('/login');
+      },
+    },
+  ];
+
   return (
     <Layout className="min-h-screen">
       {/* Drawer menu cho màn hình Mobile */}
@@ -532,125 +584,84 @@ export const AppLayout: React.FC = () => {
       </Sider>
 
       <Layout>
-        {/* Mobile Header (< md): Tối ưu gọn gàng theo yêu cầu: Hiển thị Tên người dùng + 1 Nút Menu, bỏ nút quét trùng lặp */}
-        <div className="bg-white px-3.5 flex md:hidden items-center justify-between border-b border-gray-200 h-14 shadow-xs sticky top-0 z-40">
+        {/* Mobile Header (< md): Tối ưu gọn gàng: Logo bên trái, Chuông + Dropdown Tên người dùng + Nút Menu bên phải */}
+        <div className="bg-white px-3 flex md:hidden items-center justify-between border-b border-gray-200 h-14 shadow-xs sticky top-0 z-40">
           <div
-            className="flex items-center space-x-2 cursor-pointer select-none active:opacity-80 transition-opacity"
+            className="flex items-center space-x-1.5 cursor-pointer select-none active:opacity-80 transition-opacity"
             onClick={() => navigate(user ? '/dashboard' : '/track')}
           >
-            <div className="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
-              <Truck size={17} />
+            <div className="w-7 h-7 rounded-lg bg-red-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
+              <Truck size={15} />
             </div>
             <span className="font-black text-sm tracking-wider text-red-600">RIKKEI_POST</span>
           </div>
 
-          <div className="flex items-center space-x-1.5">
-            {user && (
+          <div className="flex items-center space-x-2">
+            {user ? (
               <>
                 <NotificationBell />
-                {isStaffOrAdmin && (
-                  <Button
-                    type="text"
-                    icon={<Camera size={19} className="text-emerald-600" />}
-                    onClick={() => setAttendanceModalOpen(true)}
-                    className="p-1 flex items-center justify-center rounded-lg hover:bg-emerald-50"
-                    title="Chấm công FaceID"
-                  />
-                )}
-              </>
-            )}
-            {user ? (
-              <div 
-                className="text-right cursor-pointer"
-                onClick={() => setMobileDrawerOpen(true)}
-              >
-                <div className="text-xs sm:text-sm font-bold text-gray-800 truncate max-w-[130px] leading-tight">
-                  {user.fullName || user.username}
-                </div>
-                <div className="flex justify-end mt-0.5">
-                  <Tag color="red" className="text-[9px] m-0 leading-tight px-1 font-mono font-medium">
-                    {user.roles?.[0]?.replace('ROLE_', '')}
-                  </Tag>
-                </div>
-              </div>
-            ) : (
-              <Button size="small" type="primary" onClick={() => navigate('/login')} className="bg-red-600 text-xs font-semibold rounded-lg">
-                Đăng nhập
-              </Button>
-            )}
-
-            <Button
-              type="text"
-              icon={<MenuIcon size={21} />}
-              onClick={() => setMobileDrawerOpen(true)}
-              className="text-gray-700 hover:text-red-600 p-1 flex items-center justify-center rounded-lg hover:bg-gray-100"
-              title="Menu điều hướng"
-            />
-          </div>
-        </div>
-
-        {/* Desktop Header (>= md) */}
-        <Header className="bg-white px-6 hidden md:flex items-center justify-between border-b border-gray-200 h-16 shadow-xs">
-          {user ? (
-            <>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-500">Xin chào,</span>
-                <span className="font-semibold text-gray-800">{user.fullName || user.username}</span>
-                <div className="ml-2 flex space-x-1">
-                  {user.roles?.map((role) => (
-                    <Tag color="red" key={role} className="text-xs font-mono">
-                      {role.replace('ROLE_', '')}
-                    </Tag>
-                  ))}
-                  <Tag className="text-[11px] flex items-center gap-1 font-medium rounded-full px-2 py-0.5 border-none bg-green-50 text-green-700 select-none">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> WebSocket Live
-                  </Tag>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                {isStaffOrAdmin && (
-                  <Button
-                    type="primary"
-                    icon={<Camera size={16} />}
-                    onClick={() => setAttendanceModalOpen(true)}
-                    className="bg-emerald-600 hover:bg-emerald-700 font-semibold rounded-xl flex items-center shadow-xs"
-                  >
-                    Chấm công (FaceID)
-                  </Button>
-                )}
-                {showQuickScan && (
-                  <Button
-                    type="primary"
-                    icon={<Scan size={16} />}
-                    onClick={() => setGlobalScannerOpen(true)}
-                    className={`font-semibold rounded-xl flex items-center shadow-xs ${
-                      canInbound ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
-                    }`}
-                  >
-                    {canInbound ? 'Quét mã nhập kho' : 'Quét mã lấy hàng'}
-                  </Button>
-                )}
-                <NotificationBell />
+                <Dropdown menu={{ items: userMenuItems }} trigger={['click']} placement="bottomRight">
+                  <div className="flex items-center space-x-1.5 cursor-pointer select-none py-1 px-2 rounded-lg hover:bg-gray-100 active:bg-gray-200 transition-colors border border-transparent hover:border-gray-200">
+                    <div className="w-7 h-7 rounded-full bg-red-600 text-white font-bold flex items-center justify-center text-xs shadow-xs flex-shrink-0">
+                      {(user.fullName || user.username).charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex flex-col text-left max-w-[105px] xs:max-w-[130px]">
+                      <div className="text-[10px] text-gray-400 leading-none">Xin chào,</div>
+                      <div className="text-xs font-bold text-gray-800 truncate leading-tight mt-0.5 flex items-center gap-0.5">
+                        <span className="truncate">{user.fullName || user.username}</span>
+                        <ChevronDown size={11} className="text-gray-400 flex-shrink-0" />
+                      </div>
+                    </div>
+                  </div>
+                </Dropdown>
                 <Button
-                  type="default"
-                  icon={<UserCheck size={16} />}
-                  onClick={() => navigate('/profile')}
-                  className="rounded-xl font-medium text-gray-700 flex items-center hover:text-red-600"
-                >
-                  Hồ sơ cá nhân
+                  type="text"
+                  icon={<MenuIcon size={20} />}
+                  onClick={() => setMobileDrawerOpen(true)}
+                  className="text-gray-700 hover:text-red-600 p-1 flex items-center justify-center rounded-lg hover:bg-gray-100"
+                  title="Menu điều hướng"
+                />
+              </>
+            ) : (
+              <div className="flex items-center space-x-1.5">
+                <Button size="small" type="primary" onClick={() => navigate('/login')} className="bg-red-600 text-xs font-semibold rounded-lg h-8">
+                  Đăng nhập
                 </Button>
                 <Button
                   type="text"
-                  icon={<LogOut size={16} />}
-                  onClick={() => {
-                    logout();
-                    navigate('/login');
-                  }}
-                  className="text-gray-600 hover:text-red-600 flex items-center"
-                >
-                  Đăng xuất
-                </Button>
+                  icon={<MenuIcon size={20} />}
+                  onClick={() => setMobileDrawerOpen(true)}
+                  className="text-gray-700 hover:text-red-600 p-1 flex items-center justify-center rounded-lg hover:bg-gray-100"
+                  title="Menu điều hướng"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Desktop Header (>= md): Chỉ để lại phần Xin chào + Tên người dùng (xổ xuống 3 lựa chọn) và Hình cái chuông thông báo */}
+        <Header className="bg-white px-6 hidden md:flex items-center justify-between border-b border-gray-200 h-16 shadow-xs">
+          {user ? (
+            <>
+              {/* Bên trái: Xin chào + Tên người dùng có Dropdown 3 lựa chọn (Chấm công, Hồ sơ cá nhân, Đăng xuất) */}
+              <Dropdown menu={{ items: userMenuItems }} trigger={['click']} placement="bottomLeft">
+                <div className="flex items-center space-x-2.5 cursor-pointer select-none py-1.5 px-3 rounded-xl hover:bg-gray-100 border border-transparent hover:border-gray-200 transition-all group">
+                  <div className="w-8 h-8 rounded-full bg-red-600 text-white font-bold flex items-center justify-center text-sm shadow-xs group-hover:scale-105 transition-transform">
+                    {(user.fullName || user.username).charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-sm text-gray-500">Xin chào,</span>
+                    <span className="font-bold text-gray-800 text-sm group-hover:text-red-600 transition-colors flex items-center gap-1">
+                      {user.fullName || user.username}
+                      <ChevronDown size={14} className="text-gray-400 group-hover:text-red-500 transition-colors" />
+                    </span>
+                  </div>
+                </div>
+              </Dropdown>
+
+              {/* Bên phải: Chỉ để lại hình cái chuông thông báo */}
+              <div className="flex items-center space-x-3">
+                <NotificationBell />
               </div>
             </>
           ) : (
