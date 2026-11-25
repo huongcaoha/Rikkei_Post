@@ -32,6 +32,7 @@ public class MasterBagServiceImpl implements MasterBagService {
         private final WebSocketNotificationService webSocketNotificationService;
         private final vn.rikkei.post.repository.TruckRepository truckRepository;
         private final vn.rikkei.post.kafka.MasterBagKafkaProducer kafkaProducer;
+        private final vn.rikkei.post.service.RedisService redisService;
 
         @Override
         public List<MasterBagResponse> getAllBags() {
@@ -361,6 +362,9 @@ public class MasterBagServiceImpl implements MasterBagService {
                                 order.setCurrentStatus("IN_WAREHOUSE");
                                 order.setAssignedPostOfficeId(bag.getDestWarehouse().getId());
                                 orderRepository.save(order);
+                                if (redisService != null) {
+                                        redisService.evictOrderCache(order.getTrackingCode());
+                                }
                         });
 
                         OrderTrackingLog trackingLog = OrderTrackingLog.builder()

@@ -35,6 +35,7 @@ public class DispatchServiceImpl implements DispatchService {
     private final OrderRepository orderRepository;
     private final OrderTrackingLogRepository trackingLogRepository;
     private final WebSocketNotificationService webSocketNotificationService;
+    private final vn.rikkei.post.service.RedisService redisService;
 
     @Override
     public List<DispatchOrderResponse> getDispatchOrders(
@@ -424,6 +425,9 @@ public class DispatchServiceImpl implements DispatchService {
             orderRepository.findByTrackingCode(bi.getTrackingCode()).ifPresent(order -> {
                 order.setCurrentStatus("AT_SORTING_HUB");
                 orderRepository.save(order);
+                if (redisService != null) {
+                    redisService.evictOrderCache(order.getTrackingCode());
+                }
 
                 OrderTrackingLog logEntry = OrderTrackingLog.builder()
                         .trackingCode(order.getTrackingCode())

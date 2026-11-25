@@ -33,6 +33,7 @@ public class ShipmentManifestServiceImpl implements ShipmentManifestService {
     private final OrderTrackingLogRepository trackingLogRepository;
     private final MasterBagService masterBagService;
     private final WebSocketNotificationService webSocketNotificationService;
+    private final vn.rikkei.post.service.RedisService redisService;
 
     @Override
     public List<ManifestResponse> getAllManifests() {
@@ -221,6 +222,9 @@ public class ShipmentManifestServiceImpl implements ShipmentManifestService {
                 orderRepository.findByTrackingCode(item.getTrackingCode()).ifPresent(order -> {
                     order.setCurrentStatus("IN_TRANSIT");
                     orderRepository.save(order);
+                    if (redisService != null) {
+                        redisService.evictOrderCache(order.getTrackingCode());
+                    }
                 });
 
                 OrderTrackingLog logEntry = OrderTrackingLog.builder()

@@ -99,3 +99,14 @@ payos:
   api-key: ${PAYOS_API_KEY:99d78ade-4004-4f9a-bf98-9b6779465c16}
   checksum-key: ${PAYOS_CHECKSUM_KEY:51535e322adeb6f11211e3221246aa90b42862e014417132a29940b0246d6200}
 
+# Automated Database Backup Configuration (Phương án 1 - Logical Dump & GZIP)
+backup:
+  enabled: ${BACKUP_ENABLED:true}
+  cron: ${BACKUP_CRON:0 0 1 * * ?} # Tự động chạy lúc 01:00 AM hàng ngày
+  dir: ${BACKUP_DIR:./backups/postgres}
+  retention-days: ${BACKUP_RETENTION_DAYS:14}
+  email:
+    enabled: ${BACKUP_EMAIL_ENABLED:true}
+    recipient: ${BACKUP_EMAIL_RECIPIENT:${spring.mail.username}}
+
+

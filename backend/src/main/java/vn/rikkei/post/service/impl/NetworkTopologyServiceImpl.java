@@ -2,6 +2,7 @@ package vn.rikkei.post.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.rikkei.post.dto.network.*;
@@ -25,6 +26,7 @@ public class NetworkTopologyServiceImpl implements NetworkTopologyService {
     private final DispatchOrderRepository dispatchOrderRepository;
 
     @Override
+    @Cacheable(value = "network:topology", key = "'all'")
     public NetworkTopologyResponse getNetworkTopology() {
         List<Warehouse> allWarehouses = warehouseRepository.findAll();
         Map<Integer, String> provinceNameMap = provinceRepository.findAll().stream()

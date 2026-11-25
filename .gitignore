@@ -42,3 +42,8 @@ yarn-error.log*
 Thumbs.db
 *.log
 *.tmp
+backups/
+**/backups/
+*.sql
+*.sql.gz
+

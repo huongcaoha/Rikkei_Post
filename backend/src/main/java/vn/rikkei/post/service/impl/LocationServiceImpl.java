@@ -2,6 +2,8 @@ package vn.rikkei.post.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,12 +30,14 @@ public class LocationServiceImpl implements LocationService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "locations:provinces", key = "'all'")
     public List<Province> getAllProvinces() {
         return provinceRepository.findByIsActiveTrueOrderByDisplayOrderAscNameAsc();
     }
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "locations:wards", key = "#provinceId")
     public List<Ward> getWardsByProvinceId(Integer provinceId) {
         if (provinceId == null) {
             return List.of();
@@ -55,6 +59,7 @@ public class LocationServiceImpl implements LocationService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "locations:warehouses", key = "#provinceId != null ? #provinceId : 'all'")
     public List<Warehouse> getWarehouses(Integer provinceId) {
         if (provinceId != null) {
             return warehouseRepository.findByProvinceIdAndIsActiveTrue(provinceId);
@@ -83,6 +88,7 @@ public class LocationServiceImpl implements LocationService {
 
     @Override
     @Transactional
+    @CacheEvict(value = {"locations:warehouses", "network:topology"}, allEntries = true)
     public Warehouse createWarehouse(WarehouseRequest request, CustomUserDetails currentUser) {
         validateWarehouseManageAuthority(currentUser, request.getProvinceId(), "tạo kho/bưu cục mới");
 
@@ -111,6 +117,7 @@ public class LocationServiceImpl implements LocationService {
 
     @Override
     @Transactional
+    @CacheEvict(value = {"locations:warehouses", "network:topology"}, allEntries = true)
     public Warehouse updateWarehouse(Long id, WarehouseRequest request, CustomUserDetails currentUser) {
         Warehouse warehouse = warehouseRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kho/bưu cục với ID: " + id));
@@ -151,6 +158,7 @@ public class LocationServiceImpl implements LocationService {
 
     @Override
     @Transactional
+    @CacheEvict(value = {"locations:warehouses", "network:topology"}, allEntries = true)
     public Warehouse toggleWarehouseStatus(Long id, CustomUserDetails currentUser) {
         Warehouse warehouse = warehouseRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kho/bưu cục với ID: " + id));

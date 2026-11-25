@@ -2,6 +2,8 @@ package vn.rikkei.post.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.rikkei.post.dto.pricing.CalculatePriceRequest;
@@ -218,6 +220,7 @@ public class PricingServiceImpl implements PricingService {
     }
 
     @Override
+    @Cacheable(value = "pricing:matrix", key = "'active'")
     public List<PricingMatrix> getAllActivePricing() {
         return pricingMatrixRepository.findAll().stream()
                 .filter(m -> Boolean.TRUE.equals(m.getIsActive()))
@@ -231,6 +234,7 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "pricing:matrix", allEntries = true)
     public PricingMatrix createPricingMatrix(PricingMatrixRequest request) {
         String service = request.getServiceType().trim().toUpperCase();
         String zone = request.getZoneType().trim().toUpperCase();
@@ -256,6 +260,7 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "pricing:matrix", allEntries = true)
     public PricingMatrix updatePricingMatrix(Long id, PricingMatrixRequest request) {
         PricingMatrix matrix = pricingMatrixRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy cấu hình cước ID: " + id));
@@ -284,6 +289,7 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "pricing:matrix", allEntries = true)
     public void deletePricingMatrix(Long id) {
         if (!pricingMatrixRepository.existsById(id)) {
             throw new IllegalArgumentException("Không tìm thấy cấu hình cước ID: " + id);
@@ -293,6 +299,7 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "pricing:matrix", allEntries = true)
     public PricingMatrix togglePricingMatrixActive(Long id) {
         PricingMatrix matrix = pricingMatrixRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy cấu hình cước ID: " + id));
@@ -301,6 +308,7 @@ public class PricingServiceImpl implements PricingService {
     }
 
     @Override
+    @Cacheable(value = "pricing:policies", key = "'current'")
     public PricingPolicy getPricingPolicy() {
         return pricingPolicyRepository.findFirstByOrderByIdAsc()
                 .orElseGet(() -> pricingPolicyRepository.save(PricingPolicy.builder().build()));
@@ -308,6 +316,7 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "pricing:policies", allEntries = true)
     public PricingPolicy updatePricingPolicy(PricingPolicyRequest request) {
         PricingPolicy policy = getPricingPolicy();
         policy.setDoorPickupBaseFee(request.getDoorPickupBaseFee());

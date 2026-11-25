@@ -2,6 +2,7 @@ package vn.rikkei.post.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -29,6 +30,7 @@ import vn.rikkei.post.service.DeliveryRouteService;
 import vn.rikkei.post.service.EmailService;
 import vn.rikkei.post.service.OrderService;
 import vn.rikkei.post.service.PricingService;
+import vn.rikkei.post.service.RedisService;
 import vn.rikkei.post.service.WebSocketNotificationService;
 
 import java.math.BigDecimal;
@@ -58,6 +60,7 @@ public class OrderServiceImpl implements OrderService {
     private final DeliveryRouteService deliveryRouteService;
     private final DeliveryRouteRepository routeRepository;
     private final WebSocketNotificationService webSocketNotificationService;
+    private final RedisService redisService;
     private final Random random = new Random();
 
     @Override
@@ -246,6 +249,7 @@ public class OrderServiceImpl implements OrderService {
 
         OrderResponse response = mapToResponse(savedOrder);
         try {
+            redisService.evictOrderCache(savedOrder.getTrackingCode());
             webSocketNotificationService.notifyOrderCreated(response);
         } catch (Exception e) {
             log.warn("Không thể gửi thông báo WebSocket tạo đơn #{}: {}", savedOrder.getTrackingCode(), e.getMessage());
@@ -281,6 +285,7 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "order:tracking", key = "#trackingCode")
     public OrderResponse getOrderByTrackingCode(String trackingCode) {
         Order order = orderRepository.findByTrackingCode(trackingCode)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng với mã: " + trackingCode));
@@ -590,6 +595,7 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "order:timeline", key = "#trackingCode")
     public List<OrderTrackingLog> getOrderTimeline(String trackingCode) {
         return trackingLogRepository.findByTrackingCodeOrderByCreatedAtDesc(trackingCode);
     }
