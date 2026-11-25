@@ -37,6 +37,13 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResponseStatusException(org.springframework.web.server.ResponseStatusException ex) {
+        log.warn("Ngoại lệ ResponseStatusException: {}", ex.getReason());
+        return ResponseEntity.status(ex.getStatusCode())
+                .body(ApiResponse.error(ex.getReason() != null ? ex.getReason() : ex.getMessage()));
+    }
+
     @ExceptionHandler(DisabledException.class)
     public ResponseEntity<ApiResponse<Void>> handleDisabledException(DisabledException ex) {
         log.warn("Tài khoản chưa kích hoạt: {}", ex.getMessage());

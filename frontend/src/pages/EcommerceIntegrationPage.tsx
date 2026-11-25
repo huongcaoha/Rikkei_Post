@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   Card,
   Table,
@@ -32,12 +33,35 @@ import {
   ExternalLink,
   ShieldCheck,
   Zap,
+  Lock,
 } from 'lucide-react';
 import { ecommerceApi, EcommerceChannelDTO, CreateChannelPayload } from '../api/ecommerce';
+import { useAuth } from '../context/AuthContext';
 
 const { Text, Paragraph } = Typography;
 
 export const EcommerceIntegrationPage: React.FC = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.roles?.some((r: any) => (typeof r === 'string' ? r : r.roleName) === 'ROLE_ADMIN');
+
+  if (!isAdmin) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto">
+        <Alert
+          type="error"
+          showIcon
+          icon={<Lock className="text-red-600" />}
+          message="Từ chối truy cập (Chỉ dành cho Quản trị viên)"
+          description="Chức năng Quản lý Hệ thống Open API & Liên kết các sàn Thương Mại Điện Tử (Shopee, Lazada, TikTok...) chỉ dành riêng cho tài khoản Quản trị viên (Admin) của Rikkei Post."
+          action={
+            <Button type="primary" danger onClick={() => window.location.href = '/dashboard'}>
+              Về Trang Chủ
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
   const [channels, setChannels] = useState<EcommerceChannelDTO[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);

@@ -46,6 +46,25 @@ const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) 
   return children ? <>{children}</> : <Outlet />;
 };
 
+const AdminRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+  const { user, token, loading } = useAuth();
+
+  if (loading) {
+    return <div className="h-screen flex items-center justify-center font-bold">Đang tải...</div>;
+  }
+
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const isAdmin = user?.roles?.some((r: any) => (typeof r === 'string' ? r : r.roleName) === 'ROLE_ADMIN');
+  if (!isAdmin) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children ? <>{children}</> : <Outlet />;
+};
+
 export const App: React.FC = () => {
   return (
     <AuthProvider>
@@ -69,7 +88,12 @@ export const App: React.FC = () => {
               <Route path="/orders/create" element={<CreateOrderPage />} />
               <Route path="/orders/batch" element={<BatchOrderPage />} />
               <Route path="/orders/print/:trackingCode" element={<PrintLabelPage />} />
-              <Route path="/ecommerce/channels" element={<EcommerceIntegrationPage />} />
+              
+              {/* Chỉ duy nhất Quản trị viên (ADMIN) mới có quyền truy cập và quản lý Hệ thống Sàn TMĐT */}
+              <Route element={<AdminRoute />}>
+                <Route path="/ecommerce/channels" element={<EcommerceIntegrationPage />} />
+              </Route>
+
               <Route path="/admin/staff" element={<StaffManagementPage />} />
               <Route path="/admin/routes" element={<DeliveryRoutesPage />} />
               <Route path="/admin/warehouses" element={<WarehouseManagementPage />} />

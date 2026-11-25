@@ -117,13 +117,6 @@ export const AppLayout: React.FC = () => {
       }
     );
   }
-  if (user) {
-    omsChildren.push({
-      key: '/ecommerce/channels',
-      icon: <ShoppingBag size={16} />,
-      label: 'Kết nối Sàn TMĐT (Shopee/TikTok)',
-    });
-  }
   omsChildren.push({
     key: '/track',
     icon: <Search size={16} />,
@@ -316,6 +309,11 @@ export const AppLayout: React.FC = () => {
       icon: <DollarSign size={16} />,
       label: 'Quản lý giá cước vận chuyển',
     });
+    adminChildren.push({
+      key: '/ecommerce/channels',
+      icon: <ShoppingBag size={16} />,
+      label: 'Kết nối Sàn TMĐT & Open API',
+    });
   }
   if (adminChildren.length > 0) {
     menuItems.push({
@@ -367,11 +365,11 @@ export const AppLayout: React.FC = () => {
   };
 
   const getSubMenuKeyForPath = (path: string): string | null => {
-    if (path.startsWith('/orders') || path.startsWith('/track') || path.startsWith('/ecommerce')) return 'sub-oms';
+    if (path.startsWith('/orders') || path.startsWith('/track')) return 'sub-oms';
     if (path.startsWith('/shipper') || path.startsWith('/wms/bags') || path.startsWith('/wms/dispatch') || path.startsWith('/wms/sorting-scanner')) return 'sub-wms';
     if (path.startsWith('/wms/trucks') || path.startsWith('/driver') || path.startsWith('/tms')) return 'sub-tms';
     if (path.startsWith('/accountant') || path.startsWith('/vouchers') || path.startsWith('/payroll') || path.startsWith('/billing')) return 'sub-finance';
-    if (path.startsWith('/admin')) return 'sub-admin';
+    if (path.startsWith('/admin') || path.startsWith('/ecommerce')) return 'sub-admin';
     return null;
   };
 

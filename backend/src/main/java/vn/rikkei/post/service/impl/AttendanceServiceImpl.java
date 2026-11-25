@@ -2,8 +2,10 @@ package vn.rikkei.post.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 import vn.rikkei.post.dto.attendance.*;
 import vn.rikkei.post.entity.AttendanceRecord;
 import vn.rikkei.post.entity.EmployeeFaceProfile;
@@ -41,8 +43,8 @@ public class AttendanceServiceImpl implements AttendanceService {
     private final UserRepository userRepository;
     private final WarehouseRepository warehouseRepository;
 
-    private static final double MAX_ALLOWED_DISTANCE_KM = 0.8; // Bán kính tối đa 800m quanh kho
-    private static final double MIN_FACE_SIMILARITY_THRESHOLD = 65.0; // Ngưỡng nhận diện khuôn mặt khớp >= 65%
+    private static final double MAX_ALLOWED_DISTANCE_KM = 0.8; // Bán kính tối đa 800m quanh kho bưu cục
+    private static final double MIN_FACE_SIMILARITY_THRESHOLD = 70.0; // Ngưỡng nhận diện khớp khuôn mặt >= 70%
 
     @Override
     @Transactional
@@ -56,44 +58,38 @@ public class AttendanceServiceImpl implements AttendanceService {
             throw new IllegalStateException("Bạn đã thực hiện Check-in ngày hôm nay lúc: " + existingOpt.get().getCheckInTime().toLocalTime());
         }
 
+        // 1. Kiểm tra tọa độ GPS từ thiết bị
+        if (request.getLat() == null || request.getLng() == null
+                || (Math.abs(request.getLat()) < 0.0001 && Math.abs(request.getLng()) < 0.0001)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Không thể xác định tọa độ GPS của bạn! Vui lòng bật định vị trên thiết bị và bấm 'Cập nhật GPS'.");
+        }
+
+        // 2. Xác định kho bưu cục và kiểm tra bán kính địa lý (Geofencing)
         Warehouse wh = resolveUserWarehouse(user);
-        Long whId = wh != null ? wh.getId() : (user.getAssignedPostOfficeId() != null ? user.getAssignedPostOfficeId() : 1L);
-        String whName = wh != null ? wh.getName() : (user.getPostOfficeName() != null ? user.getPostOfficeName() : "Bưu cục công tác");
-
-        // 1. Kiểm tra vị trí GPS so với tọa độ kho
-        double distanceKm = 0.0;
-        boolean locationValid = true;
-        if (wh != null && wh.getLatitude() != null && wh.getLongitude() != null) {
-            distanceKm = calculateDistanceKm(request.getLat(), request.getLng(), wh.getLatitude(), wh.getLongitude());
-            locationValid = distanceKm <= MAX_ALLOWED_DISTANCE_KM;
+        if (wh == null || wh.getLatitude() == null || wh.getLongitude() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Tài khoản của bạn chưa được phân công bưu cục công tác hoặc kho chưa có tọa độ GPS! Vui lòng liên hệ quản lý để gán bưu cục trước khi chấm công.");
         }
 
-        // 2. Nhận diện khuôn mặt FaceID / Liveness
-        FaceVerificationResult faceResult = verifyOrRegisterFace(userId, request.getPhotoBase64());
+        double distanceKm = calculateDistanceKm(request.getLat(), request.getLng(), wh.getLatitude(), wh.getLongitude());
+        if (distanceKm > MAX_ALLOWED_DISTANCE_KM) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    String.format("Vị trí không hợp lệ! Bạn đang cách kho '%s' %.2f km (vượt quá bán kính cho phép %.2f km / %d mét). Chấm công bị từ chối! Vui lòng có mặt tại kho bưu cục để thực hiện.",
+                            wh.getName(), distanceKm, MAX_ALLOWED_DISTANCE_KM, (int) (MAX_ALLOWED_DISTANCE_KM * 1000)));
+        }
 
-        // 3. Đánh giá trạng thái
+        // 3. Nhận diện và đối chiếu khuôn mặt FaceID chính chủ
+        FaceVerificationResult faceResult = verifyFace(userId, request.getPhotoBase64());
+        if (!faceResult.isMatched()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    String.format("Xác thực khuôn mặt thất bại! Khuôn mặt không khớp với hồ sơ FaceID đã đăng ký (Độ khớp đạt %.1f%%, yêu cầu >= %.1f%%). Vui lòng không chấm công hộ người khác!",
+                            faceResult.similarityScore(), MIN_FACE_SIMILARITY_THRESHOLD));
+        }
+
+        // 4. Lưu bản ghi chấm công hợp lệ
         LocalDateTime now = LocalDateTime.now();
-        String status = "CHECKED_IN";
-        StringBuilder noteBuilder = new StringBuilder();
-        if (request.getNotes() != null && !request.getNotes().isBlank()) {
-            noteBuilder.append(request.getNotes().trim());
-        }
-
-        if (!locationValid) {
-            status = "INVALID_LOCATION";
-            if (noteBuilder.length() > 0) noteBuilder.append(" | ");
-            noteBuilder.append(String.format("Cảnh báo vị trí: Cách kho %.2f km (vượt ngưỡng cho phép %.2f km)", distanceKm, MAX_ALLOWED_DISTANCE_KM));
-        }
-
-        if (!faceResult.isMatched) {
-            status = "INVALID_FACE";
-            if (noteBuilder.length() > 0) noteBuilder.append(" | ");
-            noteBuilder.append(String.format("Cảnh báo FaceID: Khuôn mặt không khớp hồ sơ (độ khớp: %.1f%%)", faceResult.similarityScore));
-        }
-
-        if (locationValid && faceResult.isMatched && now.toLocalTime().isAfter(LocalTime.of(8, 30))) {
-            status = "LATE";
-        }
+        String status = now.toLocalTime().isAfter(LocalTime.of(8, 30)) ? "LATE" : "CHECKED_IN";
 
         String primaryRole = user.getRoles().stream()
                 .map(r -> r.getRoleName())
@@ -104,8 +100,8 @@ public class AttendanceServiceImpl implements AttendanceService {
                 .userId(userId)
                 .employeeName(user.getFullName())
                 .roleName(primaryRole)
-                .warehouseId(whId)
-                .warehouseName(whName)
+                .warehouseId(wh.getId())
+                .warehouseName(wh.getName())
                 .workDate(today)
                 .build());
 
@@ -114,15 +110,15 @@ public class AttendanceServiceImpl implements AttendanceService {
         record.setCheckInLat(request.getLat());
         record.setCheckInLng(request.getLng());
         record.setDistanceFromWarehouseKm(Math.round(distanceKm * 100.0) / 100.0);
-        record.setIsLocationValid(locationValid);
-        record.setIsFaceMatched(faceResult.isMatched);
-        record.setFaceMatchConfidence(faceResult.similarityScore);
+        record.setIsLocationValid(true);
+        record.setIsFaceMatched(true);
+        record.setFaceMatchConfidence(faceResult.similarityScore());
         record.setStatus(status);
-        record.setNotes(noteBuilder.toString());
+        record.setNotes(request.getNotes() != null ? request.getNotes().trim() : null);
 
         AttendanceRecord saved = attendanceRepository.save(record);
-        log.info("Nhân viên {} check-in thành công: status={}, distance={}km, faceMatch={}%",
-                user.getFullName(), status, distanceKm, faceResult.similarityScore);
+        log.info("Nhân viên {} check-in thành công: kho={}, status={}, distance={}km, faceMatch={}%",
+                user.getFullName(), wh.getName(), status, record.getDistanceFromWarehouseKm(), faceResult.similarityScore());
         return mapToResponse(saved);
     }
 
@@ -140,41 +136,51 @@ public class AttendanceServiceImpl implements AttendanceService {
             throw new IllegalStateException("Bạn đã hoàn thành Check-out ngày hôm nay lúc: " + record.getCheckOutTime().toLocalTime());
         }
 
-        Warehouse wh = resolveUserWarehouse(user);
-        double distanceKm = 0.0;
-        boolean locationValid = true;
-        if (wh != null && wh.getLatitude() != null && wh.getLongitude() != null) {
-            distanceKm = calculateDistanceKm(request.getLat(), request.getLng(), wh.getLatitude(), wh.getLongitude());
-            locationValid = distanceKm <= MAX_ALLOWED_DISTANCE_KM;
+        // 1. Kiểm tra tọa độ GPS từ thiết bị
+        if (request.getLat() == null || request.getLng() == null
+                || (Math.abs(request.getLat()) < 0.0001 && Math.abs(request.getLng()) < 0.0001)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Không thể xác định tọa độ GPS của bạn! Vui lòng bật định vị trên thiết bị và bấm 'Cập nhật GPS'.");
         }
 
-        FaceVerificationResult faceResult = verifyOrRegisterFace(userId, request.getPhotoBase64());
+        // 2. Xác định kho bưu cục và kiểm tra bán kính địa lý (Geofencing)
+        Warehouse wh = resolveUserWarehouse(user);
+        if (wh == null || wh.getLatitude() == null || wh.getLongitude() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Tài khoản của bạn chưa được phân công bưu cục công tác hoặc kho chưa có tọa độ GPS! Vui lòng liên hệ quản lý để gán bưu cục trước khi chấm công.");
+        }
 
+        double distanceKm = calculateDistanceKm(request.getLat(), request.getLng(), wh.getLatitude(), wh.getLongitude());
+        if (distanceKm > MAX_ALLOWED_DISTANCE_KM) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    String.format("Vị trí không hợp lệ! Bạn đang cách kho '%s' %.2f km (vượt quá bán kính cho phép %.2f km / %d mét). Chấm công bị từ chối! Vui lòng có mặt tại kho bưu cục để thực hiện.",
+                            wh.getName(), distanceKm, MAX_ALLOWED_DISTANCE_KM, (int) (MAX_ALLOWED_DISTANCE_KM * 1000)));
+        }
+
+        // 3. Nhận diện và đối chiếu khuôn mặt FaceID chính chủ
+        FaceVerificationResult faceResult = verifyFace(userId, request.getPhotoBase64());
+        if (!faceResult.isMatched()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    String.format("Xác thực khuôn mặt thất bại! Khuôn mặt không khớp với hồ sơ FaceID đã đăng ký (Độ khớp đạt %.1f%%, yêu cầu >= %.1f%%). Vui lòng không chấm công hộ người khác!",
+                            faceResult.similarityScore(), MIN_FACE_SIMILARITY_THRESHOLD));
+        }
+
+        // 4. Lưu bản ghi Check-out hợp lệ và tính thời gian làm việc
         LocalDateTime now = LocalDateTime.now();
         record.setCheckOutTime(now);
         record.setCheckOutPhotoUrl(request.getPhotoBase64());
         record.setCheckOutLat(request.getLat());
         record.setCheckOutLng(request.getLng());
 
-        // Tính tổng thời gian làm việc thực tế
         if (record.getCheckInTime() != null) {
             Duration duration = Duration.between(record.getCheckInTime(), now);
             double hours = (double) duration.toMinutes() / 60.0;
             record.setWorkHours(BigDecimal.valueOf(hours).setScale(2, RoundingMode.HALF_UP).doubleValue());
         }
 
-        String status = "COMPLETED";
-        if (now.toLocalTime().isBefore(LocalTime.of(17, 0))) {
-            status = "EARLY_LEAVE";
-        }
-        if (!locationValid) {
-            status = "INVALID_LOCATION";
-        }
-        if (!faceResult.isMatched) {
-            status = "INVALID_FACE";
-        }
-
+        String status = now.toLocalTime().isBefore(LocalTime.of(17, 0)) ? "EARLY_LEAVE" : "COMPLETED";
         record.setStatus(status);
+
         if (request.getNotes() != null && !request.getNotes().isBlank()) {
             String currentNotes = record.getNotes() != null ? record.getNotes() + " | " : "";
             record.setNotes(currentNotes + "Checkout note: " + request.getNotes().trim());
@@ -224,11 +230,20 @@ public class AttendanceServiceImpl implements AttendanceService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin nhân viên!"));
 
+        if (request.getFacePhotoBase64() == null || request.getFacePhotoBase64().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vui lòng chụp ảnh khuôn mặt trước khi đăng ký!");
+        }
+
+        BufferedImage img = decodeBase64ToImage(request.getFacePhotoBase64());
+        if (img == null || img.getWidth() < 50 || img.getHeight() < 50) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dữ liệu ảnh khuôn mặt mẫu không hợp lệ! Vui lòng chụp lại rõ nét.");
+        }
+
         EmployeeFaceProfile profile = faceProfileRepository.findByUserId(userId)
                 .orElseGet(() -> EmployeeFaceProfile.builder().userId(userId).build());
 
         profile.setFacePhotoUrl(request.getFacePhotoBase64());
-        profile.setFaceFeatures(request.getFaceFeatures() != null ? request.getFaceFeatures() : "PHASH_REGISTERED");
+        profile.setFaceFeatures("ENROLLED_DHASH_NCC");
 
         EmployeeFaceProfile saved = faceProfileRepository.save(profile);
         log.info("Đã cập nhật hồ sơ khuôn mặt nhân viên: {} (ID: {})", user.getFullName(), userId);
@@ -263,7 +278,8 @@ public class AttendanceServiceImpl implements AttendanceService {
 
     private Warehouse resolveUserWarehouse(User user) {
         if (user.getAssignedPostOfficeId() != null) {
-            return warehouseRepository.findById(user.getAssignedPostOfficeId()).orElse(null);
+            Warehouse wh = warehouseRepository.findById(user.getAssignedPostOfficeId()).orElse(null);
+            if (wh != null) return wh;
         }
         if (user.getManagedProvinceId() != null) {
             List<Warehouse> list = warehouseRepository.findByProvinceIdAndIsActiveTrue(user.getManagedProvinceId());
@@ -271,25 +287,29 @@ public class AttendanceServiceImpl implements AttendanceService {
                 return list.get(0);
             }
         }
+        if (user.getPostOfficeName() != null && !user.getPostOfficeName().isBlank()) {
+            String pName = user.getPostOfficeName().toLowerCase().trim();
+            List<Warehouse> list = warehouseRepository.findByIsActiveTrue();
+            for (Warehouse w : list) {
+                String wName = w.getName().toLowerCase().trim();
+                if (wName.contains(pName) || pName.contains(wName)) {
+                    return w;
+                }
+            }
+        }
         List<Warehouse> all = warehouseRepository.findByIsActiveTrue();
         return all.isEmpty() ? null : all.get(0);
     }
 
-    private FaceVerificationResult verifyOrRegisterFace(Long userId, String photoBase64) {
+    private FaceVerificationResult verifyFace(Long userId, String photoBase64) {
         if (photoBase64 == null || photoBase64.isBlank()) {
-            return new FaceVerificationResult(false, 0.0);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vui lòng chụp ảnh khuôn mặt trước khi thực hiện chấm công!");
         }
 
         Optional<EmployeeFaceProfile> profileOpt = faceProfileRepository.findByUserId(userId);
-        if (profileOpt.isEmpty()) {
-            // Lần đầu tiên: Tự động lưu khuôn mặt mẫu vào DB
-            EmployeeFaceProfile profile = EmployeeFaceProfile.builder()
-                    .userId(userId)
-                    .facePhotoUrl(photoBase64)
-                    .faceFeatures("AUTO_INITIALIZED")
-                    .build();
-            faceProfileRepository.save(profile);
-            return new FaceVerificationResult(true, 98.5);
+        if (profileOpt.isEmpty() || profileOpt.get().getFacePhotoUrl() == null || profileOpt.get().getFacePhotoUrl().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Bạn chưa đăng ký khuôn mặt mẫu FaceID! Vui lòng chuyển sang tab 'Hồ sơ khuôn mặt mẫu' để đăng ký khuôn mặt chính chủ trước khi chấm công.");
         }
 
         String baselinePhoto = profileOpt.get().getFacePhotoUrl();
@@ -299,37 +319,88 @@ public class AttendanceServiceImpl implements AttendanceService {
     }
 
     /**
-     * Thuật toán so khớp tương đồng ảnh khuôn mặt (Perceptual Hashing / Feature Matching)
-     * Trả về độ tương đồng từ 0% đến 100%
+     * Thuật toán so khớp tương đồng ảnh khuôn mặt:
+     * Kết hợp Difference Hash (dHash 32x32) và Normalized Cross-Correlation (NCC) trên vùng khuôn mặt trung tâm.
+     * Trả về độ tương đồng từ 0% đến 100%.
      */
     private double computeImageSimilarity(String imgBase64A, String imgBase64B) {
         try {
             BufferedImage imgA = decodeBase64ToImage(imgBase64A);
             BufferedImage imgB = decodeBase64ToImage(imgBase64B);
             if (imgA == null || imgB == null) {
-                return 85.0; // Fallback an toàn nếu định dạng đặc biệt
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Dữ liệu ảnh chụp không hợp lệ hoặc không thể phân tích! Vui lòng chụp lại rõ nét.");
             }
 
-            // Thu nhỏ 2 ảnh về ma trận 16x16 grayscale để so sánh fingerprint
-            int size = 16;
+            int size = 32;
             int[][] grayA = toGrayscaleMatrix(imgA, size, size);
             int[][] grayB = toGrayscaleMatrix(imgB, size, size);
 
-            int totalDiff = 0;
-            int maxDiff = size * size * 255;
+            // 1. Difference Hash (dHash) trên toàn bộ ma trận (32x31 = 992 bits)
+            int dHashDiff = 0;
+            int totalDHashBits = size * (size - 1);
             for (int r = 0; r < size; r++) {
-                for (int c = 0; c < size; c++) {
-                    totalDiff += Math.abs(grayA[r][c] - grayB[r][c]);
+                for (int c = 0; c < size - 1; c++) {
+                    boolean bitA = grayA[r][c] > grayA[r][c + 1];
+                    boolean bitB = grayB[r][c] > grayB[r][c + 1];
+                    if (bitA != bitB) {
+                        dHashDiff++;
+                    }
                 }
             }
+            double dHashScore = 100.0 * (1.0 - ((double) dHashDiff / totalDHashBits));
 
-            double similarity = 100.0 - ((double) totalDiff / maxDiff * 100.0);
-            // Chuẩn hóa và làm mịn độ tương đồng thực tế
-            double normalized = Math.min(99.5, Math.max(20.0, similarity * 1.35));
-            return Math.round(normalized * 10.0) / 10.0;
+            // 2. So sánh vùng trung tâm khuôn mặt (Center 60%: rows 6..25, cols 6..25 = 20x20 pixels)
+            // Đây là vùng tập trung các đặc trưng quan trọng: mắt, mũi, miệng
+            int centerStart = 6;
+            int centerEnd = 26;
+            int centerPixels = (centerEnd - centerStart) * (centerEnd - centerStart);
+            long sumDiff = 0;
+            double meanA = 0;
+            double meanB = 0;
+            for (int r = centerStart; r < centerEnd; r++) {
+                for (int c = centerStart; c < centerEnd; c++) {
+                    meanA += grayA[r][c];
+                    meanB += grayB[r][c];
+                    sumDiff += Math.abs(grayA[r][c] - grayB[r][c]);
+                }
+            }
+            meanA /= centerPixels;
+            meanB /= centerPixels;
+
+            // Normalized Cross-Correlation (NCC) trên vùng trung tâm
+            double num = 0.0;
+            double denA = 0.0;
+            double denB = 0.0;
+            for (int r = centerStart; r < centerEnd; r++) {
+                for (int c = centerStart; c < centerEnd; c++) {
+                    double a = grayA[r][c] - meanA;
+                    double b = grayB[r][c] - meanB;
+                    num += a * b;
+                    denA += a * a;
+                    denB += b * b;
+                }
+            }
+            double ncc = (denA > 0 && denB > 0) ? (num / (Math.sqrt(denA) * Math.sqrt(denB))) : 0.0;
+            double nccScore = Math.max(0.0, Math.min(100.0, ((ncc + 1.0) / 2.0) * 100.0));
+
+            // Pixel Intensity Difference Score trên vùng trung tâm (0-100)
+            double avgDiff = (double) sumDiff / centerPixels;
+            double pixelDiffScore = Math.max(0.0, 100.0 - (avgDiff / 255.0 * 100.0));
+
+            // Kết hợp có trọng số:
+            // 40% dHash cấu trúc đường nét + 35% NCC tương quan + 25% độ tương đồng pixel trung tâm
+            double totalScore = (0.40 * dHashScore) + (0.35 * nccScore) + (0.25 * pixelDiffScore);
+
+            // Giới hạn trong khoảng [0.0, 99.9]
+            double finalScore = Math.min(99.9, Math.max(0.0, totalScore));
+            return Math.round(finalScore * 10.0) / 10.0;
+        } catch (ResponseStatusException rse) {
+            throw rse;
         } catch (Exception e) {
-            log.warn("Lỗi so khớp khuôn mặt, fallback sang chấp nhận: {}", e.getMessage());
-            return 88.0;
+            log.error("Lỗi thuật toán so khớp khuôn mặt: ", e);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Không thể xử lý ảnh khuôn mặt để đối soát! Vui lòng chụp lại rõ nét.");
         }
     }
 
