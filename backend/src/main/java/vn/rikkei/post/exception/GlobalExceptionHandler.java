@@ -89,7 +89,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneralException(Exception ex) {
         log.error("Lỗi hệ thống ngoài dự kiến: ", ex);
+        // Tránh làm lộ cấu trúc bảng CSDL hoặc stack trace chi tiết ra ngoài
+        String clientMsg = ex.getMessage();
+        if (clientMsg != null && (clientMsg.contains("SQL") || clientMsg.contains("relation") || clientMsg.contains("could not execute"))) {
+            clientMsg = "Hệ thống đang bận hoặc gặp sự cố xử lý dữ liệu. Vui lòng thử lại sau!";
+        } else if (clientMsg == null) {
+            clientMsg = "Đã xảy ra lỗi không xác định trên hệ thống.";
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error("Lỗi hệ thống: " + ex.getMessage()));
+                .body(ApiResponse.error(clientMsg));
     }
 }

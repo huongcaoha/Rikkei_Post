@@ -79,6 +79,19 @@ public class OrderController {
         OrderResponse order = orderService.getOrderByTrackingCode(trackingCode);
         List<OrderTrackingLog> timeline = orderService.getOrderTimeline(trackingCode);
 
+        // Bảo mật thông tin cá nhân & mã OTP khi tra cứu công khai
+        if (order != null) {
+            order.setDeliveryOtp(null); // Không làm lộ mã OTP nhận hàng
+            if (order.getReceiverPhone() != null && order.getReceiverPhone().length() >= 7) {
+                String phone = order.getReceiverPhone();
+                order.setReceiverPhone(phone.substring(0, 3) + "****" + phone.substring(phone.length() - 3));
+            }
+            if (order.getSenderPhone() != null && order.getSenderPhone().length() >= 7) {
+                String phone = order.getSenderPhone();
+                order.setSenderPhone(phone.substring(0, 3) + "****" + phone.substring(phone.length() - 3));
+            }
+        }
+
         Map<String, Object> data = new HashMap<>();
         data.put("order", order);
         data.put("timeline", timeline);

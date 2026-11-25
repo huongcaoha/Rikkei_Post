@@ -105,6 +105,63 @@ services:
     networks:
       - rkp-network
 
+  # =========================================================================
+  # 6. BACKEND SERVICE (Spring Boot Application)
+  # =========================================================================
+  backend:
+    image: ${DOCKER_USERNAME:-huongcaoha}/rkp-backend:latest
+    container_name: rkp-backend
+    restart: always
+    mem_limit: 650m
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - JAVA_OPTS=-XX:+UseContainerSupport -Xmx512M -Xms256M -Xss2M -XX:+UseG1GC
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rkp_logistics}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER:-rkp_admin}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD:-rkp_password_2026}
+      - SPRING_REDIS_HOST=redis
+      - SPRING_REDIS_PORT=6379
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD:-rkp_redis_2026}
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - APP_JWT_SECRET=${APP_JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+      - SPRING_MAIL_HOST=${SPRING_MAIL_HOST:-smtp.gmail.com}
+      - SPRING_MAIL_PORT=${SPRING_MAIL_PORT:-587}
+      - SPRING_MAIL_USERNAME=${SPRING_MAIL_USERNAME:-huongcaoha1994@gmail.com}
+      - SPRING_MAIL_PASSWORD=${SPRING_MAIL_PASSWORD}
+      - PAYOS_CLIENT_ID=${PAYOS_CLIENT_ID}
+      - PAYOS_API_KEY=${PAYOS_API_KEY}
+      - PAYOS_CHECKSUM_KEY=${PAYOS_CHECKSUM_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME}
+      - R2_PUBLIC_URL_PREFIX=${R2_PUBLIC_URL_PREFIX}
+    networks:
+      - rkp-network
+
+  # =========================================================================
+  # 7. FRONTEND SERVICE (Nginx Production Server)
+  # =========================================================================
+  frontend:
+    image: ${DOCKER_USERNAME:-huongcaoha}/rkp-frontend:latest
+    container_name: rkp-frontend
+    restart: always
+    mem_limit: 100m
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - rkp-network
+
 networks:
   rkp-network:
     driver: bridge

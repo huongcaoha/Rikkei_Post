@@ -127,21 +127,29 @@ public class ShipperController {
     // ==========================================
 
     @PostMapping("/smart-dispatch")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
     public ResponseEntity<ApiResponse<OrderResponse>> smartDispatch(
             @RequestBody SmartDispatchRequest request,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        if (userDetails == null) {
+            throw new org.springframework.security.access.AccessDeniedException("Yêu cầu đăng nhập quản lý để điều phối bưu tá");
+        }
+        Long currentUserId = userDetails.getId();
         OrderResponse response = shipperService.smartDispatchOrder(request.getTrackingCode(), request.getShipperId(), currentUserId);
         return ResponseEntity.ok(ApiResponse.success(response, "Đã điều phối bưu tá thành công!"));
     }
 
     @PostMapping("/smart-dispatch-batch")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> smartDispatchBatch(
             @RequestParam(required = false) Long postOfficeId,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        Long currentUserId = userDetails != null ? userDetails.getId() : 1L;
+        if (userDetails == null) {
+            throw new org.springframework.security.access.AccessDeniedException("Yêu cầu đăng nhập quản lý để điều phối bưu tá");
+        }
+        Long currentUserId = userDetails.getId();
         Map<String, Object> result = shipperService.smartDispatchBatch(postOfficeId, currentUserId);
         return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
     }
@@ -225,11 +233,15 @@ public class ShipperController {
     }
 
     @PostMapping("/cash-submissions/approve/{submissionCode}")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> approveCashSubmission(
             @PathVariable String submissionCode,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        Long managerId = userDetails != null ? userDetails.getId() : 1L;
+        if (userDetails == null) {
+            throw new org.springframework.security.access.AccessDeniedException("Yêu cầu đăng nhập cấp quản lý để duyệt nộp tiền");
+        }
+        Long managerId = userDetails.getId();
         Map<String, Object> result = shipperService.approveCashSubmission(submissionCode, managerId);
         return ResponseEntity.ok(ApiResponse.success(result, (String) result.get("message")));
     }

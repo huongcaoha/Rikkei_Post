@@ -24,14 +24,18 @@ public class AiController {
             @RequestBody @Valid AiChatRequest request,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        if (userDetails != null && request.getUserId() == null) {
+        // Bảo mật: Chỉ cho phép truy xuất dữ liệu cá nhân (ví, COD) khi đã đăng nhập chính chủ, cấm giả mạo userId
+        if (userDetails != null) {
             request.setUserId(userDetails.getId());
+        } else {
+            request.setUserId(null);
         }
         AiChatResponse res = aiService.chat(request);
         return ResponseEntity.ok(ApiResponse.ok("Trợ lý AI phản hồi thành công", res));
     }
 
     @PostMapping("/vrp/optimize")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER', 'SHIPPER')")
     public ResponseEntity<ApiResponse<VrpOptimizeResponse>> optimizeRoute(
             @RequestBody @Valid VrpOptimizeRequest request
     ) {
@@ -40,6 +44,7 @@ public class AiController {
     }
 
     @PostMapping("/vrp/shipper/{shipperId}/optimize")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER', 'SHIPPER')")
     public ResponseEntity<ApiResponse<VrpOptimizeResponse>> optimizeShipperRoute(
             @PathVariable Long shipperId,
             @RequestParam(required = false, defaultValue = "21.0285") Double lat,
