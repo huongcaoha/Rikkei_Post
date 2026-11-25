@@ -26,6 +26,10 @@ import { TruckDriverPortalPage } from './pages/TruckDriverPortalPage';
 import { AreaSortingScannerPage } from './pages/AreaSortingScannerPage';
 import { DispatchManagementPage } from './pages/DispatchManagementPage';
 import { NetworkTopologyMapPage } from './pages/NetworkTopologyMapPage';
+import { AccountantDashboardPage } from './pages/AccountantDashboardPage';
+import { VoucherManagementPage } from './pages/VoucherManagementPage';
+import { HubPayrollApprovalPage } from './pages/HubPayrollApprovalPage';
+import { MyPayrollPage } from './pages/MyPayrollPage';
 
 const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -78,6 +82,10 @@ export const App: React.FC = () => {
               <Route path="/tms/carriers" element={<CarrierPartnerPage />} />
               <Route path="/tms/route-optimizer" element={<VrpRouteOptimizationPage />} />
               <Route path="/billing/reconciliation" element={<BillingReconciliationPage />} />
+              <Route path="/accountant/dashboard" element={<AccountantDashboardPage />} />
+              <Route path="/vouchers/management" element={<VoucherManagementPage />} />
+              <Route path="/payroll/hub-approval" element={<HubPayrollApprovalPage />} />
+              <Route path="/payroll/my" element={<MyPayrollPage />} />
               <Route path="/shipper/tasks" element={<ShipperPortalPage />} />
               <Route path="/profile" element={<ProfilePage />} />
             </Route>

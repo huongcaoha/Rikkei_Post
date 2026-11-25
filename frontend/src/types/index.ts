@@ -848,6 +848,122 @@ export interface NetworkTopologyResponse {
   totalBagsInTransit: number;
 }
 
+// ==================== TÀI CHÍNH KẾ TOÁN & PHIẾU THU - CHI ====================
+export interface PaymentVoucher {
+  id: number;
+  voucherCode: string;
+  voucherType: 'RECEIPT' | 'PAYMENT' | string;
+  category: string;
+  amount: number;
+  title?: string;
+  description?: string;
+  proofAttachmentUrl?: string;
+  createdByUserId?: number;
+  createdByUserName?: string;
+  createdByUserRole?: string;
+  warehouseId?: number;
+  warehouseName?: string;
+  provinceId?: number;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | string;
+  approvedByUserId?: number;
+  approvedByUserName?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
+  disbursementMethod?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateVoucherRequest {
+  voucherType: 'RECEIPT' | 'PAYMENT';
+  category: string;
+  amount: number;
+  title?: string;
+  description?: string;
+  proofAttachmentUrl?: string;
+  warehouseId?: number;
+}
+
+export interface ApproveVoucherRequest {
+  disbursementMethod?: string;
+  notes?: string;
+}
+
+export interface RejectVoucherRequest {
+  rejectionReason: string;
+}
+
+// ==================== CHẤM CÔNG & BẢNG KÊ LƯƠNG 3P LOGISTICS ====================
+export interface PayrollRecord {
+  id: number;
+  payrollCode: string;
+  month: number;
+  year: number;
+  userId: number;
+  employeeName: string;
+  employeePhone?: string;
+  roleName: string;
+  warehouseId?: number;
+  warehouseName?: string;
+
+  standardWorkDays: number;
+  actualWorkDays: number;
+  totalWorkHours: number;
+  overtimeHours: number;
+
+  deliveredOrdersCount: number;
+  pickedOrdersCount: number;
+  totalTripKm: number;
+  sortedPackagesCount: number;
+
+  baseSalaryP1: number;
+  productionSalaryP2: number;
+  bonusKpiP3: number;
+  fuelAllowance: number;
+  phoneAllowance: number;
+  otherAllowances: number;
+  violationDeductions: number;
+  codPendingHolding: number;
+  totalGrossSalary: number;
+  netSalary: number;
+
+  status: 'GENERATED' | 'PENDING_MANAGER_APPROVAL' | 'PENDING_ACCOUNTANT_APPROVAL' | 'PAID' | string;
+  aiExplanation?: string;
+
+  managerApprovedBy?: number;
+  managerApprovedByName?: string;
+  managerApprovedAt?: string;
+
+  accountantApprovedBy?: number;
+  accountantApprovedByName?: string;
+  accountantApprovedAt?: string;
+
+  paidAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface GeneratePayrollRequest {
+  month: number;
+  year: number;
+  warehouseId?: number;
+}
+
+export interface AccountantDashboard {
+  totalCodCollected: number;
+  totalMerchantPayable: number;
+  totalShippingRevenue: number;
+  totalExpenses: number;
+  netProfit: number;
+  pendingVouchersCount: number;
+  pendingPayrollCount: number;
+  approvedReceiptsAmount: number;
+  approvedPaymentsAmount: number;
+  paidSalariesAmount: number;
+  expenseBreakdownByCategory?: Record<string, number>;
+}
+
+
 
 
 

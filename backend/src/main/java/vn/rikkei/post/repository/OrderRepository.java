@@ -35,4 +35,22 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     boolean existsByTrackingCode(String trackingCode);
     long countByMerchantId(Long merchantId);
     long countByAssignedShipperIdAndCurrentStatus(Long shipperId, String status);
+
+    @Query("SELECT COALESCE(SUM(o.codAmount), 0) FROM Order o WHERE o.currentStatus = 'DELIVERED' AND o.deliveredAt >= :startDate AND o.deliveredAt <= :endDate")
+    java.math.BigDecimal sumDeliveredCodAmount(@Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    @Query("SELECT COALESCE(SUM(o.totalFee), 0) FROM Order o WHERE o.createdAt >= :startDate AND o.createdAt <= :endDate")
+    java.math.BigDecimal sumTotalShippingFee(@Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.assignedShipperId = :shipperId AND o.currentStatus = 'DELIVERED' AND o.deliveredAt >= :startDate AND o.deliveredAt <= :endDate")
+    long countShipperDeliveredInPeriod(@Param("shipperId") Long shipperId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.assignedShipperId = :shipperId AND o.pickupCompletedAt >= :startDate AND o.pickupCompletedAt <= :endDate")
+    long countShipperPickedInPeriod(@Param("shipperId") Long shipperId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.assignedShipperId = :shipperId AND o.currentStatus = 'DELIVERY_FAILED' AND o.updatedAt >= :startDate AND o.updatedAt <= :endDate")
+    long countShipperFailedInPeriod(@Param("shipperId") Long shipperId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
+
+    @Query("SELECT COALESCE(SUM(o.totalFee), 0) FROM Order o WHERE o.assignedPostOfficeId = :poId AND o.createdAt >= :startDate AND o.createdAt <= :endDate")
+    java.math.BigDecimal sumPostOfficeRevenueInPeriod(@Param("poId") Long poId, @Param("startDate") java.time.LocalDateTime startDate, @Param("endDate") java.time.LocalDateTime endDate);
 }

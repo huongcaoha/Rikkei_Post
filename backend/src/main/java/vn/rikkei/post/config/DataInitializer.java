@@ -133,6 +133,21 @@ public class DataInitializer implements CommandLineRunner {
             log.info("Đã tạo tài khoản demo: branch_hn / Password@123 (ROLE_BRANCH_MANAGER)");
         }
 
+        // 4.1. Khởi tạo tài khoản Kế toán trưởng hệ thống (accountant_rikkei)
+        if (!userRepository.existsByUsername("accountant_rikkei")) {
+            User accountant = User.builder()
+                    .username("accountant_rikkei")
+                    .password(passwordEncoder.encode("Password@123"))
+                    .fullName("Lê Thị Thu Thủy (Kế Toán Trưởng)")
+                    .phoneNumber("0909999999")
+                    .email("accountant@rikkeipost.vn")
+                    .isActive(true)
+                    .roles(new HashSet<>(Set.of(roleAccountant)))
+                    .build();
+            userRepository.save(accountant);
+            log.info("Đã tạo tài khoản demo: accountant_rikkei / Password@123 (ROLE_ACCOUNTANT)");
+        }
+
         // 5. Khởi tạo tài khoản Quản lý bưu cục Cầu Giấy (manager_cg)
         Warehouse spokeCgWh = warehouseRepository.findByCode("SPOKE_HN_CG").orElse(null);
         Long cgWarehouseId = spokeCgWh != null ? spokeCgWh.getId() : 4L;

@@ -224,6 +224,8 @@ export const StaffManagementPage: React.FC = () => {
         return <Tag color="green">Nhân viên kho</Tag>;
       case 'ROLE_TRUCK_DRIVER':
         return <Tag color="orange">Tài xế xe tải</Tag>;
+      case 'ROLE_ACCOUNTANT':
+        return <Tag color="magenta">Kế toán viên</Tag>;
       default:
         return <Tag>{roleName.replace('ROLE_', '')}</Tag>;
     }
@@ -358,6 +360,7 @@ export const StaffManagementPage: React.FC = () => {
               { label: 'Bưu tá giao nhận (SHIPPER)', value: 'ROLE_SHIPPER' },
               { label: 'Nhân viên kho (WAREHOUSE_STAFF)', value: 'ROLE_WAREHOUSE_STAFF' },
               { label: 'Tài xế xe tải (TRUCK_DRIVER)', value: 'ROLE_TRUCK_DRIVER' },
+              { label: 'Kế toán viên (ACCOUNTANT)', value: 'ROLE_ACCOUNTANT' },
             ]}
           />
         </div>
@@ -449,6 +452,7 @@ export const StaffManagementPage: React.FC = () => {
                       {r === 'ROLE_SHIPPER' && 'Bưu tá (Shipper)'}
                       {r === 'ROLE_WAREHOUSE_STAFF' && 'Nhân viên khai thác kho'}
                       {r === 'ROLE_TRUCK_DRIVER' && 'Tài xế xe tải trung chuyển (TRUCK_DRIVER)'}
+                      {r === 'ROLE_ACCOUNTANT' && 'Kế toán viên / Kế toán trưởng (Accountant)'}
                       {r === 'ROLE_MERCHANT' && 'Khách hàng / Shop'}
                       {r !== 'ROLE_ADMIN' &&
                         r !== 'ROLE_BRANCH_MANAGER' &&

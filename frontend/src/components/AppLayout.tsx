@@ -23,11 +23,17 @@ import {
   Wallet,
   Navigation,
   Network,
+  Camera,
+  Receipt,
+  Coins,
+  CheckSquare,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 import { AiChatWidget } from './ai/AiChatWidget';
+import { NotificationBell } from './NotificationBell';
+import { AttendanceModal } from './AttendanceModal';
 
 const { Header, Sider, Content } = Layout;
 
@@ -41,6 +47,7 @@ export const AppLayout: React.FC = () => {
 
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false);
   const [globalScannerOpen, setGlobalScannerOpen] = useState<boolean>(false);
+  const [attendanceModalOpen, setAttendanceModalOpen] = useState<boolean>(false);
 
   const userRoles = user?.roles || [];
   const isAdmin = userRoles.includes('ROLE_ADMIN');
@@ -49,8 +56,9 @@ export const AppLayout: React.FC = () => {
   const isWarehouseStaff = userRoles.includes('ROLE_WAREHOUSE_STAFF');
   const isShipper = userRoles.includes('ROLE_SHIPPER');
   const isTruckDriver = userRoles.includes('ROLE_TRUCK_DRIVER');
+  const isAccountant = userRoles.includes('ROLE_ACCOUNTANT');
   const isStaffOrAdmin = userRoles.some((r) =>
-    ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF', 'ROLE_TRUCK_DRIVER'].includes(r)
+    ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF', 'ROLE_TRUCK_DRIVER', 'ROLE_ACCOUNTANT'].includes(r)
   );
   const canCreateOrder = !isStaffOrAdmin && (userRoles.includes('ROLE_MERCHANT') || userRoles.includes('ROLE_CUSTOMER') || userRoles.length === 0);
 
@@ -228,6 +236,42 @@ export const AppLayout: React.FC = () => {
     });
   }
 
+  // Bảng Điều Khiển Kế Toán & Quản Trị Tài Chính
+  if (isAdmin || isAccountant) {
+    menuItems.push({
+      key: '/accountant/dashboard',
+      icon: <DollarSign size={18} />,
+      label: 'Bảng Điều Khiển Kế Toán (Finance)',
+    });
+  }
+
+  // Quản lý đề xuất Phiếu Thu - Chi
+  if (isAdmin || isBranchManager || isPostOfficeManager || isAccountant) {
+    menuItems.push({
+      key: '/vouchers/management',
+      icon: <Receipt size={18} />,
+      label: 'Quản lý Phiếu Thu - Chi (Voucher)',
+    });
+  }
+
+  // Bảng kê Lương 3P & Quản lý duyệt Hub
+  if (isAdmin || isBranchManager || isPostOfficeManager) {
+    menuItems.push({
+      key: '/payroll/hub-approval',
+      icon: <Coins size={18} />,
+      label: 'Bảng kê Lương 3P & Duyệt (Hub)',
+    });
+  }
+
+  // Phiếu lương cá nhân (Dành cho mọi nhân sự hệ thống)
+  if (user && isStaffOrAdmin) {
+    menuItems.push({
+      key: '/payroll/my',
+      icon: <Coins size={18} />,
+      label: 'Phiếu lương của tôi (3P)',
+    });
+  }
+
   // Đối soát COD & Ví Shop (Tất cả tài khoản đăng nhập)
   if (user) {
     menuItems.push({
@@ -320,6 +364,20 @@ export const AppLayout: React.FC = () => {
                 ))}
               </div>
             </div>
+            {isStaffOrAdmin && (
+              <Button
+                type="primary"
+                icon={<Camera size={16} />}
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  setAttendanceModalOpen(true);
+                }}
+                block
+                className="bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center h-10 font-semibold rounded-xl"
+              >
+                Chấm công (FaceID & GPS)
+              </Button>
+            )}
             <Button
               danger
               icon={<LogOut size={16} />}
@@ -412,13 +470,27 @@ export const AppLayout: React.FC = () => {
             <span className="font-black text-sm tracking-wider text-red-600">RIKKEI_POST</span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5">
+            {user && (
+              <>
+                <NotificationBell />
+                {isStaffOrAdmin && (
+                  <Button
+                    type="text"
+                    icon={<Camera size={19} className="text-emerald-600" />}
+                    onClick={() => setAttendanceModalOpen(true)}
+                    className="p-1 flex items-center justify-center rounded-lg hover:bg-emerald-50"
+                    title="Chấm công FaceID"
+                  />
+                )}
+              </>
+            )}
             {user ? (
               <div 
                 className="text-right cursor-pointer"
                 onClick={() => setMobileDrawerOpen(true)}
               >
-                <div className="text-xs sm:text-sm font-bold text-gray-800 truncate max-w-[150px] leading-tight">
+                <div className="text-xs sm:text-sm font-bold text-gray-800 truncate max-w-[130px] leading-tight">
                   {user.fullName || user.username}
                 </div>
                 <div className="flex justify-end mt-0.5">
@@ -463,6 +535,16 @@ export const AppLayout: React.FC = () => {
               </div>
 
               <div className="flex items-center space-x-3">
+                {isStaffOrAdmin && (
+                  <Button
+                    type="primary"
+                    icon={<Camera size={16} />}
+                    onClick={() => setAttendanceModalOpen(true)}
+                    className="bg-emerald-600 hover:bg-emerald-700 font-semibold rounded-xl flex items-center shadow-xs"
+                  >
+                    Chấm công (FaceID)
+                  </Button>
+                )}
                 {showQuickScan && (
                   <Button
                     type="primary"
@@ -475,6 +557,7 @@ export const AppLayout: React.FC = () => {
                     {canInbound ? 'Quét mã nhập kho' : 'Quét mã lấy hàng'}
                   </Button>
                 )}
+                <NotificationBell />
                 <Button
                   type="default"
                   icon={<UserCheck size={16} />}
@@ -620,6 +703,11 @@ export const AppLayout: React.FC = () => {
       />
       {/* Trợ lý AI CSKH Tra cứu Thông minh Toàn Cục */}
       <AiChatWidget />
+      {/* Modal Chấm Công FaceID & Định vị GPS */}
+      <AttendanceModal
+        open={attendanceModalOpen}
+        onClose={() => setAttendanceModalOpen(false)}
+      />
     </Layout>
   );
 };
