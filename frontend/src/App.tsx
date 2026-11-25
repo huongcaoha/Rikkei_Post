@@ -30,6 +30,7 @@ import { AccountantDashboardPage } from './pages/AccountantDashboardPage';
 import { VoucherManagementPage } from './pages/VoucherManagementPage';
 import { HubPayrollApprovalPage } from './pages/HubPayrollApprovalPage';
 import { MyPayrollPage } from './pages/MyPayrollPage';
+import { EcommerceIntegrationPage } from './pages/EcommerceIntegrationPage';
 
 const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -68,6 +69,7 @@ export const App: React.FC = () => {
               <Route path="/orders/create" element={<CreateOrderPage />} />
               <Route path="/orders/batch" element={<BatchOrderPage />} />
               <Route path="/orders/print/:trackingCode" element={<PrintLabelPage />} />
+              <Route path="/ecommerce/channels" element={<EcommerceIntegrationPage />} />
               <Route path="/admin/staff" element={<StaffManagementPage />} />
               <Route path="/admin/routes" element={<DeliveryRoutesPage />} />
               <Route path="/admin/warehouses" element={<WarehouseManagementPage />} />

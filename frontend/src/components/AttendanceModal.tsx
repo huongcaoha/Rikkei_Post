@@ -9,6 +9,8 @@ import {
   History,
   UserCheck,
   RefreshCw,
+  Smartphone,
+  Upload,
 } from 'lucide-react';
 import { attendanceApi, AttendanceRecordDTO, FaceProfileDTO } from '../api/attendance';
 import { useAuth } from '../context/AuthContext';
@@ -34,19 +36,28 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   // Camera State
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
 
   useEffect(() => {
+    let timer: any = null;
     if (open) {
       loadTodayAttendance();
       loadFaceProfile();
       fetchGpsLocation();
-      startCamera();
+
+      // Trên điện thoại Android/iOS: Tránh gọi getUserMedia đồng thời tại 0ms với hiệu ứng mở modal
+      // để tránh lỗi tapjacking "Trang web này không thể yêu cầu bạn cấp quyền"
+      timer = setTimeout(() => {
+        startCamera();
+      }, 500);
     } else {
       stopCamera();
     }
     return () => {
+      if (timer) clearTimeout(timer);
       stopCamera();
     };
   }, [open]);
@@ -95,10 +106,12 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     setGpsError(null);
     if (!navigator.geolocation) {
       setGpsError('Trình duyệt không hỗ trợ định vị GPS!');
+      setCurrentGps({ lat: 21.028511, lng: 105.782352 });
       setGpsLoading(false);
       return;
     }
 
+    // Tầng 1: Lấy tọa độ nhanh qua mạng di động/WiFi để không bị timeout trên điện thoại
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setCurrentGps({
@@ -108,23 +121,41 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
         setGpsLoading(false);
       },
       (err) => {
-        setGpsError('Không thể lấy tọa độ GPS: ' + err.message + '. Hệ thống sẽ sử dụng tọa độ bưu cục mặc định.');
-        // Fallback default coordinates (Hà Nội Hub)
-        setCurrentGps({ lat: 21.028511, lng: 105.782352 });
-        setGpsLoading(false);
+        // Tầng 2: Thử lại với maximumAge cache rộng hơn
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setCurrentGps({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            });
+            setGpsLoading(false);
+          },
+          (err2) => {
+            setGpsError('Định vị GPS mất tín hiệu hoặc đang chờ quyền. Đã lấy vị trí bưu cục phụ trách.');
+            // Fallback default coordinates (Hà Nội Hub)
+            setCurrentGps({ lat: 21.028511, lng: 105.782352 });
+            setGpsLoading(false);
+          },
+          { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
     );
   };
 
   const startCamera = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.warn('Thiết bị không hỗ trợ getUserMedia');
+      setCameraActive(false);
+      return;
+    }
     try {
-      setCameraActive(true);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        setCameraActive(true);
       }
     } catch (err) {
       console.warn('Không thể mở camera tự động:', err);
@@ -155,6 +186,21 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
         message.success('Đã chụp ảnh khuôn mặt thành công!');
       }
     }
+  };
+
+  // Chụp ảnh trực tiếp bằng Camera ứng dụng hệ thống trên điện thoại (Không qua WebRTC)
+  const handleNativeCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUri = event.target?.result as string;
+      setCapturedPhoto(dataUri);
+      message.success('Đã nhận diện ảnh chụp khuôn mặt thành công!');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = ''; // Reset input để cho phép chụp lại
   };
 
   const handleCheckIn = async () => {
@@ -406,14 +452,46 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                       <div className="w-44 h-56 border-2 border-red-500 rounded-full border-dashed opacity-75"></div>
                     </div>
-                    <Button
-                      type="primary"
-                      icon={<Camera size={16} />}
-                      onClick={capturePhoto}
-                      className="absolute bottom-3 bg-red-600 hover:bg-red-700 font-semibold rounded-full px-4 shadow-lg"
-                    >
-                      Chụp ảnh FaceID
-                    </Button>
+                    {cameraActive && (
+                      <Button
+                        type="primary"
+                        icon={<Camera size={16} />}
+                        onClick={capturePhoto}
+                        className="absolute bottom-3 bg-red-600 hover:bg-red-700 font-semibold rounded-full px-4 shadow-lg z-10"
+                      >
+                        Chụp ảnh FaceID
+                      </Button>
+                    )}
+
+                    {/* Màn hình thông báo / Fallback nếu điện thoại chưa cấp quyền hoặc bị lỗi lớp phủ */}
+                    {!cameraActive && (
+                      <div className="absolute inset-0 bg-gray-900/90 text-white flex flex-col items-center justify-center p-4 text-center z-20">
+                        <Camera size={36} className="text-gray-400 mb-2" />
+                        <div className="text-sm font-semibold mb-1">Chưa kích hoạt Web Camera</div>
+                        <p className="text-xs text-gray-300 max-w-xs mb-3">
+                          Nếu trình duyệt điện thoại báo lỗi "Trang web không thể yêu cầu quyền", hãy bấm nút xanh bên dưới để mở Camera điện thoại trực tiếp.
+                        </p>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          <Button
+                            type="primary"
+                            onClick={startCamera}
+                            size="small"
+                            icon={<Camera size={14} />}
+                            className="bg-blue-600"
+                          >
+                            Thử lại Web Camera
+                          </Button>
+                          <Button
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white border-none font-semibold"
+                            onClick={() => fileInputRef.current?.click()}
+                            size="small"
+                            icon={<Smartphone size={14} />}
+                          >
+                            📱 Mở Camera Điện Thoại
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Ảnh vừa chụp & Xem trước */}
@@ -432,11 +510,49 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                     ) : (
                       <div className="text-center text-gray-400">
                         <Camera size={40} className="mx-auto mb-2 opacity-50" />
-                        <p className="text-xs">Chưa có ảnh chụp. Hãy nhấn "Chụp ảnh FaceID" trên khung hình.</p>
+                        <p className="text-xs">Chưa có ảnh chụp. Hãy chụp ảnh để hoàn tất chấm công.</p>
                       </div>
                     )}
                   </div>
                 </div>
+
+                {/* Các nút hành động phụ chụp ảnh tiện lợi trên điện thoại */}
+                <div className="flex flex-wrap gap-2 items-center justify-center bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+                  <span className="text-xs text-gray-500 font-medium">Tùy chọn chụp ảnh:</span>
+                  <Button
+                    size="small"
+                    icon={<Smartphone size={14} className="text-emerald-600" />}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="font-medium text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                  >
+                    Chụp bằng Camera điện thoại
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<Upload size={14} />}
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="font-medium text-gray-600"
+                  >
+                    Tải ảnh từ máy
+                  </Button>
+                </div>
+
+                {/* Input native camera và file upload ẩn */}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="user"
+                  ref={fileInputRef}
+                  onChange={handleNativeCameraCapture}
+                  className="hidden"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={galleryInputRef}
+                  onChange={handleNativeCameraCapture}
+                  className="hidden"
+                />
 
                 <canvas ref={canvasRef} className="hidden" />
 

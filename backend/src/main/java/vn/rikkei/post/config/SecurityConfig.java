@@ -74,6 +74,8 @@ public class SecurityConfig {
                                 "/api/v1/ai/predict-eta",
                                 "/api/v1/shipper/payos-webhook",
                                 "/api/v1/shipper/payment/callback/**",
+                                "/api/v1/ecommerce/open/**",
+                                "/api/v1/ecommerce/webhook/**",
                                 "/ws-logistics/**",
                                 "/actuator/**",
                                 "/error"

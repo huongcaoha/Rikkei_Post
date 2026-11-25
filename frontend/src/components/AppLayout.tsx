@@ -29,6 +29,7 @@ import {
   Coins,
   CheckSquare,
   ChevronDown,
+  ShoppingBag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
@@ -115,6 +116,13 @@ export const AppLayout: React.FC = () => {
         label: 'Tạo đơn theo lô (Excel)',
       }
     );
+  }
+  if (user) {
+    omsChildren.push({
+      key: '/ecommerce/channels',
+      icon: <ShoppingBag size={16} />,
+      label: 'Kết nối Sàn TMĐT (Shopee/TikTok)',
+    });
   }
   omsChildren.push({
     key: '/track',
@@ -333,6 +341,7 @@ export const AppLayout: React.FC = () => {
     if (path.startsWith('/orders/create')) return '/orders/create';
     if (path.startsWith('/orders/batch')) return '/orders/batch';
     if (path.startsWith('/orders')) return '/orders';
+    if (path.startsWith('/ecommerce')) return '/ecommerce/channels';
     if (path.startsWith('/shipper/tasks')) return '/shipper/tasks';
     if (path.startsWith('/wms/bags')) return '/wms/bags';
     if (path.startsWith('/wms/dispatch')) return '/wms/dispatch';
@@ -358,7 +367,7 @@ export const AppLayout: React.FC = () => {
   };
 
   const getSubMenuKeyForPath = (path: string): string | null => {
-    if (path.startsWith('/orders') || path.startsWith('/track')) return 'sub-oms';
+    if (path.startsWith('/orders') || path.startsWith('/track') || path.startsWith('/ecommerce')) return 'sub-oms';
     if (path.startsWith('/shipper') || path.startsWith('/wms/bags') || path.startsWith('/wms/dispatch') || path.startsWith('/wms/sorting-scanner')) return 'sub-wms';
     if (path.startsWith('/wms/trucks') || path.startsWith('/driver') || path.startsWith('/tms')) return 'sub-tms';
     if (path.startsWith('/accountant') || path.startsWith('/vouchers') || path.startsWith('/payroll') || path.startsWith('/billing')) return 'sub-finance';
@@ -639,29 +648,35 @@ export const AppLayout: React.FC = () => {
           </div>
         </div>
 
-        {/* Desktop Header (>= md): Chỉ để lại phần Xin chào + Tên người dùng (xổ xuống 3 lựa chọn) và Hình cái chuông thông báo */}
+        {/* Desktop Header (>= md): Phần Xin chào + Tên người dùng di chuyển về phía bên phải sát với hình cái chuông thông báo */}
         <Header className="bg-white px-6 hidden md:flex items-center justify-between border-b border-gray-200 h-16 shadow-xs">
           {user ? (
             <>
-              {/* Bên trái: Xin chào + Tên người dùng có Dropdown 3 lựa chọn (Chấm công, Hồ sơ cá nhân, Đăng xuất) */}
-              <Dropdown menu={{ items: userMenuItems }} trigger={['click']} placement="bottomLeft">
-                <div className="flex items-center space-x-2.5 cursor-pointer select-none py-1.5 px-3 rounded-xl hover:bg-gray-100 border border-transparent hover:border-gray-200 transition-all group">
-                  <div className="w-8 h-8 rounded-full bg-red-600 text-white font-bold flex items-center justify-center text-sm shadow-xs group-hover:scale-105 transition-transform">
-                    {(user.fullName || user.username).charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex items-center space-x-1.5">
-                    <span className="text-sm text-gray-500">Xin chào,</span>
-                    <span className="font-bold text-gray-800 text-sm group-hover:text-red-600 transition-colors flex items-center gap-1">
-                      {user.fullName || user.username}
-                      <ChevronDown size={14} className="text-gray-400 group-hover:text-red-500 transition-colors" />
-                    </span>
-                  </div>
-                </div>
-              </Dropdown>
+              {/* Bên trái: Giữ khoảng trống hoặc nhãn hệ thống nhẹ */}
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Hệ thống Quản lý Bưu chính & Chuyển phát Thông minh
+                </span>
+              </div>
 
-              {/* Bên phải: Chỉ để lại hình cái chuông thông báo */}
-              <div className="flex items-center space-x-3">
+              {/* Bên phải: Chuông thông báo sát với phần Xin chào, Tên người dùng */}
+              <div className="flex items-center space-x-4">
                 <NotificationBell />
+                <div className="h-6 w-[1px] bg-gray-200" />
+                <Dropdown menu={{ items: userMenuItems }} trigger={['click']} placement="bottomRight">
+                  <div className="flex items-center space-x-2.5 cursor-pointer select-none py-1.5 px-3 rounded-xl hover:bg-gray-100 border border-transparent hover:border-gray-200 transition-all group">
+                    <div className="w-8 h-8 rounded-full bg-red-600 text-white font-bold flex items-center justify-center text-sm shadow-xs group-hover:scale-105 transition-transform">
+                      {(user.fullName || user.username).charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-sm text-gray-500">Xin chào,</span>
+                      <span className="font-bold text-gray-800 text-sm group-hover:text-red-600 transition-colors flex items-center gap-1">
+                        {user.fullName || user.username}
+                        <ChevronDown size={14} className="text-gray-400 group-hover:text-red-500 transition-colors" />
+                      </span>
+                    </div>
+                  </div>
+                </Dropdown>
               </div>
             </>
           ) : (
