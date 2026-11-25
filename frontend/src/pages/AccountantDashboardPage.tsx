@@ -81,8 +81,9 @@ export const AccountantDashboardPage: React.FC = () => {
     setVoucherLoading(true);
     try {
       const data = await paymentVoucherApi.getAllVouchers();
-      setVouchers(data);
+      setVouchers(Array.isArray(data) ? data : []);
     } catch (err: any) {
+      setVouchers([]);
       message.error(err.response?.data?.message || 'Lỗi khi tải danh sách phiếu thu chi!');
     } finally {
       setVoucherLoading(false);
@@ -94,8 +95,9 @@ export const AccountantDashboardPage: React.FC = () => {
     setPayrollLoading(true);
     try {
       const data = await payrollApi.getHubPayrolls(undefined, payrollMonth, payrollYear);
-      setPayrolls(data);
+      setPayrolls(Array.isArray(data) ? data : []);
     } catch (err: any) {
+      setPayrolls([]);
       message.error(err.response?.data?.message || 'Lỗi khi tải danh sách bảng kê lương!');
     } finally {
       setPayrollLoading(false);
@@ -355,7 +357,7 @@ export const AccountantDashboardPage: React.FC = () => {
                   </div>
 
                   <Table
-                    dataSource={filteredVouchers}
+                    dataSource={Array.isArray(filteredVouchers) ? filteredVouchers : []}
                     rowKey="id"
                     loading={voucherLoading}
                     pagination={{ pageSize: 8 }}
@@ -513,7 +515,7 @@ export const AccountantDashboardPage: React.FC = () => {
                   </div>
 
                   <Table
-                    dataSource={payrolls}
+                    dataSource={Array.isArray(payrolls) ? payrolls : []}
                     rowKey="id"
                     loading={payrollLoading}
                     pagination={{ pageSize: 8 }}

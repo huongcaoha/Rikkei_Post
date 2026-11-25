@@ -59,10 +59,9 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
   const loadTodayAttendance = async () => {
     try {
-      const res = await attendanceApi.getTodayAttendance();
-      if (res.success) {
-        setTodayRecord(res.data);
-      }
+      const res: any = await attendanceApi.getTodayAttendance();
+      const rec = res?.data !== undefined ? res.data : res;
+      setTodayRecord(rec || null);
     } catch (e) {
       console.error(e);
     }
@@ -70,10 +69,9 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
   const loadFaceProfile = async () => {
     try {
-      const res = await attendanceApi.getFaceProfile();
-      if (res.success) {
-        setFaceProfile(res.data);
-      }
+      const res: any = await attendanceApi.getFaceProfile();
+      const prof = res?.data !== undefined ? res.data : res;
+      setFaceProfile(prof || null);
     } catch (e) {
       console.error(e);
     }
@@ -82,12 +80,11 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   const loadHistory = async () => {
     setLoading(true);
     try {
-      const res = await attendanceApi.getMyAttendanceHistory();
-      if (res.success) {
-        setHistory(res.data || []);
-      }
+      const res: any = await attendanceApi.getMyAttendanceHistory();
+      const list = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+      setHistory(list);
     } catch (e: any) {
-      message.error('Không thể tải lịch sử chấm công: ' + e.message);
+      message.error('Không thể tải lịch sử chấm công: ' + (e.message || ''));
     } finally {
       setLoading(false);
     }
@@ -180,14 +177,15 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
     setLoading(true);
     try {
-      const res = await attendanceApi.checkIn({
+      const res: any = await attendanceApi.checkIn({
         lat: currentGps.lat,
         lng: currentGps.lng,
         photoBase64: photo,
       });
-      if (res.success) {
-        message.success('🎉 Check-in thành công! ' + (res.data.isLocationValid ? 'Vị trí hợp lệ.' : 'Cảnh báo khoảng cách kho.'));
-        setTodayRecord(res.data);
+      const record = res?.data || res;
+      if (record && (record.id || res.success)) {
+        message.success('🎉 Check-in thành công! ' + (record.isLocationValid ? 'Vị trí hợp lệ.' : 'Cảnh báo khoảng cách kho.'));
+        setTodayRecord(record);
         loadFaceProfile();
       }
     } catch (e: any) {
@@ -217,14 +215,15 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
     setLoading(true);
     try {
-      const res = await attendanceApi.checkOut({
+      const res: any = await attendanceApi.checkOut({
         lat: currentGps.lat,
         lng: currentGps.lng,
         photoBase64: photo,
       });
-      if (res.success) {
-        message.success('🎉 Check-out hoàn tất! Tổng giờ làm hôm nay: ' + res.data.workHours + ' giờ.');
-        setTodayRecord(res.data);
+      const record = res?.data || res;
+      if (record && (record.id || res.success)) {
+        message.success('🎉 Check-out hoàn tất! Tổng giờ làm hôm nay: ' + (record.workHours ?? '') + ' giờ.');
+        setTodayRecord(record);
       }
     } catch (e: any) {
       message.error(e.response?.data?.message || e.message || 'Check-out thất bại!');
@@ -240,12 +239,13 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     }
     setLoading(true);
     try {
-      const res = await attendanceApi.registerFace({
+      const res: any = await attendanceApi.registerFace({
         facePhotoBase64: capturedPhoto,
       });
-      if (res.success) {
+      const profile = res?.data || res;
+      if (profile && (profile.userId || res.success)) {
         message.success('Đã cập nhật hồ sơ khuôn mặt FaceID thành công!');
-        setFaceProfile(res.data);
+        setFaceProfile(profile);
       }
     } catch (e: any) {
       message.error(e.response?.data?.message || e.message);

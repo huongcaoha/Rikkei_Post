@@ -55,38 +55,40 @@ export interface FaceProfileDTO {
 }
 
 export const attendanceApi = {
-  checkIn: async (data: CheckInRequest) => {
+  checkIn: async (data: CheckInRequest): Promise<AttendanceRecordDTO> => {
     const res = await apiClient.post('/attendance/check-in', data);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  checkOut: async (data: CheckOutRequest) => {
+  checkOut: async (data: CheckOutRequest): Promise<AttendanceRecordDTO> => {
     const res = await apiClient.post('/attendance/check-out', data);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  getTodayAttendance: async () => {
+  getTodayAttendance: async (): Promise<AttendanceRecordDTO | null> => {
     const res = await apiClient.get('/attendance/today');
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  getMyAttendanceHistory: async (month?: number, year?: number) => {
+  getMyAttendanceHistory: async (month?: number, year?: number): Promise<AttendanceRecordDTO[]> => {
     const res = await apiClient.get('/attendance/my-history', { params: { month, year } });
-    return res.data;
+    const d = res.data?.data !== undefined ? res.data.data : res.data;
+    return Array.isArray(d) ? d : [];
   },
 
-  getWarehouseAttendance: async (warehouseId: number, date?: string) => {
+  getWarehouseAttendance: async (warehouseId: number, date?: string): Promise<AttendanceRecordDTO[]> => {
     const res = await apiClient.get(`/attendance/warehouse/${warehouseId}`, { params: { date } });
-    return res.data;
+    const d = res.data?.data !== undefined ? res.data.data : res.data;
+    return Array.isArray(d) ? d : [];
   },
 
-  registerFace: async (data: RegisterFaceRequest) => {
+  registerFace: async (data: RegisterFaceRequest): Promise<FaceProfileDTO> => {
     const res = await apiClient.post('/attendance/face-profile', data);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  getFaceProfile: async () => {
+  getFaceProfile: async (): Promise<FaceProfileDTO> => {
     const res = await apiClient.get('/attendance/face-profile');
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 };

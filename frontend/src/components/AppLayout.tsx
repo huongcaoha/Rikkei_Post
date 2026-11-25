@@ -67,10 +67,11 @@ export const AppLayout: React.FC = () => {
   const canPickup = isShipper || isAdmin;
   const showQuickScan = canInbound || canPickup;
 
+  // Xây dựng danh sách menu gom nhóm Dropdown / SubMenu chuẩn logistics
   const menuItems: any[] = [];
 
-  // Tổng quan Dashboard
-  if (!isShipper) {
+  // 1. Tổng quan Dashboard (Mục đơn ở đầu)
+  if (!isShipper && user) {
     menuItems.push({
       key: '/dashboard',
       icon: <LayoutDashboard size={18} />,
@@ -84,220 +85,238 @@ export const AppLayout: React.FC = () => {
     });
   }
 
-  // Cổng tác nghiệp Shipper & Quét mã kho
-  if (isShipper || isAdmin || isWarehouseStaff || isPostOfficeManager) {
+  // 2. Nhóm Quản Lý Đơn Hàng (OMS)
+  const omsChildren: any[] = [];
+  if (user) {
+    omsChildren.push({
+      key: '/orders',
+      icon: <Package size={16} />,
+      label: isShipper
+        ? 'Đơn hàng của tôi'
+        : isBranchManager
+        ? 'Đơn hàng Chi nhánh'
+        : isPostOfficeManager
+        ? 'Đơn hàng Bưu cục'
+        : 'Quản lý đơn hàng',
+    });
+  }
+  if (canCreateOrder) {
+    omsChildren.push(
+      {
+        key: '/orders/create',
+        icon: <PlusCircle size={16} />,
+        label: 'Tạo đơn hàng mới',
+      },
+      {
+        key: '/orders/batch',
+        icon: <FileSpreadsheet size={16} />,
+        label: 'Tạo đơn theo lô (Excel)',
+      }
+    );
+  }
+  omsChildren.push({
+    key: '/track',
+    icon: <Search size={16} />,
+    label: 'Tra cứu hành trình',
+  });
+
+  if (!user) {
     menuItems.push({
+      key: '/track',
+      icon: <Search size={18} />,
+      label: 'Tra cứu hành trình',
+    });
+  } else if (omsChildren.length > 0) {
+    menuItems.push({
+      key: 'sub-oms',
+      icon: <Package size={18} />,
+      label: 'Quản lý Đơn hàng (OMS)',
+      children: omsChildren,
+    });
+  }
+
+  // 3. Nhóm Khai Thác Kho & Chia Chọn (WMS)
+  const wmsChildren: any[] = [];
+  if (isShipper || isAdmin || isWarehouseStaff || isPostOfficeManager) {
+    wmsChildren.push({
       key: '/shipper/tasks',
-      icon: <Truck size={18} />,
+      icon: <Scan size={16} />,
       label: isWarehouseStaff || isPostOfficeManager
         ? 'Tác nghiệp Quét mã & Kho'
         : 'Nhiệm vụ Bưu tá & Quét mã',
     });
   }
-
-  // Quản lý đơn hàng
-  menuItems.push({
-    key: '/orders',
-    icon: <Package size={18} />,
-    label: isShipper
-      ? 'Đơn hàng của tôi'
-      : isBranchManager
-      ? 'Đơn hàng Chi nhánh'
-      : isPostOfficeManager
-      ? 'Đơn hàng Bưu cục'
-      : 'Quản lý đơn hàng',
-  });
-
-  // Chỉ Shop (ROLE_MERCHANT) hoặc Khách hàng thông thường mới có quyền tạo đơn hàng (quản trị/quản lý/nhân viên không tạo đơn)
-  if (canCreateOrder) {
-    menuItems.push(
-      {
-        key: '/orders/create',
-        icon: <PlusCircle size={18} />,
-        label: 'Tạo đơn hàng mới',
-      },
-      {
-        key: '/orders/batch',
-        icon: <FileSpreadsheet size={18} />,
-        label: 'Tạo đơn theo lô (Excel)',
-      }
-    );
+  if (canInbound) {
+    wmsChildren.push({
+      key: '/wms/sorting-scanner',
+      icon: <Scan size={16} />,
+      label: 'Quét phân loại khu vực (Map)',
+    });
+  }
+  if (canManageBags) {
+    wmsChildren.push({
+      key: '/wms/bags',
+      icon: <Layers size={16} />,
+      label: 'Đóng bao tải & Kẹp chì (WMS)',
+    });
+  }
+  if (canManageBags || isTruckDriver) {
+    wmsChildren.push({
+      key: '/wms/dispatch',
+      icon: <Navigation size={16} />,
+      label: 'Điều vận xe gom bao hàng (TMS/Hub)',
+    });
+  }
+  if (wmsChildren.length > 0) {
+    menuItems.push({
+      key: 'sub-wms',
+      icon: <Layers size={18} />,
+      label: 'Khai Thác Kho & Chia Chọn (WMS)',
+      children: wmsChildren,
+    });
   }
 
-  // Quản lý nhân viên phân cấp
+  // 4. Nhóm Vận Tải & Đội Xe (TMS / Fleet)
+  const tmsChildren: any[] = [];
   if (isAdmin || isBranchManager || isPostOfficeManager) {
+    tmsChildren.push({
+      key: '/wms/trucks',
+      icon: <Truck size={16} />,
+      label: 'Quản lý Đội xe tải (Fleet)',
+    });
+  }
+  if (isTruckDriver || isAdmin) {
+    tmsChildren.push({
+      key: '/driver/portal',
+      icon: <Truck size={16} />,
+      label: 'Cổng tác nghiệp Tài xế xe tải',
+    });
+  }
+  if (canInbound) {
+    tmsChildren.push({
+      key: '/tms/manifests',
+      icon: <ScrollText size={16} />,
+      label: 'Bảng kê xuất xe tải (TMS)',
+    });
+  }
+  if (canInbound || isAdmin || isBranchManager) {
+    tmsChildren.push({
+      key: '/tms/carriers',
+      icon: <Building2 size={16} />,
+      label: 'Đối tác Vận tải 3PL & SLA',
+    });
+  }
+  if (isAdmin || isBranchManager || isPostOfficeManager || isShipper) {
+    tmsChildren.push({
+      key: '/tms/route-optimizer',
+      icon: <Navigation size={16} />,
+      label: 'Tối ưu Tuyến đường (VRP AI)',
+    });
+  }
+  if (tmsChildren.length > 0) {
     menuItems.push({
+      key: 'sub-tms',
+      icon: <Truck size={18} />,
+      label: 'Vận Tải & Đội Xe (TMS / Fleet)',
+      children: tmsChildren,
+    });
+  }
+
+  // 5. Nhóm Tài Chính & Tiền Lương (Finance & Payroll)
+  const financeChildren: any[] = [];
+  if (isAdmin || isAccountant) {
+    financeChildren.push({
+      key: '/accountant/dashboard',
+      icon: <DollarSign size={16} />,
+      label: 'Bảng Điều Khiển Kế Toán',
+    });
+  }
+  if (isAdmin || isBranchManager || isPostOfficeManager || isAccountant) {
+    financeChildren.push({
+      key: '/vouchers/management',
+      icon: <Receipt size={16} />,
+      label: 'Quản lý Phiếu Thu - Chi',
+    });
+  }
+  if (isAdmin || isBranchManager || isPostOfficeManager) {
+    financeChildren.push({
+      key: '/payroll/hub-approval',
+      icon: <Coins size={16} />,
+      label: 'Bảng kê Lương 3P & Duyệt (Hub)',
+    });
+  }
+  if (user && isStaffOrAdmin) {
+    financeChildren.push({
+      key: '/payroll/my',
+      icon: <Coins size={16} />,
+      label: 'Phiếu lương của tôi (3P)',
+    });
+  }
+  if (user) {
+    financeChildren.push({
+      key: '/billing/reconciliation',
+      icon: <Wallet size={16} />,
+      label: 'Đối soát COD & Ví Shop',
+    });
+  }
+  if (financeChildren.length > 0) {
+    menuItems.push({
+      key: 'sub-finance',
+      icon: <DollarSign size={18} />,
+      label: 'Tài Chính & Bảng Lương',
+      children: financeChildren,
+    });
+  }
+
+  // 6. Nhóm Mạng Lưới & Quản Trị (Admin & Network)
+  const adminChildren: any[] = [];
+  if (isAdmin || isBranchManager || isPostOfficeManager) {
+    adminChildren.push({
       key: '/admin/staff',
-      icon: <Users size={18} />,
+      icon: <Users size={16} />,
       label: isAdmin
         ? 'Quản lý nhân sự toàn quốc'
         : isBranchManager
         ? 'Quản lý nhân sự Chi nhánh'
         : 'Quản lý nhân sự Bưu cục',
     });
-  }
-
-  // Quản lý tuyến đường và phân chia Shipper
-  if (isAdmin || isBranchManager || isPostOfficeManager) {
-    menuItems.push({
+    adminChildren.push({
       key: '/admin/routes',
-      icon: <RouteIcon size={18} />,
+      icon: <RouteIcon size={16} />,
       label: isPostOfficeManager ? 'Phân tuyến bưu tá bưu cục' : 'Quản lý tuyến đường & Bưu tá',
     });
   }
-
-  // Quản lý kho bưu cục (Admin & Branch Manager)
   if (isAdmin || isBranchManager) {
-    menuItems.push({
+    adminChildren.push({
       key: '/admin/warehouses',
-      icon: <Building2 size={18} />,
+      icon: <Building2 size={16} />,
       label: isAdmin ? 'Quản lý kho & Bưu cục' : 'Quản lý bưu cục Chi nhánh',
     });
   }
-
-  // Bản đồ phân bổ vị trí mạng lưới kho vận (Topology Map dành cho cấp Quản lý bưu cục trở lên)
   if (isAdmin || isBranchManager || isPostOfficeManager) {
-    menuItems.push({
+    adminChildren.push({
       key: '/admin/network-map',
-      icon: <Network size={18} />,
+      icon: <Network size={16} />,
       label: 'Bản đồ mạng lưới kho vận (Topology)',
     });
   }
-
-  // Quy trình Đóng bao tải Master Bag & Kẹp chì Seal (Chỉ Quản lý bưu cục / Nhân viên kho / Admin)
-  if (canManageBags) {
-    menuItems.push({
-      key: '/wms/bags',
-      icon: <Layers size={18} />,
-      label: 'Đóng bao tải & Kẹp chì (WMS)',
-    });
-  }
-
-  // Điều vận xe gom bao hàng (Dispatch Order / Logistics Transport Dispatch Management)
-  if (canManageBags || isTruckDriver) {
-    menuItems.push({
-      key: '/wms/dispatch',
-      icon: <Navigation size={18} />,
-      label: 'Điều vận xe gom bao hàng (TMS/Hub)',
-    });
-  }
-
-  // Quản lý Đội xe tải (Fleet Management)
-  if (isAdmin || isBranchManager || isPostOfficeManager) {
-    menuItems.push({
-      key: '/wms/trucks',
-      icon: <Truck size={18} />,
-      label: 'Quản lý Đội xe tải (Fleet)',
-    });
-  }
-
-  // Quét mã phân loại đơn khu vực (Smart Sorting by Map)
-  if (canInbound) {
-    menuItems.push({
-      key: '/wms/sorting-scanner',
-      icon: <Scan size={18} />,
-      label: 'Quét phân loại đơn khu vực (Map)',
-    });
-  }
-
-  // Cổng tác nghiệp dành cho Tài xế xe tải
-  if (isTruckDriver || isAdmin) {
-    menuItems.push({
-      key: '/driver/portal',
-      icon: <Truck size={18} />,
-      label: 'Cổng tác nghiệp Tài xế xe tải',
-    });
-  }
-
-  // Quản lý Xuất kho & Bảng kê chuyến xe tải (TMS Linehaul)
-  if (canInbound) {
-    menuItems.push({
-      key: '/tms/manifests',
-      icon: <ScrollText size={18} />,
-      label: 'Bảng kê xuất xe tải (TMS)',
-    });
-  }
-
-  // Quản lý Đối tác Vận tải 3PL & Chuyến xe
-  if (canInbound || isAdmin || isBranchManager) {
-    menuItems.push({
-      key: '/tms/carriers',
-      icon: <Truck size={18} />,
-      label: 'Đối tác Vận tải 3PL & SLA',
-    });
-  }
-
-  // Tối ưu Tuyến đường giao hàng VRP (AI)
-  if (isAdmin || isBranchManager || isPostOfficeManager || isShipper) {
-    menuItems.push({
-      key: '/tms/route-optimizer',
-      icon: <Navigation size={18} />,
-      label: 'Tối ưu Tuyến đường (VRP AI)',
-    });
-  }
-
-  // Bảng Điều Khiển Kế Toán & Quản Trị Tài Chính
-  if (isAdmin || isAccountant) {
-    menuItems.push({
-      key: '/accountant/dashboard',
-      icon: <DollarSign size={18} />,
-      label: 'Bảng Điều Khiển Kế Toán (Finance)',
-    });
-  }
-
-  // Quản lý đề xuất Phiếu Thu - Chi
-  if (isAdmin || isBranchManager || isPostOfficeManager || isAccountant) {
-    menuItems.push({
-      key: '/vouchers/management',
-      icon: <Receipt size={18} />,
-      label: 'Quản lý Phiếu Thu - Chi (Voucher)',
-    });
-  }
-
-  // Bảng kê Lương 3P & Quản lý duyệt Hub
-  if (isAdmin || isBranchManager || isPostOfficeManager) {
-    menuItems.push({
-      key: '/payroll/hub-approval',
-      icon: <Coins size={18} />,
-      label: 'Bảng kê Lương 3P & Duyệt (Hub)',
-    });
-  }
-
-  // Phiếu lương cá nhân (Dành cho mọi nhân sự hệ thống)
-  if (user && isStaffOrAdmin) {
-    menuItems.push({
-      key: '/payroll/my',
-      icon: <Coins size={18} />,
-      label: 'Phiếu lương của tôi (3P)',
-    });
-  }
-
-  // Đối soát COD & Ví Shop (Tất cả tài khoản đăng nhập)
-  if (user) {
-    menuItems.push({
-      key: '/billing/reconciliation',
-      icon: <Wallet size={18} />,
-      label: 'Đối soát COD & Ví Shop',
-    });
-  }
-
-  // Quản lý giá cước vận chuyển (Chỉ Admin)
   if (isAdmin) {
-    menuItems.push({
+    adminChildren.push({
       key: '/admin/pricing',
-      icon: <DollarSign size={18} />,
+      icon: <DollarSign size={16} />,
       label: 'Quản lý giá cước vận chuyển',
     });
   }
+  if (adminChildren.length > 0) {
+    menuItems.push({
+      key: 'sub-admin',
+      icon: <Building2 size={18} />,
+      label: 'Mạng Lưới & Quản Trị',
+      children: adminChildren,
+    });
+  }
 
-  // Tra cứu hành trình
-  menuItems.push({
-    key: '/track',
-    icon: <Search size={18} />,
-    label: 'Tra cứu hành trình',
-  });
-
-  // Hồ sơ cá nhân & Đổi mật khẩu
+  // 7. Hồ sơ cá nhân & Đổi mật khẩu (Mục đơn ở cuối)
   if (user) {
     menuItems.push({
       key: '/profile',
@@ -306,8 +325,55 @@ export const AppLayout: React.FC = () => {
     });
   }
 
-  // Khớp menu đang chọn, đối với /track và /track/:trackingCode đều sáng menu Tra cứu hành trình
-  const activeMenuKey = location.pathname.startsWith('/track') ? '/track' : location.pathname;
+  // Xác định active key và submenu mở tự động
+  const getActiveMenuKey = (path: string): string => {
+    if (path.startsWith('/track')) return '/track';
+    if (path.startsWith('/orders/create')) return '/orders/create';
+    if (path.startsWith('/orders/batch')) return '/orders/batch';
+    if (path.startsWith('/orders')) return '/orders';
+    if (path.startsWith('/shipper/tasks')) return '/shipper/tasks';
+    if (path.startsWith('/wms/bags')) return '/wms/bags';
+    if (path.startsWith('/wms/dispatch')) return '/wms/dispatch';
+    if (path.startsWith('/wms/trucks')) return '/wms/trucks';
+    if (path.startsWith('/wms/sorting-scanner')) return '/wms/sorting-scanner';
+    if (path.startsWith('/driver/portal')) return '/driver/portal';
+    if (path.startsWith('/tms/manifests')) return '/tms/manifests';
+    if (path.startsWith('/tms/carriers')) return '/tms/carriers';
+    if (path.startsWith('/tms/route-optimizer')) return '/tms/route-optimizer';
+    if (path.startsWith('/accountant/dashboard')) return '/accountant/dashboard';
+    if (path.startsWith('/vouchers/management')) return '/vouchers/management';
+    if (path.startsWith('/payroll/hub-approval')) return '/payroll/hub-approval';
+    if (path.startsWith('/payroll/my')) return '/payroll/my';
+    if (path.startsWith('/billing/reconciliation')) return '/billing/reconciliation';
+    if (path.startsWith('/admin/staff')) return '/admin/staff';
+    if (path.startsWith('/admin/routes')) return '/admin/routes';
+    if (path.startsWith('/admin/warehouses')) return '/admin/warehouses';
+    if (path.startsWith('/admin/network-map')) return '/admin/network-map';
+    if (path.startsWith('/admin/pricing')) return '/admin/pricing';
+    if (path.startsWith('/profile')) return '/profile';
+    if (path.startsWith('/dashboard')) return '/dashboard';
+    return path;
+  };
+
+  const getSubMenuKeyForPath = (path: string): string | null => {
+    if (path.startsWith('/orders') || path.startsWith('/track')) return 'sub-oms';
+    if (path.startsWith('/shipper') || path.startsWith('/wms/bags') || path.startsWith('/wms/dispatch') || path.startsWith('/wms/sorting-scanner')) return 'sub-wms';
+    if (path.startsWith('/wms/trucks') || path.startsWith('/driver') || path.startsWith('/tms')) return 'sub-tms';
+    if (path.startsWith('/accountant') || path.startsWith('/vouchers') || path.startsWith('/payroll') || path.startsWith('/billing')) return 'sub-finance';
+    if (path.startsWith('/admin')) return 'sub-admin';
+    return null;
+  };
+
+  const activeMenuKey = getActiveMenuKey(location.pathname);
+  const currentSubKey = getSubMenuKeyForPath(location.pathname);
+  const [openKeys, setOpenKeys] = useState<string[]>(currentSubKey ? [currentSubKey] : []);
+
+  React.useEffect(() => {
+    const parentKey = getSubMenuKeyForPath(location.pathname);
+    if (parentKey) {
+      setOpenKeys((prev) => (prev.includes(parentKey) ? prev : [...prev, parentKey]));
+    }
+  }, [location.pathname]);
 
   return (
     <Layout className="min-h-screen">
@@ -327,21 +393,25 @@ export const AppLayout: React.FC = () => {
         placement="left"
         onClose={() => setMobileDrawerOpen(false)}
         open={mobileDrawerOpen}
-        bodyStyle={{ padding: 0 }}
-        width={280}
+        bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}
+        width={290}
       >
-        <Menu
-          mode="inline"
-          selectedKeys={[activeMenuKey]}
-          items={menuItems}
-          onClick={({ key }) => {
-            navigate(key);
-            setMobileDrawerOpen(false);
-          }}
-          className="border-none font-medium mt-2"
-        />
+        <div className="flex-1 overflow-y-auto py-2">
+          <Menu
+            mode="inline"
+            selectedKeys={[activeMenuKey]}
+            openKeys={openKeys}
+            onOpenChange={(keys) => setOpenKeys(keys)}
+            items={menuItems}
+            onClick={({ key }) => {
+              navigate(key);
+              setMobileDrawerOpen(false);
+            }}
+            className="border-none font-medium mt-1"
+          />
+        </div>
         {user ? (
-          <div className="p-4 border-t mt-4 space-y-3">
+          <div className="p-4 border-t space-y-3 flex-shrink-0 bg-white">
             <div 
               className="bg-gray-50 p-3 rounded-xl border border-gray-200 text-xs cursor-pointer hover:bg-red-50/50 transition-colors"
               onClick={() => {
@@ -393,7 +463,7 @@ export const AppLayout: React.FC = () => {
             </Button>
           </div>
         ) : (
-          <div className="p-4 border-t mt-4 space-y-2">
+          <div className="p-4 border-t space-y-2 flex-shrink-0 bg-white">
             <Button
               icon={<LogIn size={15} />}
               onClick={() => {
@@ -424,11 +494,11 @@ export const AppLayout: React.FC = () => {
       {/* Sider cố định cho màn hình Desktop (>= md) */}
       <Sider
         theme="light"
-        width={250}
-        className="hidden md:block border-r border-gray-200 shadow-sm"
+        width={260}
+        className="hidden md:flex flex-col h-screen sticky top-0 border-r border-gray-200 shadow-sm z-30"
       >
         <div 
-          className="p-4 flex items-center space-x-3 border-b border-gray-100 cursor-pointer"
+          className="p-4 flex items-center space-x-3 border-b border-gray-100 cursor-pointer flex-shrink-0"
           onClick={() => navigate(user ? '/dashboard' : '/track')}
         >
           <div className="w-10 h-10 rounded-lg bg-red-600 flex items-center justify-center text-white shadow-md">
@@ -440,15 +510,19 @@ export const AppLayout: React.FC = () => {
           </div>
         </div>
 
-        <Menu
-          mode="inline"
-          selectedKeys={[activeMenuKey]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          className="mt-3 border-none font-medium"
-        />
+        <div className="flex-1 overflow-y-auto py-2">
+          <Menu
+            mode="inline"
+            selectedKeys={[activeMenuKey]}
+            openKeys={openKeys}
+            onOpenChange={(keys) => setOpenKeys(keys)}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+            className="border-none font-medium text-sm"
+          />
+        </div>
 
-        <div className="absolute bottom-4 left-0 right-0 px-4">
+        <div className="p-3 border-t border-gray-100 flex-shrink-0 bg-white">
           <div className="bg-red-50 rounded-xl p-3 border border-red-100">
             <div className="text-xs font-semibold text-red-800">Hotline hỗ trợ 24/7</div>
             <div className="text-sm font-bold text-red-600 mt-0.5">1900 6868</div>

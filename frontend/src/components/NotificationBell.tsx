@@ -21,9 +21,15 @@ export const NotificationBell: React.FC = () => {
 
   const loadUnreadCount = async () => {
     try {
-      const res = await notificationApi.getUnreadCount();
-      if (res.success) {
-        setUnreadCount(res.data.unreadCount || 0);
+      const res: any = await notificationApi.getUnreadCount();
+      if (typeof res === 'number') {
+        setUnreadCount(res);
+      } else if (res && typeof res.unreadCount === 'number') {
+        setUnreadCount(res.unreadCount);
+      } else if (res && typeof res.count === 'number') {
+        setUnreadCount(res.count);
+      } else if (res?.data && typeof res.data.unreadCount === 'number') {
+        setUnreadCount(res.data.unreadCount);
       }
     } catch (e) {
       // silent
@@ -33,12 +39,17 @@ export const NotificationBell: React.FC = () => {
   const loadNotifications = async () => {
     setLoading(true);
     try {
-      const res = await notificationApi.getMyNotifications();
-      if (res.success) {
-        setNotifications(res.data || []);
+      const res: any = await notificationApi.getMyNotifications();
+      if (Array.isArray(res)) {
+        setNotifications(res);
+      } else if (Array.isArray(res?.data)) {
+        setNotifications(res.data);
+      } else {
+        setNotifications([]);
       }
     } catch (e) {
       console.error(e);
+      setNotifications([]);
     } finally {
       setLoading(false);
     }

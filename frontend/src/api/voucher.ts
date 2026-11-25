@@ -45,37 +45,38 @@ export interface PaymentVoucherDTO {
 }
 
 export const voucherApi = {
-  createVoucher: async (data: CreateVoucherRequest) => {
+  createVoucher: async (data: CreateVoucherRequest): Promise<PaymentVoucherDTO> => {
     const res = await apiClient.post('/vouchers', data);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  getMyVouchers: async (params?: { voucherType?: string; status?: string; startDate?: string; endDate?: string }) => {
+  getMyVouchers: async (params?: { voucherType?: string; status?: string; startDate?: string; endDate?: string }): Promise<PaymentVoucherDTO[]> => {
     const res = await apiClient.get('/vouchers/my', { params });
-    return res.data;
+    const d = res.data?.data !== undefined ? res.data.data : res.data;
+    return Array.isArray(d) ? d : [];
   },
 
-  getAllVouchers: async (params?: { voucherType?: string; status?: string; warehouseId?: number; startDate?: string; endDate?: string }) => {
+  getAllVouchers: async (params?: { voucherType?: string; status?: string; warehouseId?: number; startDate?: string; endDate?: string }): Promise<PaymentVoucherDTO[]> => {
     const res = await apiClient.get('/vouchers/all', { params });
-    return res.data;
+    const d = res.data?.data !== undefined ? res.data.data : res.data;
+    return Array.isArray(d) ? d : [];
   },
 
-  getVoucherById: async (id: number) => {
+  getVoucherById: async (id: number): Promise<PaymentVoucherDTO> => {
     const res = await apiClient.get(`/vouchers/${id}`);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  approveVoucher: async (id: number, data?: ApproveVoucherRequest) => {
+  approveVoucher: async (id: number, data?: ApproveVoucherRequest): Promise<PaymentVoucherDTO> => {
     const res = await apiClient.put(`/vouchers/${id}/approve`, data);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
-  rejectVoucher: async (id: number, data: RejectVoucherRequest) => {
+  rejectVoucher: async (id: number, data: RejectVoucherRequest): Promise<PaymentVoucherDTO> => {
     const res = await apiClient.put(`/vouchers/${id}/reject`, data);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 };
 
 export type PaymentVoucher = PaymentVoucherDTO;
 export const paymentVoucherApi = voucherApi;
-

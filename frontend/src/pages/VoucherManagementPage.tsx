@@ -41,8 +41,9 @@ export const VoucherManagementPage: React.FC = () => {
     setLoading(true);
     try {
       const data = await paymentVoucherApi.getMyVouchers();
-      setVouchers(data);
+      setVouchers(Array.isArray(data) ? data : []);
     } catch (err: any) {
+      setVouchers([]);
       message.error(err.response?.data?.message || 'Lỗi khi tải danh sách phiếu thu chi!');
     } finally {
       setLoading(false);
@@ -254,7 +255,7 @@ export const VoucherManagementPage: React.FC = () => {
         </div>
 
         <Table
-          dataSource={filteredVouchers}
+          dataSource={Array.isArray(filteredVouchers) ? filteredVouchers : []}
           columns={columns}
           rowKey="id"
           loading={loading}

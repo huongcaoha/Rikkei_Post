@@ -41,8 +41,9 @@ export const HubPayrollApprovalPage: React.FC = () => {
     setLoading(true);
     try {
       const data = await payrollApi.getHubPayrolls(warehouseId, selectedMonth, selectedYear);
-      setPayrolls(data);
+      setPayrolls(Array.isArray(data) ? data : []);
     } catch (err: any) {
+      setPayrolls([]);
       message.error(err.response?.data?.message || 'Lỗi khi tải bảng kê lương!');
     } finally {
       setLoading(false);
@@ -58,10 +59,11 @@ export const HubPayrollApprovalPage: React.FC = () => {
     setGenerating(true);
     try {
       const res = await payrollApi.generatePayroll(warehouseId, selectedMonth, selectedYear);
+      const list = Array.isArray(res) ? res : [];
       message.success(
-        `AI đã tổng hợp dữ liệu chấm công FaceID & sản lượng 3P thành công cho ${res.length} nhân viên!`
+        `AI đã tổng hợp dữ liệu chấm công FaceID & sản lượng 3P thành công cho ${list.length} nhân viên!`
       );
-      setPayrolls(res);
+      setPayrolls(list);
     } catch (err: any) {
       message.error(err.response?.data?.message || 'Tính lương tự động thất bại!');
     } finally {
@@ -254,7 +256,7 @@ export const HubPayrollApprovalPage: React.FC = () => {
         </div>
 
         <Table
-          dataSource={payrolls}
+          dataSource={Array.isArray(payrolls) ? payrolls : []}
           columns={columns}
           rowKey="id"
           loading={loading || generating}

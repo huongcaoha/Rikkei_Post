@@ -12,23 +12,25 @@ export interface NotificationDTO {
 }
 
 export const notificationApi = {
-  getMyNotifications: async () => {
+  getMyNotifications: async (): Promise<NotificationDTO[]> => {
     const res = await apiClient.get('/notifications');
-    return res.data;
+    const d = res.data?.data !== undefined ? res.data.data : res.data;
+    return Array.isArray(d) ? d : [];
   },
 
-  getUnreadCount: async () => {
+  getUnreadCount: async (): Promise<number> => {
     const res = await apiClient.get('/notifications/unread-count');
-    return res.data;
+    const d = res.data?.data !== undefined ? res.data.data : res.data;
+    return typeof d === 'number' ? d : (d?.count || 0);
   },
 
   markAsRead: async (id: number) => {
     const res = await apiClient.put(`/notifications/${id}/read`);
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
   markAllAsRead: async () => {
     const res = await apiClient.put('/notifications/read-all');
-    return res.data;
+    return res.data?.data !== undefined ? res.data.data : res.data;
   },
 };

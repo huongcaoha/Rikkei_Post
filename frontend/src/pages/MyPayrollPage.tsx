@@ -19,8 +19,9 @@ export const MyPayrollPage: React.FC = () => {
     setLoading(true);
     try {
       const data = await payrollApi.getMyPayrolls();
-      setPayrolls(data);
+      setPayrolls(Array.isArray(data) ? data : []);
     } catch (err: any) {
+      setPayrolls([]);
       message.error(err.response?.data?.message || 'Lỗi khi tải thông tin phiếu lương!');
     } finally {
       setLoading(false);
@@ -197,7 +198,7 @@ export const MyPayrollPage: React.FC = () => {
       {/* Lịch sử phiếu lương */}
       <Card title="Lịch Sử Bảng Kê Lương Hàng Tháng" className="shadow-xs border-gray-200">
         <Table
-          dataSource={payrolls}
+          dataSource={Array.isArray(payrolls) ? payrolls : []}
           columns={columns}
           rowKey="id"
           loading={loading}
