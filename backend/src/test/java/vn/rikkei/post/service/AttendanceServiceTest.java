@@ -119,6 +119,33 @@ class AttendanceServiceTest {
         });
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("Bạn chưa đăng ký khuôn mặt mẫu FaceID"));
+        assertTrue(ex.getReason().contains("chưa được Quản lý bưu cục hoặc Admin đăng ký khuôn mặt"));
+    }
+
+    @Test
+    @DisplayName("Shipper không có quyền tự đăng ký hoặc thay đổi ảnh FaceID (403 Forbidden)")
+    void testRegisterFace_ShipperForbidden() {
+        User userEntity = User.builder()
+                .id(10L)
+                .username("shipper1")
+                .fullName("Nguyễn Văn Shipper")
+                .password("pass")
+                .phoneNumber("0912345678")
+                .email("shipper@test.com")
+                .roles(Set.of(Role.builder().roleName("ROLE_SHIPPER").build()))
+                .build();
+
+        vn.rikkei.post.security.CustomUserDetails shipperUser = new vn.rikkei.post.security.CustomUserDetails(userEntity);
+        when(userRepository.findById(10L)).thenReturn(Optional.of(userEntity));
+
+        vn.rikkei.post.dto.attendance.RegisterFaceRequest req = new vn.rikkei.post.dto.attendance.RegisterFaceRequest();
+        req.setFacePhotoBase64("sample");
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> {
+            attendanceService.registerOrUpdateFace(req, 10L, shipperUser);
+        });
+
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("không có quyền tự đăng ký"));
     }
 }

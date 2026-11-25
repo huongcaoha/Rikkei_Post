@@ -74,8 +74,28 @@ public class AttendanceController {
             @Valid @RequestBody RegisterFaceRequest request,
             @AuthenticationPrincipal CustomUserDetails currentUser
     ) {
-        FaceProfileResponse response = attendanceService.registerOrUpdateFace(request, currentUser.getId());
+        FaceProfileResponse response = attendanceService.registerOrUpdateFace(request, currentUser.getId(), currentUser);
         return ResponseEntity.ok(ApiResponse.success(response, "Đăng ký khuôn mặt FaceID thành công!"));
+    }
+
+    @PostMapping("/face-profile/user/{targetUserId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
+    public ResponseEntity<ApiResponse<FaceProfileResponse>> registerFaceByManager(
+            @PathVariable Long targetUserId,
+            @Valid @RequestBody RegisterFaceRequest request,
+            @AuthenticationPrincipal CustomUserDetails currentUser
+    ) {
+        FaceProfileResponse response = attendanceService.registerOrUpdateFaceByManager(request, targetUserId, currentUser);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã cập nhật khuôn mặt FaceID cho nhân viên thành công!"));
+    }
+
+    @GetMapping("/face-profile/user/{targetUserId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
+    public ResponseEntity<ApiResponse<FaceProfileResponse>> getFaceProfileByManager(
+            @PathVariable Long targetUserId
+    ) {
+        FaceProfileResponse response = attendanceService.getFaceProfile(targetUserId);
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/face-profile")

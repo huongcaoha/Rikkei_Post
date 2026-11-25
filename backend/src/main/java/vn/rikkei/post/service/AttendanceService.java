@@ -12,6 +12,7 @@ public interface AttendanceService {
     AttendanceResponse getTodayAttendance(Long userId);
     List<AttendanceResponse> getMyAttendanceHistory(Long userId, Integer month, Integer year);
     List<AttendanceResponse> getWarehouseAttendance(Long warehouseId, LocalDate date, CustomUserDetails currentUser);
-    FaceProfileResponse registerOrUpdateFace(RegisterFaceRequest request, Long userId);
+    FaceProfileResponse registerOrUpdateFace(RegisterFaceRequest request, Long userId, CustomUserDetails currentUser);
+    FaceProfileResponse registerOrUpdateFaceByManager(RegisterFaceRequest request, Long targetUserId, CustomUserDetails manager);
     FaceProfileResponse getFaceProfile(Long userId);
 }

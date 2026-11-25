@@ -226,9 +226,19 @@ public class AttendanceServiceImpl implements AttendanceService {
 
     @Override
     @Transactional
-    public FaceProfileResponse registerOrUpdateFace(RegisterFaceRequest request, Long userId) {
+    public FaceProfileResponse registerOrUpdateFace(RegisterFaceRequest request, Long userId, CustomUserDetails currentUser) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin nhân viên!"));
+
+        // Shipper và nhân viên kho không được tự ý sửa ảnh FaceID của mình
+        boolean isAdmin = currentUser != null && currentUser.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_ADMIN"));
+        boolean isBranchManager = currentUser != null && currentUser.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_BRANCH_MANAGER"));
+        boolean isPostOfficeManager = currentUser != null && currentUser.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_POST_OFFICE_MANAGER"));
+
+        if (!isAdmin && !isBranchManager && !isPostOfficeManager) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Tài khoản Shipper / Nhân viên kho không có quyền tự đăng ký hoặc thay đổi ảnh FaceID! Vui lòng liên hệ Quản lý bưu cục hoặc Admin để được chụp ảnh cập nhật FaceID chính chủ.");
+        }
 
         if (request.getFacePhotoBase64() == null || request.getFacePhotoBase64().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vui lòng chụp ảnh khuôn mặt trước khi đăng ký!");
@@ -243,10 +253,70 @@ public class AttendanceServiceImpl implements AttendanceService {
                 .orElseGet(() -> EmployeeFaceProfile.builder().userId(userId).build());
 
         profile.setFacePhotoUrl(request.getFacePhotoBase64());
-        profile.setFaceFeatures("ENROLLED_DHASH_NCC");
+        profile.setFaceFeatures("ENROLLED_SELF_MANAGER_" + user.getUsername());
 
         EmployeeFaceProfile saved = faceProfileRepository.save(profile);
         log.info("Đã cập nhật hồ sơ khuôn mặt nhân viên: {} (ID: {})", user.getFullName(), userId);
+
+        return FaceProfileResponse.builder()
+                .id(saved.getId())
+                .userId(saved.getUserId())
+                .facePhotoUrl(saved.getFacePhotoUrl())
+                .isRegistered(true)
+                .createdAt(saved.getCreatedAt())
+                .updatedAt(saved.getUpdatedAt())
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public FaceProfileResponse registerOrUpdateFaceByManager(RegisterFaceRequest request, Long targetUserId, CustomUserDetails manager) {
+        User targetUser = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin nhân viên với ID: " + targetUserId));
+
+        boolean isAdmin = manager != null && manager.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_ADMIN"));
+        boolean isBranchManager = manager != null && manager.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_BRANCH_MANAGER"));
+        boolean isPostOfficeManager = manager != null && manager.getAuthorities().stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_POST_OFFICE_MANAGER"));
+
+        if (!isAdmin) {
+            User managerEntity = userRepository.findById(manager.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản quản lý!"));
+
+            if (isPostOfficeManager) {
+                if (managerEntity.getAssignedPostOfficeId() == null ||
+                        !managerEntity.getAssignedPostOfficeId().equals(targetUser.getAssignedPostOfficeId())) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                            "Bạn chỉ có quyền cập nhật FaceID cho nhân viên thuộc bưu cục do bạn quản lý!");
+                }
+            } else if (isBranchManager) {
+                if (managerEntity.getManagedProvinceId() == null ||
+                        !managerEntity.getManagedProvinceId().equals(targetUser.getManagedProvinceId())) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                            "Bạn chỉ có quyền cập nhật FaceID cho nhân viên thuộc chi nhánh tỉnh do bạn quản lý!");
+                }
+            } else {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không có quyền quản lý hồ sơ FaceID của nhân viên!");
+            }
+        }
+
+        if (request.getFacePhotoBase64() == null || request.getFacePhotoBase64().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dữ liệu ảnh khuôn mặt mẫu không được để trống!");
+        }
+
+        BufferedImage img = decodeBase64ToImage(request.getFacePhotoBase64());
+        if (img == null || img.getWidth() < 50 || img.getHeight() < 50) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dữ liệu ảnh khuôn mặt mẫu không hợp lệ hoặc bị hỏng! Vui lòng chọn ảnh rõ nét.");
+        }
+
+        EmployeeFaceProfile profile = faceProfileRepository.findByUserId(targetUserId)
+                .orElseGet(() -> EmployeeFaceProfile.builder().userId(targetUserId).build());
+
+        profile.setFacePhotoUrl(request.getFacePhotoBase64());
+        profile.setFaceFeatures("ENROLLED_BY_MANAGER_" + manager.getUsername());
+
+        EmployeeFaceProfile saved = faceProfileRepository.save(profile);
+        log.info("Quản lý {} đã cập nhật hồ sơ FaceID cho nhân viên: {} (ID: {})",
+                manager.getUsername(), targetUser.getFullName(), targetUserId);
 
         return FaceProfileResponse.builder()
                 .id(saved.getId())
@@ -297,8 +367,13 @@ public class AttendanceServiceImpl implements AttendanceService {
                 }
             }
         }
-        List<Warehouse> all = warehouseRepository.findByIsActiveTrue();
-        return all.isEmpty() ? null : all.get(0);
+        boolean isAdmin = user.getRoles() != null && user.getRoles().stream()
+                .anyMatch(r -> r.getRoleName().equalsIgnoreCase("ROLE_ADMIN"));
+        if (isAdmin) {
+            List<Warehouse> all = warehouseRepository.findByIsActiveTrue();
+            return all.isEmpty() ? null : all.get(0);
+        }
+        return null;
     }
 
     private FaceVerificationResult verifyFace(Long userId, String photoBase64) {
@@ -309,7 +384,7 @@ public class AttendanceServiceImpl implements AttendanceService {
         Optional<EmployeeFaceProfile> profileOpt = faceProfileRepository.findByUserId(userId);
         if (profileOpt.isEmpty() || profileOpt.get().getFacePhotoUrl() == null || profileOpt.get().getFacePhotoUrl().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Bạn chưa đăng ký khuôn mặt mẫu FaceID! Vui lòng chuyển sang tab 'Hồ sơ khuôn mặt mẫu' để đăng ký khuôn mặt chính chủ trước khi chấm công.");
+                    "Tài khoản của bạn chưa được Quản lý bưu cục hoặc Admin đăng ký khuôn mặt mẫu FaceID! Vui lòng liên hệ Quản lý bưu cục để được chụp ảnh cập nhật FaceID trước khi chấm công.");
         }
 
         String baselinePhoto = profileOpt.get().getFacePhotoUrl();

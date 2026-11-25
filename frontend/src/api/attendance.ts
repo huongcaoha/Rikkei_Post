@@ -87,6 +87,16 @@ export const attendanceApi = {
     return res.data?.data !== undefined ? res.data.data : res.data;
   },
 
+  registerFaceByManager: async (targetUserId: number, data: RegisterFaceRequest): Promise<FaceProfileDTO> => {
+    const res = await apiClient.post(`/attendance/face-profile/user/${targetUserId}`, data);
+    return res.data?.data !== undefined ? res.data.data : res.data;
+  },
+
+  getFaceProfileByManager: async (targetUserId: number): Promise<FaceProfileDTO> => {
+    const res = await apiClient.get(`/attendance/face-profile/user/${targetUserId}`);
+    return res.data?.data !== undefined ? res.data.data : res.data;
+  },
+
   getFaceProfile: async (): Promise<FaceProfileDTO> => {
     const res = await apiClient.get('/attendance/face-profile');
     return res.data?.data !== undefined ? res.data.data : res.data;

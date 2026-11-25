@@ -22,5 +22,7 @@ public class StaffUserResponse {
     private Long assignedPostOfficeId;
     private String postOfficeName;
     private Boolean isActive;
+    private Boolean isFaceEnrolled;
+    private String facePhotoUrl;
     private LocalDateTime createdAt;
 }

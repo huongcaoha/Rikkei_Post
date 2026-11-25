@@ -11,7 +11,9 @@ import {
   RefreshCw,
   Smartphone,
   ShieldAlert,
+  ShieldCheck,
   XCircle,
+  HelpCircle,
 } from 'lucide-react';
 import { attendanceApi, AttendanceRecordDTO, FaceProfileDTO } from '../api/attendance';
 import { locationApi } from '../api/location';
@@ -32,10 +34,19 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   const [faceProfile, setFaceProfile] = useState<FaceProfileDTO | null>(null);
   const [assignedWarehouse, setAssignedWarehouse] = useState<Warehouse | null>(null);
 
+  // Phân quyền: Kiểm tra xem người dùng có phải là Quản lý (Admin, Branch Manager, Post Office Manager) hay không
+  const userRoles = user?.roles || [];
+  const isManager = userRoles.some((r: any) => {
+    const name = typeof r === 'string' ? r : r.roleName;
+    return name === 'ROLE_ADMIN' || name === 'ROLE_BRANCH_MANAGER' || name === 'ROLE_POST_OFFICE_MANAGER';
+  });
+
   // GPS State
   const [gpsLoading, setGpsLoading] = useState<boolean>(false);
   const [currentGps, setCurrentGps] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [gpsPermissionState, setGpsPermissionState] = useState<'granted' | 'prompt' | 'denied' | 'unknown'>('unknown');
+  const watchIdRef = useRef<number | null>(null);
 
   // Camera State
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -45,7 +56,6 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
 
   useEffect(() => {
-    let gpsTimer: any = null;
     let cameraTimer: any = null;
 
     if (open) {
@@ -53,22 +63,21 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       loadFaceProfile();
       loadWarehouseInfo();
 
-      // Trì hoãn 400ms sau khi modal mở để tránh xung đột hiệu ứng mở cửa sổ với quyền GPS
-      gpsTimer = setTimeout(() => {
-        fetchGpsLocation();
-      }, 400);
+      // Kiểm tra trạng thái cấp quyền GPS trước khi gọi
+      checkGpsPermission();
 
-      // Trì hoãn 800ms để tránh lỗi tapjacking "Trang web này không thể yêu cầu bạn cấp quyền" trên điện thoại Android/iOS
+      // Trì hoãn mở camera 700ms để tránh giật lag hoặc xung đột với hiệu ứng mở modal
       cameraTimer = setTimeout(() => {
         startCamera();
-      }, 800);
+      }, 700);
     } else {
       stopCamera();
+      clearGpsWatch();
     }
     return () => {
-      if (gpsTimer) clearTimeout(gpsTimer);
       if (cameraTimer) clearTimeout(cameraTimer);
       stopCamera();
+      clearGpsWatch();
     };
   }, [open]);
 
@@ -110,7 +119,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
           const pName = user.postOfficeName.toLowerCase().trim();
           wh = list.find((w) => w.name.toLowerCase().includes(pName) || pName.includes(w.name.toLowerCase()));
         }
-        if (!wh) {
+        if (!wh && isManager) {
           wh = list[0];
         }
         setAssignedWarehouse(wh || null);
@@ -156,9 +165,43 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   // Bán kính hợp lệ tối đa là 0.8 km (800m)
   const isLocationValid = distanceKm !== null ? distanceKm <= 0.8 : false;
 
+  const checkGpsPermission = async () => {
+    if (!navigator.geolocation) {
+      setGpsError('Trình duyệt của bạn không hỗ trợ định vị GPS!');
+      return;
+    }
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const p = await navigator.permissions.query({ name: 'geolocation' });
+        setGpsPermissionState(p.state);
+        if (p.state === 'granted') {
+          fetchGpsLocation();
+        }
+        p.onchange = () => {
+          setGpsPermissionState(p.state);
+          if (p.state === 'granted') {
+            setGpsError(null);
+            fetchGpsLocation();
+          } else if (p.state === 'denied') {
+            setGpsError('PERMISSION_DENIED');
+          }
+        };
+        return;
+      } catch (e) {
+        console.warn('Lỗi kiểm tra permissions:', e);
+      }
+    }
+    // Fallback: nếu không có permissions query, thử lấy GPS
+    setTimeout(() => {
+      fetchGpsLocation();
+    }, 500);
+  };
+
   const fetchGpsLocation = () => {
     setGpsLoading(true);
     setGpsError(null);
+    clearGpsWatch();
+
     if (!navigator.geolocation) {
       setGpsError('Trình duyệt của bạn không hỗ trợ định vị GPS!');
       setCurrentGps(null);
@@ -166,7 +209,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       return;
     }
 
-    // Tầng 1: Lấy tọa độ vệ tinh GPS chính xác cao
+    // Tầng 1: Sử dụng vị trí cache gần nhất (maximumAge: 120s) để hiển thị tức thời nếu có
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setCurrentGps({
@@ -174,10 +217,12 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
           lng: pos.coords.longitude,
         });
         setGpsLoading(false);
+        setGpsError(null);
+        setGpsPermissionState('granted');
       },
-      (err) => {
-        console.warn('GPS High Accuracy timeout/error, thử lại qua mạng:', err);
-        // Tầng 2: Fallback sang định vị qua sóng di động / Wifi nếu vệ tinh bị timeout
+      (errFast) => {
+        console.warn('GPS fast cache không khả dụng, thực hiện định vị mạng/vệ tinh:', errFast);
+        // Tầng 2: Gọi định vị qua mạng di động/WiFi
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             setCurrentGps({
@@ -185,33 +230,56 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
               lng: pos.coords.longitude,
             });
             setGpsLoading(false);
+            setGpsError(null);
+            setGpsPermissionState('granted');
           },
-          (err2) => {
-            console.warn('Lỗi định vị tầng 2:', err2);
+          (err) => {
+            console.warn('Lỗi định vị GPS:', err);
             setCurrentGps(null);
             setGpsLoading(false);
 
-            if (err2.code === 1) {
-              setGpsError(
-                '⚠️ Quyền vị trí bị từ chối hoặc bị chặn bởi lớp phủ ứng dụng khác (ví dụ: bong bóng chat Messenger). Vui lòng tạm tắt bong bóng chat, sau đó vào cài đặt trình duyệt cấp quyền Vị trí cho trang web và bấm "Cập nhật GPS".'
-              );
-            } else if (err2.code === 2) {
-              setGpsError(
-                '⚠️ Không thể nhận tín hiệu GPS. Vui lòng bật "Dịch vụ định vị" (Location Services) trên điện thoại và bấm "Cập nhật GPS".'
-              );
-            } else if (err2.code === 3) {
-              setGpsError(
-                '⚠️ Hết thời gian chờ định vị GPS. Vui lòng di chuyển ra khu vực thông thoáng và bấm "Cập nhật GPS" để thử lại.'
-              );
+            if (err.code === 1) {
+              setGpsPermissionState('denied');
+              setGpsError('PERMISSION_DENIED');
+            } else if (err.code === 2) {
+              setGpsError('POSITION_UNAVAILABLE');
+            } else if (err.code === 3) {
+              setGpsError('TIMEOUT');
             } else {
-              setGpsError('⚠️ Không thể lấy tọa độ GPS: ' + (err2.message || 'Lỗi không xác định. Vui lòng thử lại.'));
+              setGpsError(err.message || 'Không thể xác định vị trí GPS.');
             }
           },
-          { enableHighAccuracy: false, timeout: 8000, maximumAge: 0 }
+          { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 }
         );
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 120000 }
     );
+
+    // Kích hoạt watchPosition để tự động cập nhật tọa độ chính xác ngay khi điện thoại khóa vệ tinh
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          setCurrentGps({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
+          setGpsLoading(false);
+          setGpsError(null);
+          setGpsPermissionState('granted');
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
+      );
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const clearGpsWatch = () => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
   };
 
   const startCamera = async () => {
@@ -275,6 +343,11 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   };
 
   const handleCheckIn = async () => {
+    if (!assignedWarehouse) {
+      message.error('Tài khoản của bạn chưa được phân công bưu cục công tác! Vui lòng liên hệ Quản lý bưu cục.');
+      return;
+    }
+
     if (!currentGps) {
       message.warning('Chưa có tọa độ GPS hợp lệ! Vui lòng bật vị trí và bấm "Cập nhật GPS".');
       fetchGpsLocation();
@@ -283,14 +356,15 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
     if (!isLocationValid) {
       message.error(
-        `Vị trí không hợp lệ! Bạn đang cách kho ${distanceKm} km (vượt quá bán kính cho phép 0.8 km). Vui lòng có mặt tại kho để Check-in.`
+        `Vị trí không hợp lệ! Bạn đang cách bưu cục '${assignedWarehouse.name}' ${distanceKm} km (vượt quá bán kính cho phép 0.8 km). Vui lòng có mặt tại kho để Check-in.`
       );
       return;
     }
 
     if (!faceProfile?.isRegistered) {
-      message.warning('Bạn chưa đăng ký khuôn mặt mẫu FaceID! Vui lòng chuyển sang tab "Hồ sơ khuôn mặt mẫu" để đăng ký trước.');
-      setActiveTab('profile');
+      message.error(
+        'Tài khoản của bạn chưa được Quản lý bưu cục đăng ký khuôn mặt mẫu FaceID! Vui lòng liên hệ Quản lý bưu cục để được chụp ảnh kích hoạt FaceID.'
+      );
       return;
     }
 
@@ -314,7 +388,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       });
       const record = res?.data || res;
       if (record && (record.id || res.success)) {
-        message.success(`🎉 Check-in thành công! Bạn đang ở trong bán kính kho (${record.distanceFromWarehouseKm || 0} km).`);
+        message.success(`🎉 Check-in thành công! Bạn đang ở trong bán kính bưu cục (${record.distanceFromWarehouseKm || 0} km).`);
         setTodayRecord(record);
         loadFaceProfile();
       }
@@ -326,6 +400,11 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   };
 
   const handleCheckOut = async () => {
+    if (!assignedWarehouse) {
+      message.error('Tài khoản của bạn chưa được phân công bưu cục công tác! Vui lòng liên hệ Quản lý bưu cục.');
+      return;
+    }
+
     if (!currentGps) {
       message.warning('Chưa có tọa độ GPS hợp lệ! Vui lòng bật vị trí và bấm "Cập nhật GPS".');
       fetchGpsLocation();
@@ -334,14 +413,15 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
     if (!isLocationValid) {
       message.error(
-        `Vị trí không hợp lệ! Bạn đang cách kho ${distanceKm} km (vượt quá bán kính cho phép 0.8 km). Vui lòng có mặt tại kho để Check-out.`
+        `Vị trí không hợp lệ! Bạn đang cách bưu cục '${assignedWarehouse.name}' ${distanceKm} km (vượt quá bán kính cho phép 0.8 km). Vui lòng có mặt tại kho để Check-out.`
       );
       return;
     }
 
     if (!faceProfile?.isRegistered) {
-      message.warning('Bạn chưa đăng ký khuôn mặt mẫu FaceID! Vui lòng chuyển sang tab "Hồ sơ khuôn mặt mẫu" để đăng ký trước.');
-      setActiveTab('profile');
+      message.error(
+        'Tài khoản của bạn chưa được Quản lý bưu cục đăng ký khuôn mặt mẫu FaceID! Vui lòng liên hệ Quản lý bưu cục để được chụp ảnh kích hoạt FaceID.'
+      );
       return;
     }
 
@@ -376,6 +456,11 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   };
 
   const handleRegisterFace = async () => {
+    if (!isManager) {
+      message.error('Tài khoản Shipper / Nhân viên kho không được phép tự cập nhật ảnh FaceID! Vui lòng liên hệ Quản lý bưu cục.');
+      return;
+    }
+
     if (!capturedPhoto) {
       message.warning('Vui lòng chụp ảnh khuôn mặt mẫu trước khi lưu!');
       return;
@@ -474,6 +559,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     isLocationValid &&
     capturedPhoto !== null &&
     faceProfile?.isRegistered &&
+    assignedWarehouse !== null &&
     !loading;
 
   const canCheckOut =
@@ -483,6 +569,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     isLocationValid &&
     capturedPhoto !== null &&
     faceProfile?.isRegistered &&
+    assignedWarehouse !== null &&
     !loading;
 
   return (
@@ -515,13 +602,18 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                 {/* Status Card Hôm Nay */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <Card size="small" className="bg-blue-50 border-blue-200">
-                    <div className="text-xs text-gray-500 font-medium">Bưu cục công tác</div>
+                    <div className="text-xs text-gray-500 font-medium">Bưu cục công tác quản lý</div>
                     <div className="text-sm font-bold text-blue-900 mt-0.5 truncate">
-                      {assignedWarehouse?.name || user?.postOfficeName || 'Bưu cục phụ trách'}
+                      {assignedWarehouse?.name || user?.postOfficeName || 'Chưa gán bưu cục'}
                     </div>
                     {assignedWarehouse?.latitude && (
-                      <div className="text-[11px] text-gray-400 mt-0.5">
+                      <div className="text-[11px] text-gray-500 mt-0.5">
                         Tọa độ kho: {assignedWarehouse.latitude.toFixed(4)}, {assignedWarehouse.longitude.toFixed(4)}
+                      </div>
+                    )}
+                    {!assignedWarehouse && (
+                      <div className="text-[11px] text-red-500 mt-0.5 font-semibold">
+                        ⚠️ Bạn chưa được phân công kho làm việc!
                       </div>
                     )}
                   </Card>
@@ -545,79 +637,148 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                     type="warning"
                     showIcon
                     icon={<ShieldAlert className="text-amber-500" />}
-                    message="Chưa đăng ký hồ sơ khuôn mặt FaceID"
+                    message="Chưa có hồ sơ FaceID chính chủ"
                     description={
-                      <div>
-                        Bạn chưa đăng ký khuôn mặt mẫu chính chủ. Hệ thống yêu cầu xác thực FaceID trước khi chấm công để chống điểm danh hộ.{' '}
-                        <button
-                          className="text-blue-600 underline font-semibold ml-1 cursor-pointer"
-                          onClick={() => setActiveTab('profile')}
-                        >
-                          Bấm vào đây để đăng ký ngay
-                        </button>
-                      </div>
+                      isManager ? (
+                        <div>
+                          Bạn chưa đăng ký khuôn mặt mẫu chính chủ. Hệ thống yêu cầu xác thực FaceID trước khi chấm công.{' '}
+                          <button
+                            className="text-blue-600 underline font-semibold ml-1 cursor-pointer"
+                            onClick={() => setActiveTab('profile')}
+                          >
+                            Bấm vào đây để đăng ký ngay
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          Tài khoản của bạn chưa được <b>Quản lý bưu cục</b> hoặc <b>Admin</b> chụp ảnh đăng ký FaceID. Để chống điểm danh hộ, nhân viên không thể tự tải ảnh lên. Vui lòng gặp trực tiếp Quản lý bưu cục để được đăng ký ảnh FaceID trước khi chấm công.
+                        </div>
+                      )
                     }
                   />
                 )}
 
-                {/* GPS Location Status */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-200 text-xs gap-2">
-                  <div className="flex items-center gap-2 text-gray-700">
-                    <MapPin size={16} className="text-red-500 shrink-0" />
-                    <div>
-                      <span>
-                        Tọa độ GPS hiện tại:{' '}
-                        <b>
-                          {currentGps
-                            ? `${currentGps.lat.toFixed(6)}, ${currentGps.lng.toFixed(6)}`
-                            : gpsLoading
-                            ? 'Đang tìm kiếm vệ tinh GPS...'
-                            : 'Chưa xác định'}
-                        </b>
-                      </span>
-                      {distanceKm !== null && (
-                        <div className="mt-1">
-                          {isLocationValid ? (
-                            <Tag color="green" className="font-semibold">
-                              ✓ Hợp lệ: Cách kho {distanceKm < 1 ? Math.round(distanceKm * 1000) + 'm' : distanceKm + 'km'} (Trong bán kính 800m)
-                            </Tag>
-                          ) : (
-                            <Tag color="red" className="font-semibold">
-                              ✕ Không hợp lệ: Cách kho {distanceKm}km (Vượt quá 800m - Bị từ chối)
-                            </Tag>
-                          )}
-                        </div>
-                      )}
+                {/* GPS Location Status Container */}
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-xs space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <MapPin size={16} className="text-red-500 shrink-0" />
+                      <div>
+                        <span>
+                          Tọa độ GPS hiện tại:{' '}
+                          <b>
+                            {currentGps
+                              ? `${currentGps.lat.toFixed(6)}, ${currentGps.lng.toFixed(6)}`
+                              : gpsLoading
+                              ? 'Đang tìm kiếm vệ tinh GPS...'
+                              : 'Chưa xác định'}
+                          </b>
+                        </span>
+                        {distanceKm !== null && assignedWarehouse && (
+                          <div className="mt-1">
+                            {isLocationValid ? (
+                              <Tag color="green" className="font-semibold">
+                                ✓ Hợp lệ: Cách bưu cục {distanceKm < 1 ? Math.round(distanceKm * 1000) + 'm' : distanceKm + 'km'} (Trong bán kính 800m)
+                              </Tag>
+                            ) : (
+                              <Tag color="red" className="font-semibold">
+                                ✕ Ngoài phạm vi: Cách bưu cục {distanceKm}km (Vượt quá 800m - Bị từ chối)
+                              </Tag>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
+                    <Button
+                      size="small"
+                      icon={<RefreshCw size={12} className={gpsLoading ? 'animate-spin' : ''} />}
+                      onClick={fetchGpsLocation}
+                      loading={gpsLoading}
+                      className="shrink-0"
+                    >
+                      Cập nhật GPS
+                    </Button>
                   </div>
-                  <Button
-                    size="small"
-                    icon={<RefreshCw size={12} className={gpsLoading ? 'animate-spin' : ''} />}
-                    onClick={fetchGpsLocation}
-                    loading={gpsLoading}
-                    className="shrink-0"
-                  >
-                    Cập nhật GPS
-                  </Button>
+
+                  {/* Banner hướng dẫn khi trình duyệt chưa cấp quyền (prompt) */}
+                  {gpsPermissionState === 'prompt' && !currentGps && !gpsLoading && (
+                    <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                      <div className="text-blue-900 text-xs">
+                        <b>📍 Cần cấp quyền vị trí:</b> Bấm nút bên cạnh và chọn <b>"Cho phép" (Allow)</b> để xác định vị trí chấm công.
+                      </div>
+                      <Button
+                        type="primary"
+                        size="small"
+                        onClick={fetchGpsLocation}
+                        loading={gpsLoading}
+                        className="bg-blue-600 shrink-0 ml-2 font-semibold text-xs"
+                      >
+                        Bật GPS
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
-                {gpsError && (
+                {/* Hướng dẫn khắc phục chi tiết khi bị lỗi GPS trên điện thoại di động */}
+                {(gpsError === 'PERMISSION_DENIED' || gpsPermissionState === 'denied') && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl space-y-2 text-xs">
+                    <div className="font-bold text-red-700 flex items-center gap-1.5">
+                      <XCircle size={16} /> Lỗi cấp quyền vị trí GPS trên trình duyệt điện thoại
+                    </div>
+                    <p className="text-gray-700 leading-relaxed">
+                      Trình duyệt trên thiết bị của bạn đang bị chặn quyền Vị trí (Location) hoặc bị chặn bởi lớp phủ ứng dụng (bong bóng chat).
+                    </p>
+                    <div className="bg-white p-2.5 rounded-lg border border-red-100 space-y-1.5 text-gray-800">
+                      <div className="font-semibold text-red-900">3 Bước khắc phục nhanh trên điện thoại:</div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-bold text-red-600">1.</span>
+                        <span><b>Tắt bong bóng chat:</b> Nếu có bong bóng chat Messenger/Zalo trên màn hình, hãy kéo xuống đáy màn hình để tắt lớp phủ.</span>
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-bold text-red-600">2.</span>
+                        <span><b>Bật lại quyền Vị trí:</b> Nhấn vào biểu tượng <b>Cài đặt trang / Ổ khóa</b> (bên trái thanh địa chỉ <code>https://huongcaoha.site</code>) &rarr; Chọn <b>Quyền (Permissions)</b> &rarr; Bật <b>Vị trí (Location)</b> sang <b>Cho phép (Allow)</b>.</span>
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-bold text-red-600">3.</span>
+                        <span>Bấm nút <b>"🧭 Thử lại định vị GPS"</b> bên dưới để lấy tọa độ.</span>
+                      </div>
+                    </div>
+                    <Button
+                      type="primary"
+                      danger
+                      size="small"
+                      icon={<RefreshCw size={12} className={gpsLoading ? 'animate-spin' : ''} />}
+                      onClick={fetchGpsLocation}
+                      loading={gpsLoading}
+                      className="w-full font-semibold mt-1"
+                    >
+                      🧭 Thử lại định vị GPS ngay
+                    </Button>
+                  </div>
+                )}
+
+                {gpsError && gpsError !== 'PERMISSION_DENIED' && (
                   <Alert
-                    type="error"
-                    message="Lỗi định vị GPS trên thiết bị"
-                    description={gpsError}
+                    type="warning"
+                    message="Thông báo định vị GPS"
+                    description={
+                      gpsError === 'POSITION_UNAVAILABLE'
+                        ? 'Không thể nhận tín hiệu GPS. Vui lòng kiểm tra xem bạn đã bật "Vị trí / GPS" trong Cài đặt điện thoại chưa.'
+                        : gpsError === 'TIMEOUT'
+                        ? 'Hết thời gian chờ bắt sóng GPS. Vui lòng di chuyển ra khu vực thông thoáng và bấm "Cập nhật GPS".'
+                        : gpsError
+                    }
                     showIcon
-                    icon={<XCircle className="text-red-500" />}
                   />
                 )}
 
                 {/* Cảnh báo vị trí quá xa */}
-                {currentGps && !isLocationValid && (
+                {currentGps && !isLocationValid && assignedWarehouse && (
                   <Alert
                     type="error"
                     showIcon
-                    message="Vị trí không khớp bưu cục công tác!"
-                    description={`Bạn đang ở cách bưu cục ${assignedWarehouse?.name || ''} khoảng ${distanceKm} km. Để bảo đảm tính minh bạch, bạn bắt buộc phải có mặt tại bưu cục (bán kính tối đa 800m) thì mới có thể Check-in / Check-out.`}
+                    message="Vị trí không khớp bưu cục quản lý!"
+                    description={`Bạn đang ở cách bưu cục '${assignedWarehouse.name}' khoảng ${distanceKm} km. Để bảo đảm tính minh bạch, bạn bắt buộc phải có mặt tại đúng kho bưu cục phụ trách (bán kính tối đa 800m) thì mới có thể Check-in / Check-out.`}
                   />
                 )}
 
@@ -759,12 +920,14 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
 
                 {/* Chỉ dẫn lý do nếu các nút bị khóa */}
                 <div className="text-center text-xs text-gray-500">
-                  {!currentGps ? (
+                  {!assignedWarehouse ? (
+                    <span className="text-red-600 font-semibold">⚠️ Bạn chưa được phân công bưu cục công tác</span>
+                  ) : !currentGps ? (
                     <span className="text-amber-600">⚠️ Vui lòng cập nhật tọa độ GPS để mở khóa nút chấm công</span>
                   ) : !isLocationValid ? (
                     <span className="text-red-600">🚫 Bạn đang ở ngoài bán kính 800m của kho nên không thể chấm công</span>
                   ) : !faceProfile?.isRegistered ? (
-                    <span className="text-amber-600">⚠️ Bạn cần đăng ký khuôn mặt mẫu trước khi chấm công</span>
+                    <span className="text-amber-600">⚠️ Bạn cần được Quản lý bưu cục đăng ký FaceID trước khi chấm công</span>
                   ) : !capturedPhoto ? (
                     <span className="text-blue-600">📸 Vui lòng chụp ảnh khuôn mặt để hệ thống đối chiếu FaceID</span>
                   ) : null}
@@ -804,8 +967,9 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                 <Alert
                   type="info"
                   showIcon
-                  message="Đăng ký nhận diện khuôn mặt mẫu chính chủ (FaceID Profile)"
-                  description="Khuôn mặt mẫu sẽ được lưu trữ và đối soát với thuật toán nhận diện khuôn mặt mỗi khi bạn Check-in hoặc Check-out. Điều này đảm bảo tính minh bạch, chính xác và ngăn ngừa gian lận chấm công hộ."
+                  icon={<ShieldCheck className="text-blue-600" />}
+                  message="Hồ sơ nhận diện khuôn mặt FaceID chính chủ"
+                  description="Khuôn mặt mẫu được lưu trữ và đối soát bắt buộc với thuật toán nhận diện khuôn mặt mỗi khi Check-in hoặc Check-out. Điều này đảm bảo tính minh bạch, chính xác và ngăn ngừa tuyệt đối gian lận chấm công hộ."
                 />
 
                 <div className="flex flex-col md:flex-row items-center gap-6 justify-center p-4 bg-gray-50 rounded-2xl border">
@@ -831,32 +995,54 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                   )}
 
                   <div className="space-y-3 max-w-sm">
-                    <p className="text-xs text-gray-600">
-                      <b>Hướng dẫn đăng ký:</b> Hãy mở camera ở tab "Chấm công hôm nay" và chụp ảnh khuôn mặt chính diện rõ nét, sau đó bấm nút bên dưới để lưu làm ảnh mẫu.
-                    </p>
-                    {capturedPhoto ? (
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={capturedPhoto}
-                          alt="Vừa chụp"
-                          className="w-12 h-12 rounded-lg object-cover border"
-                        />
-                        <span className="text-xs text-emerald-600 font-medium">Đã có ảnh sẵn sàng lưu!</span>
-                      </div>
+                    {isManager ? (
+                      <>
+                        <p className="text-xs text-gray-600">
+                          <b>Dành cho Quản lý / Admin:</b> Hãy mở camera ở tab "Chấm công hôm nay" và chụp ảnh khuôn mặt chính diện rõ nét, sau đó bấm nút bên dưới để cập nhật ảnh mẫu cho chính mình.
+                        </p>
+                        {capturedPhoto ? (
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={capturedPhoto}
+                              alt="Vừa chụp"
+                              className="w-12 h-12 rounded-lg object-cover border"
+                            />
+                            <span className="text-xs text-emerald-600 font-medium">Đã có ảnh sẵn sàng lưu!</span>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-amber-600">
+                            * Bạn chưa chụp ảnh. Vui lòng quay lại tab "Chấm công hôm nay" và chụp ảnh trước.
+                          </p>
+                        )}
+                        <Button
+                          type="primary"
+                          onClick={handleRegisterFace}
+                          loading={loading}
+                          disabled={!capturedPhoto}
+                          className="bg-blue-600 hover:bg-blue-700 font-semibold rounded-xl w-full"
+                        >
+                          Lưu ảnh vừa chụp làm ảnh mẫu FaceID
+                        </Button>
+                      </>
                     ) : (
-                      <p className="text-xs text-amber-600">
-                        * Bạn chưa chụp ảnh. Vui lòng quay lại tab "Chấm công hôm nay" và chụp ảnh trước.
-                      </p>
+                      <>
+                        {faceProfile?.isRegistered ? (
+                          <Alert
+                            type="success"
+                            showIcon
+                            message="Hồ sơ FaceID đã được Quản lý bưu cục phê duyệt"
+                            description="Ảnh mẫu khuôn mặt của bạn đã được Quản lý bưu cục kích hoạt trên hệ thống. Nhân viên vận hành không được phép tự ý thay đổi ảnh đối soát để đảm bảo tính minh bạch."
+                          />
+                        ) : (
+                          <Alert
+                            type="warning"
+                            showIcon
+                            message="Chưa có hồ sơ FaceID"
+                            description="Tài khoản của bạn chưa được Quản lý bưu cục đăng ký khuôn mặt mẫu. Để phòng ngừa gian lận, nhân viên không có quyền tự tải ảnh lên. Vui lòng gặp trực tiếp Quản lý bưu cục để được chụp ảnh kích hoạt FaceID trước khi chấm công."
+                          />
+                        )}
+                      </>
                     )}
-                    <Button
-                      type="primary"
-                      onClick={handleRegisterFace}
-                      loading={loading}
-                      disabled={!capturedPhoto}
-                      className="bg-blue-600 hover:bg-blue-700 font-semibold rounded-xl w-full"
-                    >
-                      Lưu ảnh vừa chụp làm ảnh mẫu FaceID
-                    </Button>
                   </div>
                 </div>
               </div>

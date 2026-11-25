@@ -322,6 +322,8 @@ export interface StaffUser {
   postOfficeName?: string;
   isActive: boolean;
   roles: string[];
+  isFaceEnrolled?: boolean;
+  facePhotoUrl?: string;
   createdAt?: string;
 }
 

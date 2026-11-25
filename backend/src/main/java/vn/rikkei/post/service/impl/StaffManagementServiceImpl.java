@@ -32,6 +32,7 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     private final ProvinceRepository provinceRepository;
     private final WarehouseRepository warehouseRepository;
     private final PasswordEncoder passwordEncoder;
+    private final vn.rikkei.post.repository.EmployeeFaceProfileRepository faceProfileRepository;
 
     @Override
     public List<String> getAssignableRoles(CustomUserDetails currentUser) {
@@ -381,6 +382,10 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     }
 
     private StaffUserResponse mapToResponse(User user) {
+        var faceOpt = faceProfileRepository.findByUserId(user.getId());
+        boolean isFaceEnrolled = faceOpt.isPresent() && faceOpt.get().getFacePhotoUrl() != null && !faceOpt.get().getFacePhotoUrl().isBlank();
+        String facePhotoUrl = isFaceEnrolled ? faceOpt.get().getFacePhotoUrl() : null;
+
         return StaffUserResponse.builder()
                 .id(user.getId())
                 .username(user.getUsername())
@@ -393,6 +398,8 @@ public class StaffManagementServiceImpl implements StaffManagementService {
                 .assignedPostOfficeId(user.getAssignedPostOfficeId())
                 .postOfficeName(user.getPostOfficeName())
                 .isActive(user.getIsActive())
+                .isFaceEnrolled(isFaceEnrolled)
+                .facePhotoUrl(facePhotoUrl)
                 .createdAt(user.getCreatedAt())
                 .build();
     }
