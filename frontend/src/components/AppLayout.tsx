@@ -22,6 +22,7 @@ import {
   ScrollText,
   Wallet,
   Navigation,
+  Network,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
@@ -146,12 +147,30 @@ export const AppLayout: React.FC = () => {
     });
   }
 
+  // Bản đồ phân bổ vị trí mạng lưới kho vận (Topology Map dành cho cấp Quản lý bưu cục trở lên)
+  if (isAdmin || isBranchManager || isPostOfficeManager) {
+    menuItems.push({
+      key: '/admin/network-map',
+      icon: <Network size={18} />,
+      label: 'Bản đồ mạng lưới kho vận (Topology)',
+    });
+  }
+
   // Quy trình Đóng bao tải Master Bag & Kẹp chì Seal (Chỉ Quản lý bưu cục / Nhân viên kho / Admin)
   if (canManageBags) {
     menuItems.push({
       key: '/wms/bags',
       icon: <Layers size={18} />,
       label: 'Đóng bao tải & Kẹp chì (WMS)',
+    });
+  }
+
+  // Điều vận xe gom bao hàng (Dispatch Order / Logistics Transport Dispatch Management)
+  if (canManageBags || isTruckDriver) {
+    menuItems.push({
+      key: '/wms/dispatch',
+      icon: <Navigation size={18} />,
+      label: 'Điều vận xe gom bao hàng (TMS/Hub)',
     });
   }
 

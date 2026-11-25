@@ -231,6 +231,7 @@ export const WarehouseManagementPage: React.FC = () => {
 
   // Thống kê nhanh
   const totalCount = warehouses.length;
+  const regionalHubCount = warehouses.filter((w) => w.type === 'REGIONAL_HUB').length;
   const hubCount = warehouses.filter((w) => w.type === 'HUB').length;
   const spokeCount = warehouses.filter((w) => w.type === 'SPOKE_POST_OFFICE').length;
   const activeCount = warehouses.filter((w) => w.isActive).length;
@@ -240,14 +241,20 @@ export const WarehouseManagementPage: React.FC = () => {
       title: 'Mã bưu cục',
       dataIndex: 'code',
       key: 'code',
-      width: 150,
-      render: (code: string, record: Warehouse) => (
-        <div>
-          <Tag color={record.type === 'HUB' ? 'volcano' : 'blue'} className="font-mono font-bold text-xs">
-            {code}
-          </Tag>
-        </div>
-      ),
+      width: 170,
+      render: (code: string, record: Warehouse) => {
+        let tagColor = 'blue';
+        if (record.type === 'REGIONAL_HUB') tagColor = 'purple';
+        else if (record.type === 'HUB') tagColor = 'volcano';
+
+        return (
+          <div>
+            <Tag color={tagColor} className="font-mono font-bold text-xs">
+              {code}
+            </Tag>
+          </div>
+        );
+      },
     },
     {
       title: 'Tên kho / Bưu cục',
@@ -256,7 +263,9 @@ export const WarehouseManagementPage: React.FC = () => {
       render: (name: string, record: Warehouse) => (
         <div>
           <div className="font-bold text-gray-800 flex items-center gap-1.5">
-            {record.type === 'HUB' ? (
+            {record.type === 'REGIONAL_HUB' ? (
+              <Building2 size={16} className="text-purple-600" />
+            ) : record.type === 'HUB' ? (
               <Building2 size={16} className="text-orange-600" />
             ) : (
               <WarehouseIcon size={16} className="text-blue-600" />
@@ -264,10 +273,12 @@ export const WarehouseManagementPage: React.FC = () => {
             <span>{name}</span>
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
-            {record.type === 'HUB' ? (
-              <span className="text-orange-600 font-semibold">Trung tâm chia chọn (HUB)</span>
+            {record.type === 'REGIONAL_HUB' ? (
+              <span className="text-purple-600 font-semibold">🌐 Kho trung chuyển khu vực / miền (Gom hàng liên tỉnh)</span>
+            ) : record.type === 'HUB' ? (
+              <span className="text-orange-600 font-semibold">🏢 Trung tâm chia chọn tỉnh (HUB)</span>
             ) : (
-              <span className="text-blue-600 font-semibold">Bưu cục phát chặng cuối (SPOKE)</span>
+              <span className="text-blue-600 font-semibold">🛵 Bưu cục phát chặng cuối (SPOKE)</span>
             )}
           </div>
         </div>
@@ -418,30 +429,37 @@ export const WarehouseManagementPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 Thẻ thống kê */}
+      {/* 5 Thẻ thống kê */}
       <Row gutter={[16, 16]}>
-        <Col xs={12} sm={6}>
+        <Col xs={12} sm={8} md={4}>
           <Card className="rounded-2xl border-gray-100 shadow-xs bg-white p-2">
-            <div className="text-gray-500 text-xs font-semibold uppercase">Tổng số bưu cục/kho</div>
+            <div className="text-gray-500 text-xs font-semibold uppercase">Tổng bưu cục/kho</div>
             <div className="text-2xl font-black text-gray-800 mt-1">{totalCount}</div>
-            <div className="text-[11px] text-gray-400">Trên toàn hệ thống</div>
+            <div className="text-[11px] text-gray-400">Toàn hệ thống</div>
           </Card>
         </Col>
-        <Col xs={12} sm={6}>
+        <Col xs={12} sm={8} md={5}>
+          <Card className="rounded-2xl border-purple-100 shadow-xs bg-purple-50/50 p-2 border">
+            <div className="text-purple-700 text-xs font-semibold uppercase">Kho trung chuyển miền</div>
+            <div className="text-2xl font-black text-purple-700 mt-1">{regionalHubCount}</div>
+            <div className="text-[11px] text-purple-600">Gom hàng liên tỉnh</div>
+          </Card>
+        </Col>
+        <Col xs={12} sm={8} md={5}>
           <Card className="rounded-2xl border-gray-100 shadow-xs bg-white p-2">
-            <div className="text-orange-600 text-xs font-semibold uppercase">Trung tâm chia chọn (HUB)</div>
+            <div className="text-orange-600 text-xs font-semibold uppercase">HUB tỉnh / thành</div>
             <div className="text-2xl font-black text-orange-600 mt-1">{hubCount}</div>
-            <div className="text-[11px] text-orange-500">Khai thác đường trục</div>
+            <div className="text-[11px] text-orange-500">Khai thác cấp tỉnh</div>
           </Card>
         </Col>
-        <Col xs={12} sm={6}>
+        <Col xs={12} sm={8} md={5}>
           <Card className="rounded-2xl border-gray-100 shadow-xs bg-white p-2">
-            <div className="text-blue-600 text-xs font-semibold uppercase">Bưu cục giao dịch (SPOKE)</div>
+            <div className="text-blue-600 text-xs font-semibold uppercase">Bưu cục phát (SPOKE)</div>
             <div className="text-2xl font-black text-blue-600 mt-1">{spokeCount}</div>
             <div className="text-[11px] text-blue-500">Phát hàng chặng cuối</div>
           </Card>
         </Col>
-        <Col xs={12} sm={6}>
+        <Col xs={12} sm={8} md={5}>
           <Card className="rounded-2xl border-gray-100 shadow-xs bg-white p-2">
             <div className="text-green-600 text-xs font-semibold uppercase">Đang hoạt động</div>
             <div className="text-2xl font-black text-green-600 mt-1">{activeCount}</div>
@@ -466,11 +484,12 @@ export const WarehouseManagementPage: React.FC = () => {
             <Select
               value={filterType}
               onChange={(val) => setFilterType(val)}
-              className="w-36 rounded-lg"
+              className="w-48 rounded-lg"
               options={[
                 { label: 'Tất cả loại kho', value: 'ALL' },
-                { label: 'HUB (Trung tâm)', value: 'HUB' },
-                { label: 'SPOKE (Bưu cục)', value: 'SPOKE_POST_OFFICE' },
+                { label: '🌐 Kho miền (REGIONAL HUB)', value: 'REGIONAL_HUB' },
+                { label: '🏢 HUB tỉnh (Trung tâm)', value: 'HUB' },
+                { label: '🛵 SPOKE (Bưu cục phát)', value: 'SPOKE_POST_OFFICE' },
               ]}
             />
 
@@ -554,7 +573,8 @@ export const WarehouseManagementPage: React.FC = () => {
               >
                 <Select
                   options={[
-                    { label: '🏢 Trung tâm chia chọn & khai thác (HUB)', value: 'HUB' },
+                    { label: '🌐 Kho trung chuyển khu vực / miền (REGIONAL HUB - Gom hàng liên tỉnh & điều vận)', value: 'REGIONAL_HUB' },
+                    { label: '🏢 Trung tâm chia chọn & khai thác tỉnh (HUB)', value: 'HUB' },
                     { label: '🛵 Bưu cục giao dịch & phát chặng cuối (SPOKE)', value: 'SPOKE_POST_OFFICE' },
                   ]}
                   className="rounded-lg"

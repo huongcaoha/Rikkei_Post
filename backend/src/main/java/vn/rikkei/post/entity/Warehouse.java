@@ -25,8 +25,8 @@ public class Warehouse {
     @Column(nullable = false, length = 150)
     private String name;
 
-    @Column(nullable = false, length = 20)
-    private String type; // "HUB", "SPOKE_POST_OFFICE"
+    @Column(nullable = false, length = 50)
+    private String type; // "REGIONAL_HUB", "HUB", "SPOKE_POST_OFFICE"
 
     @Column(name = "province_id", nullable = false)
     private Integer provinceId;

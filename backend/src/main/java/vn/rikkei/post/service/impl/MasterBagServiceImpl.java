@@ -14,13 +14,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
+@Transactional(readOnly = true)
 public class MasterBagServiceImpl implements MasterBagService {
 
         private final MasterBagRepository masterBagRepository;
@@ -31,8 +30,8 @@ public class MasterBagServiceImpl implements MasterBagService {
         private final UserRepository userRepository;
         private final ShipmentManifestRepository manifestRepository;
         private final WebSocketNotificationService webSocketNotificationService;
-    private final vn.rikkei.post.repository.TruckRepository truckRepository;
-    private final vn.rikkei.post.kafka.MasterBagKafkaProducer kafkaProducer;
+        private final vn.rikkei.post.repository.TruckRepository truckRepository;
+        private final vn.rikkei.post.kafka.MasterBagKafkaProducer kafkaProducer;
 
         @Override
         public List<MasterBagResponse> getAllBags() {
@@ -389,228 +388,223 @@ public class MasterBagServiceImpl implements MasterBagService {
                 return mapToResponse(bag);
         }
 
-        private MasterBagResponse mapToResponse(MasterBag bag) {
-                List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(bag.getId());
-                List<BagItemResponse> itemDtos = items.stream().map(it -> BagItemResponse.builder()
-                                .id(it.getId())
-                                .trackingCode(it.getTrackingCode())
-                                .weightGram(it.getWeightGram())
-                                .itemName(it.getItemName())
-                                .receiverAddress(it.getReceiverAddress())
-                                .routingCode(it.getRoutingCode())
-                                .scannedAt(it.getScannedAt())
-                                .build()).toList();
+        @Override
+        @Transactional
+        public MasterBagResponse assignDriver(Long bagId, vn.rikkei.post.dto.wms.AssignBagDriverRequest request,
+                        Long userId) {
+                MasterBag bag = masterBagRepository.findById(bagId)
+                                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bao tải ID: " + bagId));
 
-                String sealedName = null;
-                if (bag.getSealedByUserId() != null) {
-                        sealedName = userRepository.findById(bag.getSealedByUserId())
-                                        .map(User::getFullName)
-                                        .orElse("ID: " + bag.getSealedByUserId());
+                User driver = userRepository.findById(request.getDriverId())
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                                "Không tìm thấy thông tin tài xế ID: " + request.getDriverId()));
+
+                vn.rikkei.post.entity.Truck truck = null;
+                if (request.getTruckId() != null) {
+                        truck = truckRepository.findById(request.getTruckId()).orElse(null);
                 }
 
-                String manifestCode = null;
-                if (bag.getManifestId() != null) {
-                        manifestCode = manifestRepository.findById(bag.getManifestId())
-                                        .map(ShipmentManifest::getManifestCode)
-                                        .orElse(null);
+                bag.setAssignedDriverId(driver.getId());
+                bag.setAssignedDriverName(driver.getFullName());
+                bag.setAssignedDriverPhone(driver.getPhoneNumber());
+                if (truck != null) {
+                        bag.setAssignedTruckId(truck.getId());
+                        bag.setAssignedTruckPlate(truck.getLicensePlate());
+                }
+                if (request.getNotes() != null && !request.getNotes().isBlank()) {
+                        bag.setNotes((bag.getNotes() != null ? bag.getNotes() + ". " : "") + request.getNotes());
+                }
+                bag.setStatus("ASSIGNED_TO_DRIVER");
+                MasterBag saved = masterBagRepository.save(bag);
+
+                log.info("Đã gán tài xế xe tải {} (SĐT: {}) cho bao tải {}", driver.getFullName(),
+                                driver.getPhoneNumber(), bag.getBagCode());
+
+                // Bắn thông báo realtime tới tài xế xe tải
+                try {
+                        Map<String, Object> notif = new HashMap<>();
+                        notif.put("type", "BAG_ASSIGNED_TO_DRIVER");
+                        notif.put("bagCode", bag.getBagCode());
+                        notif.put("sealNumber", bag.getSealNumber());
+                        notif.put("originWarehouseName", bag.getOriginWarehouse().getName());
+                        notif.put("destWarehouseName", bag.getDestWarehouse().getName());
+                        notif.put("totalItems", bag.getTotalItems());
+                        notif.put("totalWeightKg", bag.getTotalWeightKg());
+                        notif.put("truckPlate", bag.getAssignedTruckPlate());
+                        notif.put("message",
+                                        String.format("Bạn vừa được gán nhận vận chuyển Bao tải [%s] từ [%s] tới [%s]!",
+                                                        bag.getBagCode(), bag.getOriginWarehouse().getName(),
+                                                        bag.getDestWarehouse().getName()));
+
+                        webSocketNotificationService.notifyGeneric("/topic/driver/" + driver.getId(), notif);
+                        webSocketNotificationService.notifyGeneric("/topic/master-bags", notif);
+                } catch (Exception ex) {
+                        log.warn("Lỗi gửi thông báo websocket tới tài xế: {}", ex.getMessage());
                 }
 
-        return mapToResponse(bag);
-    }
-
-    @Override
-    @Transactional
-    public MasterBagResponse assignDriver(Long bagId, vn.rikkei.post.dto.wms.AssignBagDriverRequest request, Long userId) {
-        MasterBag bag = masterBagRepository.findById(bagId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bao tải ID: " + bagId));
-
-        User driver = userRepository.findById(request.getDriverId())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin tài xế ID: " + request.getDriverId()));
-
-        vn.rikkei.post.entity.Truck truck = null;
-        if (request.getTruckId() != null) {
-            truck = truckRepository.findById(request.getTruckId()).orElse(null);
+                return mapToResponse(saved);
         }
 
-        bag.setAssignedDriverId(driver.getId());
-        bag.setAssignedDriverName(driver.getFullName());
-        bag.setAssignedDriverPhone(driver.getPhoneNumber());
-        if (truck != null) {
-            bag.setAssignedTruckId(truck.getId());
-            bag.setAssignedTruckPlate(truck.getLicensePlate());
-        }
-        if (request.getNotes() != null && !request.getNotes().isBlank()) {
-            bag.setNotes((bag.getNotes() != null ? bag.getNotes() + ". " : "") + request.getNotes());
-        }
-        bag.setStatus("ASSIGNED_TO_DRIVER");
-        MasterBag saved = masterBagRepository.save(bag);
-
-        log.info("Đã gán tài xế xe tải {} (SĐT: {}) cho bao tải {}", driver.getFullName(), driver.getPhoneNumber(), bag.getBagCode());
-
-        // Bắn thông báo realtime tới tài xế xe tải
-        try {
-            Map<String, Object> notif = new HashMap<>();
-            notif.put("type", "BAG_ASSIGNED_TO_DRIVER");
-            notif.put("bagCode", bag.getBagCode());
-            notif.put("sealNumber", bag.getSealNumber());
-            notif.put("originWarehouseName", bag.getOriginWarehouse().getName());
-            notif.put("destWarehouseName", bag.getDestWarehouse().getName());
-            notif.put("totalItems", bag.getTotalItems());
-            notif.put("totalWeightKg", bag.getTotalWeightKg());
-            notif.put("truckPlate", bag.getAssignedTruckPlate());
-            notif.put("message", String.format("Bạn vừa được gán nhận vận chuyển Bao tải [%s] từ [%s] tới [%s]!",
-                    bag.getBagCode(), bag.getOriginWarehouse().getName(), bag.getDestWarehouse().getName()));
-
-            webSocketNotificationService.notifyGeneric("/topic/driver/" + driver.getId(), notif);
-            webSocketNotificationService.notifyGeneric("/topic/master-bags", notif);
-        } catch (Exception ex) {
-            log.warn("Lỗi gửi thông báo websocket tới tài xế: {}", ex.getMessage());
+        @Override
+        @Transactional(readOnly = true)
+        public List<MasterBagResponse> getDriverBags(Long driverId) {
+                return masterBagRepository.findByAssignedDriverIdOrderByCreatedAtDesc(driverId).stream()
+                                .map(this::mapToResponse)
+                                .toList();
         }
 
-        return mapToResponse(saved);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<MasterBagResponse> getDriverBags(Long driverId) {
-        return masterBagRepository.findByAssignedDriverIdOrderByCreatedAtDesc(driverId).stream()
-                .map(this::mapToResponse)
-                .toList();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<MasterBagResponse> getIncomingBagsForHub(Long hubWarehouseId) {
-        List<String> activeStatuses = List.of("SEALED", "ASSIGNED_TO_DRIVER", "IN_TRANSIT", "ARRIVED_AT_HUB");
-        return masterBagRepository.findByDestWarehouseIdAndStatusInOrderByCreatedAtDesc(hubWarehouseId, activeStatuses).stream()
-                .map(this::mapToResponse)
-                .toList();
-    }
-
-    @Override
-    @Transactional
-    public MasterBagResponse driverScanTransit(String bagCode, Long driverId) {
-        final String cleanCode = bagCode != null ? bagCode.trim().toUpperCase() : "";
-        MasterBag bag = masterBagRepository.findByBagCode(cleanCode)
-                .or(() -> masterBagRepository.findBySealNumber(cleanCode))
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bao tải với mã bao/mã seal: " + cleanCode));
-
-        User driver = userRepository.findById(driverId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin tài xế!"));
-
-        boolean isAdmin = driver.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
-
-        // Kiểm tra phân quyền: Chỉ tài xế được chọn mới có thể quét mã code trên bao tải và chuyển trạng thái đang trung chuyển
-        if (!isAdmin && (bag.getAssignedDriverId() == null || !bag.getAssignedDriverId().equals(driverId))) {
-            String assignedName = bag.getAssignedDriverName() != null ? bag.getAssignedDriverName() : "tài xế khác";
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Từ chối quyền quét nhận: Bao tải này được phân công cho [" + assignedName + "]. Chỉ tài xế được chỉ định mới có quyền quét mã code để lấy bao mang đi!");
+        @Override
+        @Transactional(readOnly = true)
+        public List<MasterBagResponse> getIncomingBagsForHub(Long hubWarehouseId) {
+                List<String> activeStatuses = List.of("SEALED", "ASSIGNED_TO_DRIVER", "IN_TRANSIT", "ARRIVED_AT_HUB");
+                return masterBagRepository
+                                .findByDestWarehouseIdAndStatusInOrderByCreatedAtDesc(hubWarehouseId, activeStatuses)
+                                .stream()
+                                .map(this::mapToResponse)
+                                .toList();
         }
 
-        if ("IN_TRANSIT".equalsIgnoreCase(bag.getStatus())) {
-            throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] đã ở trạng thái Đang trung chuyển trước đó!");
+        @Override
+        @Transactional
+        public MasterBagResponse driverScanTransit(String bagCode, Long driverId) {
+                final String cleanCode = bagCode != null ? bagCode.trim().toUpperCase() : "";
+                MasterBag bag = masterBagRepository.findByBagCode(cleanCode)
+                                .or(() -> masterBagRepository.findBySealNumber(cleanCode))
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                                "Không tìm thấy bao tải với mã bao/mã seal: " + cleanCode));
+
+                User driver = userRepository.findById(driverId)
+                                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin tài xế!"));
+
+                boolean isAdmin = driver.getRoles().stream()
+                                .anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+
+                // Kiểm tra phân quyền: Chỉ tài xế được chọn mới có thể quét mã code trên bao
+                // tải và chuyển trạng thái đang trung chuyển
+                if (!isAdmin && (bag.getAssignedDriverId() == null || !bag.getAssignedDriverId().equals(driverId))) {
+                        String assignedName = bag.getAssignedDriverName() != null ? bag.getAssignedDriverName()
+                                        : "tài xế khác";
+                        throw new org.springframework.security.access.AccessDeniedException(
+                                        "Từ chối quyền quét nhận: Bao tải này được phân công cho [" + assignedName
+                                                        + "]. Chỉ tài xế được chỉ định mới có quyền quét mã code để lấy bao mang đi!");
+                }
+
+                if ("IN_TRANSIT".equalsIgnoreCase(bag.getStatus())) {
+                        throw new IllegalStateException("Bao tải [" + bag.getBagCode()
+                                        + "] đã ở trạng thái Đang trung chuyển trước đó!");
+                }
+
+                bag.setStatus("IN_TRANSIT");
+                bag.setDispatchedAt(LocalDateTime.now());
+                MasterBag saved = masterBagRepository.save(bag);
+
+                // Cập nhật trạng thái xe tải (nếu có xe được gán)
+                if (bag.getAssignedTruckId() != null) {
+                        truckRepository.findById(bag.getAssignedTruckId()).ifPresent(tr -> {
+                                tr.setStatus("IN_TRANSIT");
+                                truckRepository.save(tr);
+                        });
+                }
+
+                // Lấy danh sách tracking codes trong bao tải
+                List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(saved.getId());
+                List<String> trackingCodes = items.stream().map(BagItem::getTrackingCode).toList();
+
+                // Bắn sự kiện qua KAFKA để tự động chuyển trạng thái của tất cả các đơn hàng và
+                // ghi log hành trình
+                vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent event = vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent
+                                .builder()
+                                .eventType("DEPARTURE_TO_HUB")
+                                .bagCode(saved.getBagCode())
+                                .sealNumber(saved.getSealNumber())
+                                .originWarehouseId(saved.getOriginWarehouse().getId())
+                                .originWarehouseName(saved.getOriginWarehouse().getName())
+                                .destWarehouseId(saved.getDestWarehouse().getId())
+                                .destWarehouseName(saved.getDestWarehouse().getName())
+                                .driverId(driver.getId())
+                                .driverName(driver.getFullName())
+                                .driverPhone(driver.getPhoneNumber())
+                                .truckId(saved.getAssignedTruckId())
+                                .truckPlate(saved.getAssignedTruckPlate())
+                                .timestamp(LocalDateTime.now())
+                                .trackingCodes(trackingCodes)
+                                .build();
+
+                kafkaProducer.sendTransitEvent(event);
+                log.info("Tài xế {} đã quét mã code bao tải {} lên xe khởi hành trung chuyển", driver.getFullName(),
+                                saved.getBagCode());
+
+                return mapToResponse(saved);
         }
 
-        bag.setStatus("IN_TRANSIT");
-        bag.setDispatchedAt(LocalDateTime.now());
-        MasterBag saved = masterBagRepository.save(bag);
+        @Override
+        @Transactional
+        public MasterBagResponse hubScanInbound(String bagCode, Long hubWarehouseId, Long operatorId) {
+                final String cleanCode = bagCode != null ? bagCode.trim().toUpperCase() : "";
+                MasterBag bag = masterBagRepository.findByBagCode(cleanCode)
+                                .or(() -> masterBagRepository.findBySealNumber(cleanCode))
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                                "Không tìm thấy bao tải với mã bao/mã seal: " + cleanCode));
 
-        // Cập nhật trạng thái xe tải (nếu có xe được gán)
-        if (bag.getAssignedTruckId() != null) {
-            truckRepository.findById(bag.getAssignedTruckId()).ifPresent(tr -> {
-                tr.setStatus("IN_TRANSIT");
-                truckRepository.save(tr);
-            });
+                User operator = userRepository.findById(operatorId)
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                                "Không tìm thấy thông tin nhân sự thao tác!"));
+
+                Warehouse hub = warehouseRepository.findById(hubWarehouseId)
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                                "Không tìm thấy kho Hub ID: " + hubWarehouseId));
+
+                if (!"IN_TRANSIT".equalsIgnoreCase(bag.getStatus())
+                                && !"ASSIGNED_TO_DRIVER".equalsIgnoreCase(bag.getStatus())) {
+                        throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] hiện đang ở trạng thái ["
+                                        + bag.getStatus() + "], không thể quét tiếp nhận nhập Hub!");
+                }
+
+                bag.setStatus("ARRIVED_AT_HUB");
+                bag.setArrivedAtHubAt(LocalDateTime.now());
+                MasterBag saved = masterBagRepository.save(bag);
+
+                // Cập nhật trạng thái xe tải về AT_WAREHOUSE tại Hub này
+                if (saved.getAssignedTruckId() != null) {
+                        truckRepository.findById(saved.getAssignedTruckId()).ifPresent(tr -> {
+                                tr.setStatus("AT_WAREHOUSE");
+                                tr.setCurrentWarehouse(hub);
+                                truckRepository.save(tr);
+                        });
+                }
+
+                List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(saved.getId());
+                List<String> trackingCodes = items.stream().map(BagItem::getTrackingCode).toList();
+
+                // Bắn sự kiện qua KAFKA để chuyển toàn bộ trạng thái đơn hàng trong bao tải về
+                // đang ở kho trung chuyển hiện tại
+                vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent event = vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent
+                                .builder()
+                                .eventType("ARRIVED_AT_HUB")
+                                .bagCode(saved.getBagCode())
+                                .sealNumber(saved.getSealNumber())
+                                .originWarehouseId(saved.getOriginWarehouse().getId())
+                                .originWarehouseName(saved.getOriginWarehouse().getName())
+                                .destWarehouseId(hub.getId())
+                                .destWarehouseName(hub.getName())
+                                .driverId(saved.getAssignedDriverId())
+                                .driverName(saved.getAssignedDriverName())
+                                .driverPhone(saved.getAssignedDriverPhone())
+                                .truckId(saved.getAssignedTruckId())
+                                .truckPlate(saved.getAssignedTruckPlate())
+                                .operatorId(operator.getId())
+                                .operatorName(operator.getFullName())
+                                .timestamp(LocalDateTime.now())
+                                .trackingCodes(trackingCodes)
+                                .build();
+
+                kafkaProducer.sendTransitEvent(event);
+                log.info("Kho Hub {} ({}) đã quét tiếp nhận bao tải {} từ tài xế {}",
+                                hub.getName(), operator.getFullName(), saved.getBagCode(),
+                                saved.getAssignedDriverName());
+
+                return mapToResponse(saved);
         }
-
-        // Lấy danh sách tracking codes trong bao tải
-        List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(saved.getId());
-        List<String> trackingCodes = items.stream().map(BagItem::getTrackingCode).toList();
-
-        // Bắn sự kiện qua KAFKA để tự động chuyển trạng thái của tất cả các đơn hàng và ghi log hành trình
-        vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent event = vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent.builder()
-                .eventType("DEPARTURE_TO_HUB")
-                .bagCode(saved.getBagCode())
-                .sealNumber(saved.getSealNumber())
-                .originWarehouseId(saved.getOriginWarehouse().getId())
-                .originWarehouseName(saved.getOriginWarehouse().getName())
-                .destWarehouseId(saved.getDestWarehouse().getId())
-                .destWarehouseName(saved.getDestWarehouse().getName())
-                .driverId(driver.getId())
-                .driverName(driver.getFullName())
-                .driverPhone(driver.getPhoneNumber())
-                .truckId(saved.getAssignedTruckId())
-                .truckPlate(saved.getAssignedTruckPlate())
-                .timestamp(LocalDateTime.now())
-                .trackingCodes(trackingCodes)
-                .build();
-
-        kafkaProducer.sendTransitEvent(event);
-        log.info("Tài xế {} đã quét mã code bao tải {} lên xe khởi hành trung chuyển", driver.getFullName(), saved.getBagCode());
-
-        return mapToResponse(saved);
-    }
-
-    @Override
-    @Transactional
-    public MasterBagResponse hubScanInbound(String bagCode, Long hubWarehouseId, Long operatorId) {
-        final String cleanCode = bagCode != null ? bagCode.trim().toUpperCase() : "";
-        MasterBag bag = masterBagRepository.findByBagCode(cleanCode)
-                .or(() -> masterBagRepository.findBySealNumber(cleanCode))
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bao tải với mã bao/mã seal: " + cleanCode));
-
-        User operator = userRepository.findById(operatorId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin nhân sự thao tác!"));
-
-        Warehouse hub = warehouseRepository.findById(hubWarehouseId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kho Hub ID: " + hubWarehouseId));
-
-        if (!"IN_TRANSIT".equalsIgnoreCase(bag.getStatus()) && !"ASSIGNED_TO_DRIVER".equalsIgnoreCase(bag.getStatus())) {
-            throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] hiện đang ở trạng thái [" + bag.getStatus() + "], không thể quét tiếp nhận nhập Hub!");
-        }
-
-        bag.setStatus("ARRIVED_AT_HUB");
-        bag.setArrivedAtHubAt(LocalDateTime.now());
-        MasterBag saved = masterBagRepository.save(bag);
-
-        // Cập nhật trạng thái xe tải về AT_WAREHOUSE tại Hub này
-        if (saved.getAssignedTruckId() != null) {
-            truckRepository.findById(saved.getAssignedTruckId()).ifPresent(tr -> {
-                tr.setStatus("AT_WAREHOUSE");
-                tr.setCurrentWarehouse(hub);
-                truckRepository.save(tr);
-            });
-        }
-
-        List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(saved.getId());
-        List<String> trackingCodes = items.stream().map(BagItem::getTrackingCode).toList();
-
-        // Bắn sự kiện qua KAFKA để chuyển toàn bộ trạng thái đơn hàng trong bao tải về đang ở kho trung chuyển hiện tại
-        vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent event = vn.rikkei.post.dto.kafka.MasterBagTransitKafkaEvent.builder()
-                .eventType("ARRIVED_AT_HUB")
-                .bagCode(saved.getBagCode())
-                .sealNumber(saved.getSealNumber())
-                .originWarehouseId(saved.getOriginWarehouse().getId())
-                .originWarehouseName(saved.getOriginWarehouse().getName())
-                .destWarehouseId(hub.getId())
-                .destWarehouseName(hub.getName())
-                .driverId(saved.getAssignedDriverId())
-                .driverName(saved.getAssignedDriverName())
-                .driverPhone(saved.getAssignedDriverPhone())
-                .truckId(saved.getAssignedTruckId())
-                .truckPlate(saved.getAssignedTruckPlate())
-                .operatorId(operator.getId())
-                .operatorName(operator.getFullName())
-                .timestamp(LocalDateTime.now())
-                .trackingCodes(trackingCodes)
-                .build();
-
-        kafkaProducer.sendTransitEvent(event);
-        log.info("Kho Hub {} ({}) đã quét tiếp nhận bao tải {} từ tài xế {}",
-                hub.getName(), operator.getFullName(), saved.getBagCode(), saved.getAssignedDriverName());
-
-        return mapToResponse(saved);
-    }
 
     private MasterBagResponse mapToResponse(MasterBag bag) {
         List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(bag.getId());
@@ -631,16 +625,7 @@ public class MasterBagServiceImpl implements MasterBagService {
                     .orElse("ID: " + bag.getSealedByUserId());
         }
 
-        private synchronized String generateUniqueBagCode() {
-                String datePrefix = "BAG" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
-                Random random = new Random();
-                String code;
-                do {
-                        int seq = 1000 + random.nextInt(9000);
-                        code = datePrefix + seq;
-                } while (masterBagRepository.existsByBagCode(code));
-                return code;
-        }
+        String manifestCode = bag.getManifestId() != null ? ("MNF-" + bag.getManifestId()) : null;
 
         String statusDesc = switch (bag.getStatus()) {
             case "OPEN" -> "Đang gom hàng";
@@ -682,14 +667,14 @@ public class MasterBagServiceImpl implements MasterBagService {
                 .build();
     }
 
-    private synchronized String generateUniqueBagCode() {
-        String datePrefix = "BAG" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
-        Random random = new Random();
-        String code;
-        do {
-            int seq = 1000 + random.nextInt(9000);
-            code = datePrefix + seq;
-        } while (masterBagRepository.existsByBagCode(code));
-        return code;
-    }
+        private synchronized String generateUniqueBagCode() {
+                String datePrefix = "BAG" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
+                Random random = new Random();
+                String code;
+                do {
+                        int seq = 1000 + random.nextInt(9000);
+                        code = datePrefix + seq;
+                } while (masterBagRepository.existsByBagCode(code));
+                return code;
+        }
 }

@@ -247,6 +247,34 @@ public class DataInitializer implements CommandLineRunner {
             log.info("Đã khởi tạo danh sách 3 xe tải mẫu thành công!");
         }
 
+        // Khởi tạo thêm xe tải trung chuyển cho Miền Trung và Miền Nam nếu chưa có
+        if (!truckRepository.existsByLicensePlate("43C-777.77")) {
+            Warehouse hubDn = warehouseRepository.findByCode("HUB_DN_CENTRAL").orElse(null);
+            if (hubDn != null) {
+                truckRepository.save(vn.rikkei.post.entity.Truck.builder()
+                        .truckType("Xe tải 5 tấn đường trục")
+                        .payloadKg(5000.0)
+                        .licensePlate("43C-777.77")
+                        .currentWarehouse(hubDn)
+                        .status("AT_WAREHOUSE")
+                        .notes("Xe trung chuyển tuyến Hub Đà Nẵng - Miền Trung")
+                        .build());
+            }
+        }
+        if (!truckRepository.existsByLicensePlate("51D-666.66")) {
+            Warehouse hubSgn = warehouseRepository.findByCode("HUB_SGN_SOUTH").orElse(null);
+            if (hubSgn != null) {
+                truckRepository.save(vn.rikkei.post.entity.Truck.builder()
+                        .truckType("Xe tải 8 tấn đường trục Bắc Nam")
+                        .payloadKg(8000.0)
+                        .licensePlate("51D-666.66")
+                        .currentWarehouse(hubSgn)
+                        .status("IN_TRANSIT")
+                        .notes("Xe trung chuyển tuyến Mega Hub Nam Sài Gòn")
+                        .build());
+            }
+        }
+
         // 4. Khởi tạo bảng giá cước chuẩn
         if (pricingMatrixRepository.count() == 0) {
             List<PricingMatrix> matrices = List.of(
@@ -312,6 +340,103 @@ public class DataInitializer implements CommandLineRunner {
                             .latitude(16.0680).longitude(108.1500).capacityPackages(80000).isActive(true).build());
             warehouseRepository.saveAll(hubs);
             log.info("Đã khởi tạo danh sách Hub và Bưu cục mẫu");
+        }
+
+        // Khởi tạo các Tổng kho Trung chuyển Liên miền (Regional Hubs) nếu chưa có
+        if (!warehouseRepository.existsByCode("REGIONAL_HUB_NORTH")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("REGIONAL_HUB_NORTH")
+                    .name("Tổng kho Trung chuyển Liên miền Miền Bắc (Mega Regional Hub)")
+                    .type("REGIONAL_HUB")
+                    .provinceId(1).districtId(1)
+                    .address("Trung tâm Khai thác Logistics Sóc Sơn - Liên miền Bắc, Hà Nội")
+                    .latitude(21.2500).longitude(105.8000)
+                    .capacityPackages(300000).isActive(true).build());
+            log.info("Đã khởi tạo Tổng kho trung chuyển liên miền Miền Bắc (REGIONAL_HUB_NORTH)");
+        }
+        if (!warehouseRepository.existsByCode("REGIONAL_HUB_CENTRAL")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("REGIONAL_HUB_CENTRAL")
+                    .name("Tổng kho Trung chuyển Liên miền Miền Trung (Mega Regional Hub)")
+                    .type("REGIONAL_HUB")
+                    .provinceId(48).districtId(490)
+                    .address("Trung tâm Khai thác Logistics Hòa Khánh - Liên miền Trung, Đà Nẵng")
+                    .latitude(16.0300).longitude(108.1800)
+                    .capacityPackages(200000).isActive(true).build());
+            log.info("Đã khởi tạo Tổng kho trung chuyển liên miền Miền Trung (REGIONAL_HUB_CENTRAL)");
+        }
+        if (!warehouseRepository.existsByCode("REGIONAL_HUB_SOUTH")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("REGIONAL_HUB_SOUTH")
+                    .name("Tổng kho Trung chuyển Liên miền Miền Nam (Mega Regional Hub)")
+                    .type("REGIONAL_HUB")
+                    .provinceId(79).districtId(760)
+                    .address("Trung tâm Khai thác Logistics Liên miền Sóng Thần - Dĩ An / TP.HCM")
+                    .latitude(10.8900).longitude(106.7500)
+                    .capacityPackages(350000).isActive(true).build());
+            log.info("Đã khởi tạo Tổng kho trung chuyển liên miền Miền Nam (REGIONAL_HUB_SOUTH)");
+        }
+
+        // Bổ sung các Hub và Bưu cục phủ khắp dải đất hình chữ S (Bắc - Trung - Nam - Tây Nam Bộ)
+        if (!warehouseRepository.existsByCode("HUB_DN_CENTRAL")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("HUB_DN_CENTRAL")
+                    .name("Trung tâm Khai thác Hub Miền Trung Đà Nẵng")
+                    .type("HUB")
+                    .provinceId(48).districtId(490)
+                    .address("Khu công nghiệp Hòa Cầm, Cẩm Lệ, Đà Nẵng")
+                    .latitude(16.0180).longitude(108.1900)
+                    .capacityPackages(80000).isActive(true).build());
+        }
+        if (!warehouseRepository.existsByCode("SPOKE_DN_HC")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("SPOKE_DN_HC")
+                    .name("Bưu cục Hải Châu - Đà Nẵng")
+                    .type("SPOKE_POST_OFFICE")
+                    .provinceId(48).districtId(492)
+                    .address("Số 04 Bạch Đằng, Thạch Thang, Hải Châu, Đà Nẵng")
+                    .latitude(16.0750).longitude(108.2230)
+                    .capacityPackages(12000).isActive(true).build());
+        }
+        if (!warehouseRepository.existsByCode("SPOKE_SGN_Q1")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("SPOKE_SGN_Q1")
+                    .name("Bưu cục Bến Nghé - Quận 1")
+                    .type("SPOKE_POST_OFFICE")
+                    .provinceId(79).districtId(760)
+                    .address("Số 02 Công xã Paris, Bến Nghé, Quận 1, TP.HCM")
+                    .latitude(10.7798).longitude(106.6999)
+                    .capacityPackages(20000).isActive(true).build());
+        }
+        if (!warehouseRepository.existsByCode("SPOKE_SGN_TB")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("SPOKE_SGN_TB")
+                    .name("Bưu cục Tân Bình")
+                    .type("SPOKE_POST_OFFICE")
+                    .provinceId(79).districtId(766)
+                    .address("Số 150 Cộng Hòa, Phường 12, Tân Bình, TP.HCM")
+                    .latitude(10.8015).longitude(106.6521)
+                    .capacityPackages(15000).isActive(true).build());
+        }
+        if (!warehouseRepository.existsByCode("HUB_CANTHO_MEKONG")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("HUB_CANTHO_MEKONG")
+                    .name("Trung tâm Khai thác Hub Tây Nam Bộ - Cần Thơ")
+                    .type("HUB")
+                    .provinceId(92).districtId(916)
+                    .address("Khu công nghiệp Trà Nóc, Bình Thủy, Cần Thơ")
+                    .latitude(10.0850).longitude(105.7200)
+                    .capacityPackages(60000).isActive(true).build());
+        }
+        if (!warehouseRepository.existsByCode("SPOKE_CT_NK")) {
+            warehouseRepository.save(Warehouse.builder()
+                    .code("SPOKE_CT_NK")
+                    .name("Bưu cục Ninh Kiều - Cần Thơ")
+                    .type("SPOKE_POST_OFFICE")
+                    .provinceId(92).districtId(916)
+                    .address("Số 02 Hòa Bình, Tân An, Ninh Kiều, Cần Thơ")
+                    .latitude(10.0340).longitude(105.7830)
+                    .capacityPackages(10000).isActive(true).build());
         }
 
         // 6. Khởi tạo danh mục 34 Tỉnh/Thành phố & 3321 Xã/Phường Việt Nam (quy chuẩn hành chính mới)

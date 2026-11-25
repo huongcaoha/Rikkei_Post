@@ -709,6 +709,147 @@ export interface AiChatMessage {
   structuredData?: any;
 }
 
+// ======================== LỆNH ĐIỀU VẬN XE (DISPATCH ORDER) ========================
+export interface DispatchOrderItem {
+  id: number;
+  masterBagId: number;
+  bagCode: string;
+  sealNumber?: string;
+  originWarehouseName?: string;
+  destWarehouseName?: string;
+  bagStatus?: string;
+  totalItems: number;
+  weightKg: number;
+  isReceivedAtDest: boolean;
+  receivedAt?: string;
+  receiverUserId?: number;
+  receiverUserName?: string;
+  scannedAt: string;
+}
+
+export interface DispatchOrder {
+  id: number;
+  dispatchCode: string;
+  originWarehouseId: number;
+  originWarehouseName: string;
+  originWarehouseCode: string;
+  destWarehouseId: number;
+  destWarehouseName: string;
+  destWarehouseCode: string;
+  driverId: number;
+  driverName: string;
+  driverPhone?: string;
+  truckId?: number;
+  truckPlate?: string;
+  status: 'PICKED_UP' | 'IN_TRANSIT' | 'COMPLETED' | 'CANCELLED' | string;
+  statusDescription: string;
+  totalBags: number;
+  totalWeightKg: number;
+  totalItems: number;
+  notes?: string;
+  departureTime?: string;
+  completedTime?: string;
+  createdUserId?: number;
+  createdUserName?: string;
+  createdAt: string;
+  updatedAt: string;
+  items: DispatchOrderItem[];
+}
+
+export interface CreateDispatchOrderRequest {
+  originWarehouseId: number;
+  destWarehouseId: number;
+  driverId: number;
+  truckId?: number;
+  notes?: string;
+  departureTime?: string;
+  bagCodes: string[];
+}
+
+export interface UpdateDispatchOrderRequest {
+  driverId?: number;
+  truckId?: number;
+  destWarehouseId?: number;
+  notes?: string;
+  departureTime?: string;
+  bagCodes?: string[];
+}
+
+export interface UpdateDispatchStatusRequest {
+  status: 'IN_TRANSIT' | 'COMPLETED' | 'CANCELLED' | string;
+  notes?: string;
+}
+
+export interface DispatchScanInboundRequest {
+  bagCode: string;
+}
+
+// ======================== MẠNG LƯỚI LOGISTICS TOPOLOGY MAP ========================
+export interface NetworkTopologyNode {
+  id: number;
+  code: string;
+  name: string;
+  type: 'REGIONAL_HUB' | 'HUB' | 'SPOKE_POST_OFFICE' | string;
+  typeDescription: string;
+  provinceId: number;
+  provinceName: string;
+  districtId?: number;
+  address: string;
+  latitude: number;
+  longitude: number;
+  capacityPackages: number;
+  availableTrucksCount: number;
+  pendingBagsCount: number;
+  incomingDispatchesCount: number;
+  isActive: boolean;
+}
+
+export interface NetworkTopologyLink {
+  id: string;
+  fromWarehouseId: number;
+  fromWarehouseName: string;
+  fromWarehouseCode: string;
+  fromLat: number;
+  fromLng: number;
+  toWarehouseId: number;
+  toWarehouseName: string;
+  toWarehouseCode: string;
+  toLat: number;
+  toLng: number;
+  linkType: 'REGIONAL_BACKBONE' | 'FEEDER_HUB' | 'LAST_MILE_SPOKE' | string;
+  linkDescription: string;
+  distanceKm: number;
+  activeTransitsCount: number;
+}
+
+export interface NetworkActiveTruck {
+  id: number;
+  licensePlate: string;
+  truckType: string;
+  payloadKg: number;
+  status: string;
+  driverName: string;
+  driverPhone?: string;
+  currentWarehouseId?: number;
+  currentWarehouseName: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface NetworkTopologyResponse {
+  nodes: NetworkTopologyNode[];
+  links: NetworkTopologyLink[];
+  activeTrucks: NetworkActiveTruck[];
+  totalRegionalHubs: number;
+  totalHubs: number;
+  totalSpokes: number;
+  totalLinks: number;
+  totalActiveTrucks: number;
+  totalBagsInTransit: number;
+}
+
+
+
 
 
 
