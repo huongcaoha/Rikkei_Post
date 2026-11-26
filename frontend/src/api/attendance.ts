@@ -49,7 +49,8 @@ export interface FaceProfileDTO {
   id?: number;
   userId: number;
   facePhotoUrl?: string;
-  isRegistered: boolean;
+  isRegistered?: boolean;
+  registered?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }

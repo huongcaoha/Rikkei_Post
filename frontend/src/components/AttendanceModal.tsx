@@ -34,6 +34,13 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
   const [faceProfile, setFaceProfile] = useState<FaceProfileDTO | null>(null);
   const [assignedWarehouse, setAssignedWarehouse] = useState<Warehouse | null>(null);
 
+  // Kiểm tra hồ sơ FaceID: hỗ trợ cả isRegistered, registered (Jackson) và kiểm tra độ dài chuỗi ảnh facePhotoUrl
+  const isFaceRegistered = Boolean(
+    faceProfile?.isRegistered ||
+    (faceProfile as any)?.registered ||
+    (faceProfile?.facePhotoUrl && faceProfile.facePhotoUrl.length > 50)
+  );
+
   // Phân quyền: Kiểm tra xem người dùng có phải là Quản lý (Admin, Branch Manager, Post Office Manager) hay không
   const userRoles = user?.roles || [];
   const isManager = userRoles.some((r: any) => {
@@ -361,7 +368,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       return;
     }
 
-    if (!faceProfile?.isRegistered) {
+    if (!isFaceRegistered) {
       message.error(
         'Tài khoản của bạn chưa được Quản lý bưu cục đăng ký khuôn mặt mẫu FaceID! Vui lòng liên hệ Quản lý bưu cục để được chụp ảnh kích hoạt FaceID.'
       );
@@ -418,7 +425,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       return;
     }
 
-    if (!faceProfile?.isRegistered) {
+    if (!isFaceRegistered) {
       message.error(
         'Tài khoản của bạn chưa được Quản lý bưu cục đăng ký khuôn mặt mẫu FaceID! Vui lòng liên hệ Quản lý bưu cục để được chụp ảnh kích hoạt FaceID.'
       );
@@ -558,7 +565,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     currentGps !== null &&
     isLocationValid &&
     capturedPhoto !== null &&
-    faceProfile?.isRegistered &&
+    isFaceRegistered &&
     assignedWarehouse !== null &&
     !loading;
 
@@ -568,7 +575,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     currentGps !== null &&
     isLocationValid &&
     capturedPhoto !== null &&
-    faceProfile?.isRegistered &&
+    isFaceRegistered &&
     assignedWarehouse !== null &&
     !loading;
 
@@ -632,7 +639,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                 </div>
 
                 {/* Cảnh báo nếu chưa đăng ký FaceID Profile */}
-                {!faceProfile?.isRegistered && (
+                {!isFaceRegistered && (
                   <Alert
                     type="warning"
                     showIcon
@@ -926,7 +933,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                     <span className="text-amber-600">⚠️ Vui lòng cập nhật tọa độ GPS để mở khóa nút chấm công</span>
                   ) : !isLocationValid ? (
                     <span className="text-red-600">🚫 Bạn đang ở ngoài bán kính 800m của kho nên không thể chấm công</span>
-                  ) : !faceProfile?.isRegistered ? (
+                  ) : !isFaceRegistered ? (
                     <span className="text-amber-600">⚠️ Bạn cần được Quản lý bưu cục đăng ký FaceID trước khi chấm công</span>
                   ) : !capturedPhoto ? (
                     <span className="text-blue-600">📸 Vui lòng chụp ảnh khuôn mặt để hệ thống đối chiếu FaceID</span>
@@ -1026,7 +1033,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                       </>
                     ) : (
                       <>
-                        {faceProfile?.isRegistered ? (
+                        {isFaceRegistered ? (
                           <Alert
                             type="success"
                             showIcon
