@@ -633,10 +633,21 @@ public class MasterBagServiceImpl implements MasterBagService {
                                 .orElseThrow(() -> new IllegalArgumentException(
                                                 "Không tìm thấy kho Hub ID: " + hubWarehouseId));
 
+                if ("ARRIVED_AT_HUB".equalsIgnoreCase(bag.getStatus())) {
+                        throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] đã được quét tiếp nhận nhập kho đích từ trước rồi!");
+                }
+
+                if ("OPEN".equalsIgnoreCase(bag.getStatus())) {
+                        throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] hiện đang mở, chưa được đóng bao và kẹp chì!");
+                }
+
                 if (!"IN_TRANSIT".equalsIgnoreCase(bag.getStatus())
-                                && !"ASSIGNED_TO_DRIVER".equalsIgnoreCase(bag.getStatus())) {
+                                && !"ASSIGNED_TO_DRIVER".equalsIgnoreCase(bag.getStatus())
+                                && !"SEALED".equalsIgnoreCase(bag.getStatus())
+                                && !"MANIFESTED".equalsIgnoreCase(bag.getStatus())
+                                && !"DISPATCHED".equalsIgnoreCase(bag.getStatus())) {
                         throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] hiện đang ở trạng thái ["
-                                        + bag.getStatus() + "], không thể quét tiếp nhận nhập Hub!");
+                                        + bag.getStatus() + "], không thể quét tiếp nhận nhập kho!");
                 }
 
                 bag.setStatus("ARRIVED_AT_HUB");

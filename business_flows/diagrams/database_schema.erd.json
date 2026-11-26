@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "Rikkei Post WMS Logistics - Database Schema (ERD)",
+    "locale": "en",
+    "output": "business_flows/diagrams/database_schema.html",
+    "quality_profile": "standard"
+  },
+  "layout": { "mode": "grid", "gapX": 60, "gapY": 40 },
+  "entities": [
+    {
+      "id": "users",
+      "label": "users",
+      "tag": "iam",
+      "row": 0,
+      "col": 0,
+      "attributes": [
+        { "name": "id", "type": "bigint", "key": "pk" },
+        { "name": "username", "type": "varchar(50)", "key": "uk" },
+        { "name": "full_name", "type": "varchar(100)" },
+        { "name": "phone", "type": "varchar(20)" },
+        { "name": "role_code", "type": "varchar(50)" },
+        { "name": "warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "status", "type": "varchar(20)" }
+      ]
+    },
+    {
+      "id": "warehouses",
+      "label": "warehouses",
+      "tag": "network",
+      "row": 1,
+      "col": 0,
+      "attributes": [
+        { "name": "id", "type": "bigint", "key": "pk" },
+        { "name": "code", "type": "varchar(30)", "key": "uk" },
+        { "name": "name", "type": "varchar(100)" },
+        { "name": "warehouse_type", "type": "varchar(20)" },
+        { "name": "manager_id", "type": "bigint", "key": "fk", "references": "users.id" }
+      ]
+    },
+    {
+      "id": "orders",
+      "label": "orders",
+      "tag": "parcels",
+      "row": 0,
+      "col": 1,
+      "attributes": [
+        { "name": "id", "type": "bigint", "key": "pk" },
+        { "name": "tracking_code", "type": "varchar(30)", "key": "uk" },
+        { "name": "sender_id", "type": "bigint", "key": "fk", "references": "users.id" },
+        { "name": "master_bag_id", "type": "bigint", "key": "fk", "references": "master_bags.id" },
+        { "name": "current_warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "cod_amount", "type": "numeric(14,2)" },
+        { "name": "status", "type": "varchar(30)" }
+      ]
+    },
+    {
+      "id": "master_bags",
+      "label": "master_bags",
+      "tag": "logistics",
+      "row": 0,
+      "col": 2,
+      "attributes": [
+        { "name": "id", "type": "bigint", "key": "pk" },
+        { "name": "bag_code", "type": "varchar(30)", "key": "uk" },
+        { "name": "seal_code", "type": "varchar(30)", "key": "uk" },
+        { "name": "origin_warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "destination_warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "dispatch_order_id", "type": "bigint", "key": "fk", "references": "dispatch_orders.id" },
+        { "name": "driver_id", "type": "bigint", "key": "fk", "references": "users.id" },
+        { "name": "status", "type": "varchar(30)" }
+      ]
+    },
+    {
+      "id": "dispatch_orders",
+      "label": "dispatch_orders",
+      "tag": "logistics",
+      "row": 1,
+      "col": 2,
+      "attributes": [
+        { "name": "id", "type": "bigint", "key": "pk" },
+        { "name": "dispatch_code", "type": "varchar(30)", "key": "uk" },
+        { "name": "origin_warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "destination_warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "driver_id", "type": "bigint", "key": "fk", "references": "users.id" },
+        { "name": "truck_id", "type": "bigint" },
+        { "name": "status", "type": "varchar(30)" }
+      ]
+    },
+    {
+      "id": "supply_tickets",
+      "label": "supply_tickets",
+      "tag": "assets",
+      "row": 1,
+      "col": 1,
+      "attributes": [
+        { "name": "id", "type": "bigint", "key": "pk" },
+        { "name": "ticket_code", "type": "varchar(30)", "key": "uk" },
+        { "name": "ticket_type", "type": "varchar(20)" },
+        { "name": "target_warehouse_id", "type": "bigint", "key": "fk", "references": "warehouses.id" },
+        { "name": "status", "type": "varchar(30)" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_user_wh",
+      "from": "warehouses",
+      "to": "users",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "label": "manages"
+    },
+    {
+      "id": "rel_order_user",
+      "from": "orders",
+      "to": "users",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "label": "sends"
+    },
+    {
+      "id": "rel_order_bag",
+      "from": "orders",
+      "to": "master_bags",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "label": "contains"
+    },
+    {
+      "id": "rel_bag_dispatch",
+      "from": "master_bags",
+      "to": "dispatch_orders",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "label": "transports"
+    },
+    {
+      "id": "rel_supply_wh",
+      "from": "supply_tickets",
+      "to": "warehouses",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "label": "receives"
+    }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Bưu Gửi & Bao Tải Master Bag", "items": ["Đơn hàng liên kết N-1 với bao tải Master Bag", "Bao tải niêm phong kẹp chì an ninh Seal", "Bao tải nạp lên chuyến xe điều vận liên kho"] },
+    { "dot": "emerald", "title": "Điều Vận & Nhân Sự", "items": ["Tài xế và xe tải gán vào chuyến xe và bao tải", "Kho bưu cục quản lý tuyến đường và nhân viên", "Phân quyền theo phạm vi kho trực thuộc"] },
+    { "dot": "amber", "title": "Vật Tư & Thiết Bị", "items": ["Phiếu xuất kho liên kết bưu cục đích", "Bưu cục xác nhận nhận đủ khóa sửa đổi", "Phiếu thu hồi thiết bị hỏng hai chiều"] }
+  ]
+}

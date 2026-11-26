@@ -19,7 +19,8 @@ import {
   Tooltip,
   Divider,
   Progress,
-  Alert
+  Alert,
+  Segmented
 } from 'antd';
 import {
   Truck,
@@ -40,8 +41,12 @@ import {
   Check,
   XCircle,
   MapPin,
-  Calendar
+  Calendar,
+  Camera,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { dispatchApi, DispatchFilterParams } from '../api/dispatch';
 import { locationApi } from '../api/location';
 import { truckApi } from '../api/truck';
@@ -112,7 +117,15 @@ export const DispatchManagementPage: React.FC = () => {
   // Modal quét nhập kho đích
   const [inboundScanCode, setInboundScanCode] = useState('');
   const [inboundLoading, setInboundLoading] = useState(false);
+  const [inboundScanMode, setInboundScanMode] = useState<'CAMERA' | 'GUN'>('CAMERA');
+  const [inboundCameraActive, setInboundCameraActive] = useState(false);
+  const [inboundFacingMode, setInboundFacingMode] = useState<'environment' | 'user'>('environment');
+  const [isInboundMuted, setIsInboundMuted] = useState(false);
   const inboundInputRef = useRef<any>(null);
+  const inboundHtml5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const inboundLastCodeRef = useRef<string>('');
+  const inboundLastTimeRef = useRef<number>(0);
+  const inboundProcessingRef = useRef<boolean>(false);
 
   const userWarehouseId = user?.assignedPostOfficeId || (user as any)?.warehouseId;
   const userRoles: string[] = user?.roles || [];
@@ -298,14 +311,149 @@ export const DispatchManagementPage: React.FC = () => {
     }
   };
 
+  const startInboundCamera = async (mode: 'environment' | 'user' = 'environment') => {
+    try {
+      if (inboundHtml5QrCodeRef.current) {
+        await stopInboundCamera();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      const element = document.getElementById('dispatch-inbound-camera-reader');
+      if (!element) return;
+
+      const qrCode = new Html5Qrcode('dispatch-inbound-camera-reader');
+      inboundHtml5QrCodeRef.current = qrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 280, height: 200 },
+        aspectRatio: 1.333,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+      };
+
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          const backCam =
+            cameras.find(
+              (c) =>
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('sau') ||
+                c.label.toLowerCase().includes('environment')
+            ) || cameras[cameras.length - 1];
+
+          await qrCode.start(
+            mode === 'environment'
+              ? backCam
+                ? backCam.id
+                : { facingMode: 'environment' }
+              : { facingMode: 'user' },
+            config,
+            (decodedText) => handleInboundCameraDecoded(decodedText),
+            () => {}
+          );
+        } else {
+          await qrCode.start(
+            { facingMode: mode },
+            config,
+            (decodedText) => handleInboundCameraDecoded(decodedText),
+            () => {}
+          );
+        }
+        setInboundCameraActive(true);
+      } catch (camErr) {
+        await qrCode.start(
+          { facingMode: mode },
+          config,
+          (decodedText) => handleInboundCameraDecoded(decodedText),
+          () => {}
+        );
+        setInboundCameraActive(true);
+      }
+    } catch (err: any) {
+      console.warn('Lỗi bật camera:', err);
+      setInboundCameraActive(false);
+    }
+  };
+
+  const stopInboundCamera = async () => {
+    if (inboundHtml5QrCodeRef.current) {
+      try {
+        if (inboundHtml5QrCodeRef.current.isScanning) {
+          await inboundHtml5QrCodeRef.current.stop();
+        }
+        await inboundHtml5QrCodeRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      inboundHtml5QrCodeRef.current = null;
+    }
+    setInboundCameraActive(false);
+  };
+
+  const handleSwitchInboundCamera = async () => {
+    const nextMode = inboundFacingMode === 'environment' ? 'user' : 'environment';
+    setInboundFacingMode(nextMode);
+    await startInboundCamera(nextMode);
+  };
+
+  const handleSwitchInboundScanMode = async (mode: 'CAMERA' | 'GUN') => {
+    setInboundScanMode(mode);
+    if (mode === 'CAMERA') {
+      setTimeout(() => {
+        startInboundCamera(inboundFacingMode);
+      }, 300);
+    } else {
+      await stopInboundCamera();
+      setTimeout(() => {
+        inboundInputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const handleInboundCameraDecoded = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) return;
+
+    const now = Date.now();
+    if (code === inboundLastCodeRef.current && now - inboundLastTimeRef.current < 2500) {
+      return;
+    }
+
+    if (inboundProcessingRef.current) return;
+    inboundProcessingRef.current = true;
+    inboundLastCodeRef.current = code;
+    inboundLastTimeRef.current = now;
+
+    await handleScanInboundSubmit(code);
+    inboundProcessingRef.current = false;
+  };
+
   // Mở modal quét nhập kho đích
   const handleOpenInboundModal = (dispatch: DispatchOrder) => {
     setSelectedDispatch(dispatch);
     setInboundScanCode('');
     setIsInboundModalOpen(true);
-    setTimeout(() => {
-      inboundInputRef.current?.focus();
-    }, 200);
+    if (inboundScanMode === 'CAMERA') {
+      setTimeout(() => {
+        startInboundCamera(inboundFacingMode);
+      }, 350);
+    } else {
+      setTimeout(() => {
+        inboundInputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const handleCloseInboundModal = async () => {
+    await stopInboundCamera();
+    setIsInboundModalOpen(false);
+    setInboundScanCode('');
   };
 
   // Thực hiện quét nhận bao tải tại Hub đích
@@ -331,9 +479,11 @@ export const DispatchManagementPage: React.FC = () => {
       message.error(err.response?.data?.message || 'Quét nhận bao tải thất bại');
     } finally {
       setInboundLoading(false);
-      setTimeout(() => {
-        inboundInputRef.current?.focus();
-      }, 100);
+      if (inboundScanMode === 'GUN') {
+        setTimeout(() => {
+          inboundInputRef.current?.focus();
+        }, 100);
+      }
     }
   };
 
@@ -1006,18 +1156,45 @@ export const DispatchManagementPage: React.FC = () => {
         )}
       </Modal>
 
-      {/* ================= MODAL QUÉT NHẬP KHO TẠI HUB ĐÍCH ================= */}
+      {/* ================= MODAL QUÉT NHẬP KHO TẠI HUB ĐÍCH (SÚNG / CAMERA) ================= */}
       <Modal
         title={
-          <div className="flex items-center gap-2 text-base font-bold text-purple-800">
-            <ScanLine size={20} className="text-purple-600" />
-            <span>Tiếp Nhận & Quét Nhập Kho Bao Tải Tại Hub Đích</span>
+          <div className="flex items-center justify-between pr-6 w-full">
+            <div className="flex items-center gap-2 text-base font-bold text-purple-800">
+              <ScanLine size={20} className="text-purple-600" />
+              <span>Tiếp Nhận & Quét Nhập Kho Bao Tải (Súng / Camera)</span>
+            </div>
+            {inboundScanMode === 'CAMERA' && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="small"
+                  icon={isInboundMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                  onClick={() => setIsInboundMuted(!isInboundMuted)}
+                  className="text-xs font-medium"
+                >
+                  {isInboundMuted ? 'Bật âm' : 'Tắt âm'}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<RefreshCw size={14} />}
+                  onClick={handleSwitchInboundCamera}
+                  className="text-xs font-medium"
+                >
+                  Đổi Cam
+                </Button>
+              </div>
+            )}
           </div>
         }
         open={isInboundModalOpen}
-        onCancel={() => setIsInboundModalOpen(false)}
-        footer={null}
-        width={700}
+        onCancel={handleCloseInboundModal}
+        footer={[
+          <Button key="close" type="primary" onClick={handleCloseInboundModal} className="bg-purple-600 font-bold px-6">
+            Hoàn tất & Đóng
+          </Button>
+        ]}
+        width={720}
+        destroyOnClose={false}
       >
         {selectedDispatch && (
           <div className="space-y-4 mt-2">
@@ -1027,38 +1204,91 @@ export const DispatchManagementPage: React.FC = () => {
                   Chuyến xe điều vận: <b className="font-mono text-blue-700">{selectedDispatch.dispatchCode}</b> | Kho đi: <b>{selectedDispatch.originWarehouseName}</b> → Kho đích: <b>{selectedDispatch.destWarehouseName}</b>
                 </div>
               }
-              description="Khi dùng súng quét mã vạch bắn vào tem bao tải hoặc kẹp chì, hệ thống sẽ tự động cập nhật trạng thái bao tải và tự động nhập toàn bộ các đơn hàng bên trong vào kho đích."
+              description="Khi quét mã vạch bằng Camera hoặc Súng bắn mã vào tem bao tải (A6) hoặc kẹp chì, hệ thống sẽ tự động cập nhật trạng thái bao tải và nhập toàn bộ đơn hàng vào kho đích."
               type="info"
               showIcon
               className="rounded-xl"
             />
 
-            {/* Ô quét Barcode lớn */}
-            <div className="p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-300 rounded-xl space-y-2">
-              <label className="text-xs font-extrabold text-purple-900 uppercase tracking-wide block">
-                Bắn Súng Quét Barcode Mã Bao Tải Hoặc Mã Seal (Enter):
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  ref={inboundInputRef}
-                  prefix={<Barcode size={20} className="text-purple-600" />}
-                  placeholder="Quét mã bao tải (VD: BAG2611...) rồi nhấn Enter..."
-                  value={inboundScanCode}
-                  onChange={e => setInboundScanCode(e.target.value)}
-                  onPressEnter={() => handleScanInboundSubmit()}
-                  className="font-mono font-bold text-lg h-12 uppercase"
-                  autoFocus
-                />
-                <Button
-                  type="primary"
-                  onClick={() => handleScanInboundSubmit()}
-                  loading={inboundLoading}
-                  className="bg-purple-600 hover:bg-purple-700 h-12 px-6 font-bold"
-                >
-                  Xác Nhận Nhập
-                </Button>
+            {/* Toggle Chế độ Quét: Camera vs Súng bắn mã */}
+            <Segmented
+              size="large"
+              block
+              value={inboundScanMode}
+              onChange={(val) => handleSwitchInboundScanMode(val as 'CAMERA' | 'GUN')}
+              options={[
+                {
+                  label: (
+                    <div className="flex items-center justify-center gap-2 py-1.5 font-bold">
+                      <Camera size={18} className="text-blue-600" />
+                      <span>Quét Bằng Camera (Điện thoại / Webcam)</span>
+                    </div>
+                  ),
+                  value: 'CAMERA',
+                },
+                {
+                  label: (
+                    <div className="flex items-center justify-center gap-2 py-1.5 font-bold">
+                      <Barcode size={18} className="text-purple-600" />
+                      <span>Súng Bắn Barcode / Nhập Tay</span>
+                    </div>
+                  ),
+                  value: 'GUN',
+                },
+              ]}
+            />
+
+            {/* CHẾ ĐỘ CAMERA */}
+            {inboundScanMode === 'CAMERA' && (
+              <div className="space-y-2">
+                <div className="relative rounded-2xl overflow-hidden border-2 border-purple-500 bg-black shadow-lg">
+                  <div id="dispatch-inbound-camera-reader" className="w-full" style={{ minHeight: '280px' }} />
+                  {!inboundCameraActive && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-black/80 p-4 text-center">
+                      <RefreshCw className="animate-spin text-3xl text-purple-400 mb-2" size={32} />
+                      <p className="text-sm font-semibold mb-0">Đang khởi động Camera quét mã...</p>
+                      <p className="text-xs text-gray-400 mt-1">Vui lòng cấp quyền truy cập Camera nếu trình duyệt yêu cầu.</p>
+                    </div>
+                  )}
+                  <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 backdrop-blur-xs">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>Camera Trực Tiếp Sẵn Sàng</span>
+                  </div>
+                </div>
+                <div className="text-center text-xs text-gray-500 italic">
+                  💡 Hướng camera vào mã vạch Code-128 hoặc mã QR trên tem dán bao tải A6 để tiếp nhận vào kho đích.
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* CHẾ ĐỘ SÚNG BẮN MÃ VẠCH */}
+            {inboundScanMode === 'GUN' && (
+              <div className="p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-300 rounded-xl space-y-2">
+                <label className="text-xs font-extrabold text-purple-900 uppercase tracking-wide block">
+                  Bắn Súng Quét Barcode Mã Bao Tải Hoặc Mã Seal (Enter):
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    ref={inboundInputRef}
+                    prefix={<Barcode size={20} className="text-purple-600" />}
+                    placeholder="Quét mã bao tải (VD: BAG2611...) rồi nhấn Enter..."
+                    value={inboundScanCode}
+                    onChange={e => setInboundScanCode(e.target.value)}
+                    onPressEnter={() => handleScanInboundSubmit()}
+                    className="font-mono font-bold text-lg h-12 uppercase"
+                    autoFocus
+                  />
+                  <Button
+                    type="primary"
+                    onClick={() => handleScanInboundSubmit()}
+                    loading={inboundLoading}
+                    className="bg-purple-600 hover:bg-purple-700 h-12 px-6 font-bold"
+                  >
+                    Xác Nhận Nhập
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Tiến độ tiếp nhận */}
             <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex items-center justify-between">
@@ -1102,10 +1332,6 @@ export const DispatchManagementPage: React.FC = () => {
                   ))}
                 </tbody>
               </table>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <Button onClick={() => setIsInboundModalOpen(false)}>Đóng</Button>
             </div>
           </div>
         )}

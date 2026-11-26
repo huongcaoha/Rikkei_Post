@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Rikkei Post WMS Logistics - System Architecture",
+    "output": "business_flows/diagrams/rikkei_logistics_system.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "shop_app", "type": "frontend", "label": "Shop Portal & API", "sublabel": "Web React / REST API", "pos": [40, 160], "size": [150, 60], "tag": "Khách Gửi" },
+    { "id": "shipper_app", "type": "frontend", "label": "Bưu Tá Mobile App", "sublabel": "React PWA + Camera Barcode", "pos": [40, 290], "size": [150, 60], "tag": "Shipper Giao/Nhận" },
+    { "id": "driver_app", "type": "frontend", "label": "Cổng Tài Xế Xe Tải", "sublabel": "Mobile Camera A6 Scanner", "pos": [40, 420], "size": [150, 60], "tag": "Tài Xế Đường Trục" },
+    { "id": "admin_web", "type": "frontend", "label": "Admin & WMS Portal", "sublabel": "React 18 + Tailwind", "pos": [40, 550], "size": [150, 60], "tag": "Quản Lý & Kế Toán" },
+
+    { "id": "face_api", "type": "backend", "label": "Face-API AI Engine", "sublabel": "TensorFlow.js 128D Vector", "pos": [260, 290], "size": [160, 60], "tag": "Chống Gian Lận" },
+    { "id": "hardware", "type": "external", "label": "Phần Cứng Kho Vận", "sublabel": "Máy in nhiệt A6 + Seal + Cân", "pos": [260, 550], "size": [160, 60], "tag": "Vật Tư Hiện Trường" },
+
+    { "id": "api_gateway", "type": "backend", "label": "Spring Boot API", "sublabel": "REST / JWT Security :8080", "pos": [480, 360], "size": [160, 60], "tag": "Backend Core" },
+
+    { "id": "order_svc", "type": "backend", "label": "Order & Bag Service", "sublabel": "Gom kiện & Đóng bao A6", "pos": [700, 200], "size": [160, 60] },
+    { "id": "dispatch_svc", "type": "backend", "label": "Dispatch Service", "sublabel": "Điều vận xe & Quét bao", "pos": [700, 320], "size": [160, 60] },
+    { "id": "supply_svc", "type": "backend", "label": "Supply Warehouse Svc", "sublabel": "Quản lý vật tư & Thu hồi", "pos": [700, 440], "size": [160, 60] },
+    { "id": "attendance_svc", "type": "backend", "label": "Attendance Service", "sublabel": "FaceID & GPS Bưu cục", "pos": [700, 560], "size": [160, 60] },
+
+    { "id": "kafka_broker", "type": "messagebus", "label": "Kafka Event Bus", "sublabel": "Realtime Topics / SSE", "pos": [930, 260], "size": [150, 60], "tag": "Event-Driven" },
+    { "id": "postgres_db", "type": "database", "label": "PostgreSQL DB", "sublabel": "Quan Hệ & Ràng Buộc Khóa", "pos": [930, 460], "size": [150, 60], "tag": "Persistence" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Phân Hệ Khách Hàng & Hiện Trường (Edge)", "wraps": ["shop_app", "shipper_app", "driver_app", "admin_web", "face_api", "hardware"] },
+    { "kind": "security-group", "label": "Hạ Tầng Dịch Vụ Lõi Spring Boot & Dữ Liệu", "wraps": ["api_gateway", "order_svc", "dispatch_svc", "supply_svc", "attendance_svc", "kafka_broker", "postgres_db"] }
+  ],
+  "connections": [
+    { "id": "shop_to_api", "from": "shop_app", "to": "api_gateway", "label": "Tạo đơn hàng", "variant": "emphasis" },
+    { "id": "shipper_to_face", "from": "shipper_app", "to": "face_api", "label": "Chụp FaceID Live" },
+    { "id": "face_to_api", "from": "face_api", "to": "api_gateway", "label": "Verify Vector" },
+    { "id": "shipper_to_api", "from": "shipper_app", "to": "api_gateway", "label": "Quét lấy/giao", "variant": "emphasis" },
+    { "id": "driver_to_api", "from": "driver_app", "to": "api_gateway", "label": "Quét camera bao A6", "variant": "emphasis" },
+    { "id": "admin_to_api", "from": "admin_web", "to": "api_gateway", "label": "Quản lý & Điều hành" },
+    { "id": "hardware_to_admin", "from": "hardware", "to": "admin_web", "label": "In tem / Đọc cân" },
+
+    { "id": "api_to_order", "from": "api_gateway", "to": "order_svc" },
+    { "id": "api_to_dispatch", "from": "api_gateway", "to": "dispatch_svc" },
+    { "id": "api_to_supply", "from": "api_gateway", "to": "supply_svc" },
+    { "id": "api_to_attend", "from": "api_gateway", "to": "attendance_svc" },
+
+    { "id": "order_to_kafka", "from": "order_svc", "to": "kafka_broker", "label": "Trạng thái đơn" },
+    { "id": "dispatch_to_kafka", "from": "dispatch_svc", "to": "kafka_broker", "label": "Xe lăn bánh" },
+    { "id": "order_to_db", "from": "order_svc", "to": "postgres_db" },
+    { "id": "dispatch_to_db", "from": "dispatch_svc", "to": "postgres_db" },
+    { "id": "supply_to_db", "from": "supply_svc", "to": "postgres_db" },
+    { "id": "attend_to_db", "from": "attendance_svc", "to": "postgres_db" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Cổng Giao Tiếp Hiện Trường", "items": ["Shop tạo đơn nhanh qua Portal", "Bưu tá quét Barcode 1D/2D bằng Camera điện thoại", "Tài xế quét mã bao tải A6 nạp thùng xe", "Chấm công FaceID trực tiếp kèm định vị GPS"] },
+    { "dot": "emerald", "title": "Xử Lý Nghiệp Vụ Chuyên Sâu", "items": ["Gom kiện đóng bao Master Bag & in tem A6 Code-128 + QR", "Lệnh điều vận chỉ quản lý kho được tạo, tài xế chỉ xem chuyến mình", "Phiếu xuất vật tư khóa vĩnh viễn khi bưu cục nhận đủ đồ", "Phân tuyến riêng biệt xe máy và ô tô tải"] },
+    { "dot": "rose", "title": "Bảo Mật & An Toàn Dữ Liệu", "items": ["Xóa ảnh khuôn mặt tức thì chống tái sử dụng gian lận", "Phân quyền vai trò động Dynamic RBAC", "Bảo mật luồng điều chuyển và niêm phong kẹp chì an ninh"] }
+  ]
+}

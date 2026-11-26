@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Rikkei Post - End-to-End Logistics Workflow",
+    "output": "business_flows/diagrams/end_to_end_delivery.html",
+    "animation": "trace",
+    "quality_profile": "standard"
+  },
+  "lanes": [
+    { "id": "shop", "label": "Chủ Shop / Người Gửi" },
+    { "id": "shipper", "label": "Bưu Tá (Shipper)" },
+    { "id": "post_office", "label": "Bưu Cục Gửi & Khai Thác" },
+    { "id": "truck_driver", "label": "Tài Xế Xe Tải" },
+    { "id": "central_hub", "label": "Hub Khai Thác Trung Tâm" },
+    { "id": "dest_office", "label": "Bưu Cục Phát & Kế Toán" }
+  ],
+  "phases": [
+    { "id": "pickup_phase", "label": "Khởi Tạo & Gom", "fromCol": 0, "toCol": 1 },
+    { "id": "bagging_phase", "label": "Đóng Bao", "fromCol": 2, "toCol": 2, "variant": "emphasis" },
+    { "id": "transit_phase", "label": "Trung Chuyển", "fromCol": 3, "toCol": 4, "variant": "dashed" },
+    { "id": "delivery_phase", "label": "Giao & Đối Soát", "fromCol": 5, "toCol": 5, "variant": "emphasis" }
+  ],
+  "groups": [
+    { "id": "bagging_group", "label": "Kẹp Chì Niêm Phong", "lane": "post_office", "fromCol": 2, "toCol": 2, "variant": "emphasis" },
+    { "id": "transit_group", "label": "Quét Mã Nạp Thùng Xe", "lane": "truck_driver", "fromCol": 3, "toCol": 3, "variant": "security" }
+  ],
+  "mainPath": [
+    "create_order",
+    "scan_pickup",
+    "pack_master_bag",
+    "driver_camera_scan",
+    "hub_inbound_sorting",
+    "out_for_delivery",
+    "cod_settlement"
+  ],
+  "nodes": [
+    { "id": "create_order", "lane": "shop", "col": 0, "type": "frontend", "label": "Tạo Đơn Hàng", "sublabel": "Portal Web / API", "tag": "DRAFT" },
+    { "id": "scan_pickup", "lane": "shipper", "col": 1, "type": "frontend", "label": "Quét Lấy Hàng", "sublabel": "Camera điện thoại", "tag": "PICKED_UP" },
+    { "id": "pack_master_bag", "lane": "post_office", "col": 2, "type": "backend", "label": "Đóng Bao", "sublabel": "Kẹp chì & Tem A6", "tag": "SEALED" },
+    { "id": "driver_camera_scan", "lane": "truck_driver", "col": 3, "type": "frontend", "label": "Nạp Lên Xe", "sublabel": "Camera quét tem A6", "tag": "IN_TRANSIT" },
+    { "id": "hub_inbound_sorting", "lane": "central_hub", "col": 4, "type": "cloud", "label": "Khai Thác Hub", "sublabel": "Cắt chì & dỡ bao", "tag": "AT_HUB" },
+    { "id": "out_for_delivery", "lane": "shipper", "col": 5, "type": "frontend", "label": "Giao Hàng", "sublabel": "Thu tiền COD", "tag": "DELIVERED" },
+    { "id": "cod_settlement", "lane": "dest_office", "col": 5, "type": "database", "label": "Đối Soát", "sublabel": "Quyết toán tiền COD", "tag": "COMPLETED" }
+  ],
+  "edges": [
+    { "from": "create_order", "to": "scan_pickup", "variant": "emphasis" },
+    { "from": "scan_pickup", "to": "pack_master_bag", "variant": "emphasis" },
+    { "from": "pack_master_bag", "to": "driver_camera_scan", "variant": "emphasis" },
+    { "from": "driver_camera_scan", "to": "hub_inbound_sorting", "variant": "emphasis" },
+    { "from": "hub_inbound_sorting", "to": "out_for_delivery", "variant": "emphasis" },
+    { "from": "out_for_delivery", "to": "cod_settlement", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Gom Kiện & Đóng Bao", "items": ["Tối ưu vận chuyển bưu chính bằng Master Bag", "Kẹp chì niêm phong an ninh chống tráo đổi", "In tem nhiệt khổ A6 chứa Barcode 128 và QR"] },
+    { "dot": "emerald", "title": "Điều Vận & Cổng Tài Xế", "items": ["Chỉ quản lý bưu cục mới có quyền tạo lệnh điều xe", "Tài xế mở camera quét tem A6 nạp bao lên thùng xe", "Chỉ hoàn thành khi toàn bộ bao đã nhập kho đích"] },
+    { "dot": "rose", "title": "Giao Hàng & Dòng Tiền", "items": ["Phân tuyến xe máy cho bưu tá giao hàng", "Thu hộ tiền COD minh bạch chính xác", "Kế toán bưu cục đối soát và chuyển trả shop nhanh chóng"] }
+  ]
+}

@@ -19,6 +19,7 @@ import {
   Divider,
   Alert,
   Tooltip,
+  Segmented,
 } from 'antd';
 import {
   Package,
@@ -36,7 +37,15 @@ import {
   Layers,
   ArrowRight,
   MapPin,
+  Camera,
+  Scan,
+  ScanLine,
+  Volume2,
+  VolumeX,
+  RefreshCw,
+  Check,
 } from 'lucide-react';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { wmsApi } from '../api/wms';
 import { locationApi } from '../api/location';
 import { orderApi } from '../api/order';
@@ -97,10 +106,39 @@ export const MasterBagPage: React.FC = () => {
   const [newBagScanInput, setNewBagScanInput] = useState<string>('');
   const [checkingItem, setCheckingItem] = useState<boolean>(false);
 
-  // Modal quét nhập kho Hub
+  // Modal quét nhập kho Hub (Súng barcode / Camera)
   const [hubScanModalOpen, setHubScanModalOpen] = useState<boolean>(false);
   const [hubScanInput, setHubScanInput] = useState<string>('');
   const [hubScanning, setHubScanning] = useState<boolean>(false);
+  const [scanMode, setScanMode] = useState<'CAMERA' | 'GUN'>('CAMERA');
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [cameraActive, setCameraActive] = useState<boolean>(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [hubSelectedWarehouseId, setHubSelectedWarehouseId] = useState<number | undefined>(undefined);
+  const [lastScannedFeedback, setLastScannedFeedback] = useState<{
+    code: string;
+    message: string;
+    success: boolean;
+    time: string;
+    bag?: MasterBag;
+  } | null>(null);
+  const [sessionScannedBags, setSessionScannedBags] = useState<
+    Array<{
+      bagCode: string;
+      sealNumber?: string;
+      originWarehouseName: string;
+      destWarehouseName: string;
+      totalItems: number;
+      totalWeightKg: number;
+      time: string;
+    }>
+  >([]);
+
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const lastScannedCodeRef = useRef<string>('');
+  const lastScannedTimeRef = useRef<number>(0);
+  const isProcessingRef = useRef<boolean>(false);
+  const gunInputRef = useRef<any>(null);
 
   // Drawer chi tiết bàn đóng bao
   const [activeBag, setActiveBag] = useState<MasterBag | null>(null);
@@ -268,29 +306,241 @@ export const MasterBagPage: React.FC = () => {
     }
   };
 
-  const handleOpenHubScanModal = (bag?: MasterBag) => {
-    setHubScanInput(bag ? bag.bagCode : '');
-    setHubScanModalOpen(true);
+  // Âm thanh Beep báo hiệu Web Audio API
+  const playBeep = (isSuccess = true) => {
+    if (isMuted) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      if (isSuccess) {
+        osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.15);
+      } else {
+        osc.frequency.setValueAtTime(329.6, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      }
+    } catch (e) {
+      // Bỏ qua lỗi audio nếu browser chặn
+    }
   };
 
-  const handleHubScanInbound = async () => {
-    if (!hubScanInput.trim()) {
-      message.warning('Vui lòng nhập hoặc quét mã bao tải!');
+  const startCamera = async (mode: 'environment' | 'user' = 'environment') => {
+    try {
+      if (html5QrCodeRef.current) {
+        await stopCamera();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      const element = document.getElementById('hub-bag-camera-reader');
+      if (!element) return;
+
+      const qrCode = new Html5Qrcode('hub-bag-camera-reader');
+      html5QrCodeRef.current = qrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 280, height: 200 },
+        aspectRatio: 1.333,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+      };
+
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          const backCam =
+            cameras.find(
+              (c) =>
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('sau') ||
+                c.label.toLowerCase().includes('environment')
+            ) || cameras[cameras.length - 1];
+
+          await qrCode.start(
+            mode === 'environment'
+              ? backCam
+                ? backCam.id
+                : { facingMode: 'environment' }
+              : { facingMode: 'user' },
+            config,
+            (decodedText) => handleCameraDecoded(decodedText),
+            () => {}
+          );
+        } else {
+          await qrCode.start(
+            { facingMode: mode },
+            config,
+            (decodedText) => handleCameraDecoded(decodedText),
+            () => {}
+          );
+        }
+        setCameraActive(true);
+      } catch (camErr) {
+        await qrCode.start(
+          { facingMode: mode },
+          config,
+          (decodedText) => handleCameraDecoded(decodedText),
+          () => {}
+        );
+        setCameraActive(true);
+      }
+    } catch (err: any) {
+      console.warn('Lỗi bật camera:', err);
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = async () => {
+    if (html5QrCodeRef.current) {
+      try {
+        if (html5QrCodeRef.current.isScanning) {
+          await html5QrCodeRef.current.stop();
+        }
+        await html5QrCodeRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      html5QrCodeRef.current = null;
+    }
+    setCameraActive(false);
+  };
+
+  const handleSwitchCamera = async () => {
+    const nextMode = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(nextMode);
+    await startCamera(nextMode);
+  };
+
+  const handleSwitchScanMode = async (mode: 'CAMERA' | 'GUN') => {
+    setScanMode(mode);
+    if (mode === 'CAMERA') {
+      setTimeout(() => {
+        startCamera(facingMode);
+      }, 300);
+    } else {
+      await stopCamera();
+      setTimeout(() => {
+        gunInputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const handleCameraDecoded = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) return;
+
+    // Chặn quét lặp cùng 1 mã trong vòng 2.5 giây
+    const now = Date.now();
+    if (code === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2500) {
       return;
     }
+
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    lastScannedCodeRef.current = code;
+    lastScannedTimeRef.current = now;
+
+    await handleProcessInboundCode(code);
+    isProcessingRef.current = false;
+  };
+
+  const handleProcessInboundCode = async (rawCode?: string) => {
+    const code = (rawCode || hubScanInput).trim().toUpperCase();
+    if (!code) {
+      message.warning('Vui lòng quét hoặc nhập mã bao tải / mã seal!');
+      return;
+    }
+
     setHubScanning(true);
     try {
-      const hubWhId = user?.assignedPostOfficeId || 1;
-      const updated = await wmsApi.hubScanInbound(hubScanInput.trim(), hubWhId);
-      message.success(`Kho Hub đã tiếp nhận bao tải [${updated.bagCode}] thành công! Toàn bộ đơn hàng đã chuyển sang trạng thái ở kho Hub qua Kafka.`);
-      setHubScanModalOpen(false);
+      const effectiveWhId =
+        hubSelectedWarehouseId ||
+        user?.assignedPostOfficeId ||
+        (warehouses.length > 0 ? warehouses[0].id : 1);
+      const updated = await wmsApi.hubScanInbound(code, effectiveWhId);
+
+      playBeep(true);
+      setLastScannedFeedback({
+        code: updated.bagCode,
+        message: `Đã tiếp nhận bao tải [${updated.bagCode}] vào kho thành công! (${updated.totalItems} kiện hàng)`,
+        success: true,
+        time: dayjs().format('HH:mm:ss'),
+        bag: updated,
+      });
+
+      setSessionScannedBags((prev) => [
+        {
+          bagCode: updated.bagCode,
+          sealNumber: updated.sealNumber,
+          originWarehouseName: updated.originWarehouseName || 'Kho gửi',
+          destWarehouseName: updated.destWarehouseName || 'Kho đích',
+          totalItems: updated.totalItems || 0,
+          totalWeightKg: updated.totalWeightKg || 0,
+          time: dayjs().format('HH:mm:ss'),
+        },
+        ...prev.filter((b) => b.bagCode !== updated.bagCode),
+      ]);
+
+      message.success(`Đã quét tiếp nhận bao [${updated.bagCode}] thành công!`);
       setHubScanInput('');
       fetchData();
     } catch (err: any) {
-      message.error(err.response?.data?.message || 'Lỗi khi quét tiếp nhận bao tải tại Hub');
+      playBeep(false);
+      const errMsg = err.response?.data?.message || err.message || 'Lỗi khi quét tiếp nhận bao tải';
+      setLastScannedFeedback({
+        code,
+        message: errMsg,
+        success: false,
+        time: dayjs().format('HH:mm:ss'),
+      });
+      message.error(errMsg);
     } finally {
       setHubScanning(false);
+      if (scanMode === 'GUN') {
+        setTimeout(() => {
+          gunInputRef.current?.focus();
+        }, 100);
+      }
     }
+  };
+
+  const handleOpenHubScanModal = (bag?: MasterBag) => {
+    setHubScanInput(bag ? bag.bagCode : '');
+    setLastScannedFeedback(null);
+    const defaultWhId =
+      user?.assignedPostOfficeId || (warehouses.length > 0 ? warehouses[0].id : 1);
+    setHubSelectedWarehouseId(defaultWhId);
+    setHubScanModalOpen(true);
+
+    if (scanMode === 'CAMERA') {
+      setTimeout(() => {
+        startCamera(facingMode);
+      }, 350);
+    } else {
+      setTimeout(() => {
+        gunInputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const handleCloseHubScanModal = async () => {
+    await stopCamera();
+    setHubScanModalOpen(false);
+    setHubScanInput('');
+    setLastScannedFeedback(null);
   };
 
   const handleOpenSealModal = (bag: MasterBag) => {
@@ -477,15 +727,16 @@ export const MasterBagPage: React.FC = () => {
             </Button>
           )}
 
-          {record.status === 'IN_TRANSIT' && (
+          {['IN_TRANSIT', 'DISPATCHED', 'ASSIGNED_TO_DRIVER', 'SEALED'].includes(record.status) && (
             <Button
               size="small"
               type="primary"
-              icon={<CheckCircle2 size={14} />}
+              icon={<ScanLine size={14} />}
               onClick={() => handleOpenHubScanModal(record)}
-              className="bg-purple-600 hover:bg-purple-700 text-xs"
+              className="bg-purple-600 hover:bg-purple-700 text-xs font-semibold"
+              title="Quét tiếp nhận nhập kho đích/Hub"
             >
-              Quét nhập Hub
+              Quét nhập kho
             </Button>
           )}
 
@@ -525,11 +776,11 @@ export const MasterBagPage: React.FC = () => {
           </Button>
           <Button
             type="default"
-            icon={<CheckCircle2 size={16} className="text-purple-600" />}
+            icon={<Scan size={16} className="text-purple-600" />}
             onClick={() => handleOpenHubScanModal()}
-            className="border-purple-600 text-purple-700 hover:bg-purple-50"
+            className="border-purple-600 text-purple-700 hover:bg-purple-50 font-bold shadow-xs"
           >
-            Quét tiếp nhận tại Hub
+            Quét Nhập Kho Bao Tải (Súng / Camera)
           </Button>
           <Button
             type="primary"
@@ -1124,46 +1375,220 @@ export const MasterBagPage: React.FC = () => {
         </div>
       </Modal>
 
-      {/* Modal Quét Tiếp Nhận Tại Kho Hub */}
+      {/* ================= MODAL QUÉT TIẾP NHẬN & NHẬP KHO BAO TẢI (SÚNG / CAMERA) ================= */}
       <Modal
         title={
-          <div className="flex items-center gap-2 text-base font-bold text-purple-600">
-            <CheckCircle2 size={20} />
-            Quét Tiếp Nhận Bao Tải Tại Kho Hub Trung Chuyển
+          <div className="flex items-center justify-between pr-6 w-full">
+            <div className="flex items-center gap-2 text-base font-bold text-purple-800">
+              <Scan size={22} className="text-purple-600" />
+              <span>Quét Nhập Kho Bao Tải (Súng Barcode / Camera)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {scanMode === 'CAMERA' && (
+                <>
+                  <Button
+                    size="small"
+                    icon={isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                    onClick={() => setIsMuted(!isMuted)}
+                    className="text-xs font-medium"
+                  >
+                    {isMuted ? 'Bật âm' : 'Tắt âm'}
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<RefreshCw size={14} />}
+                    onClick={handleSwitchCamera}
+                    className="text-xs font-medium"
+                  >
+                    Đổi Cam
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         }
         open={hubScanModalOpen}
-        onCancel={() => setHubScanModalOpen(false)}
-        onOk={handleHubScanInbound}
-        confirmLoading={hubScanning}
-        okText="Tiếp nhận bao tải vào Hub"
-        cancelText="Hủy"
-        destroyOnClose
+        onCancel={handleCloseHubScanModal}
+        footer={[
+          <Button
+            key="close"
+            type="primary"
+            onClick={handleCloseHubScanModal}
+            className="bg-purple-600 hover:bg-purple-700 font-bold px-6"
+          >
+            Hoàn tất & Đóng
+          </Button>,
+        ]}
+        width={680}
+        destroyOnClose={false}
       >
         <div className="my-2 space-y-4">
-          <Alert
-            type="success"
-            message="Tiếp nhận bao tải trung chuyển"
-            description="Khi quét mã bao tải, hệ thống sẽ tự động sử dụng Kafka để chuyển toàn bộ đơn hàng trong bao tải về trạng thái đang ở kho Hub hiện tại và ghi log nhật ký hành trình."
-            showIcon
+          {/* Chọn kho tiếp nhận */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-purple-50 p-3 rounded-xl border border-purple-200 text-xs gap-2">
+            <div className="flex items-center gap-2">
+              <Building2 size={18} className="text-purple-700 shrink-0" />
+              <span className="font-bold text-purple-900">Kho Tiếp Nhận:</span>
+              <Select
+                size="middle"
+                value={hubSelectedWarehouseId}
+                onChange={(val) => setHubSelectedWarehouseId(val)}
+                className="min-w-[240px]"
+              >
+                {warehouses.map((wh) => (
+                  <Option key={wh.id} value={wh.id}>
+                    {wh.name} {wh.type === 'HUB' ? '(Hub Trung Tâm)' : '(Bưu Cục)'}
+                  </Option>
+                ))}
+              </Select>
+            </div>
+            <Tag color="purple" className="font-semibold text-xs self-start sm:self-center">
+              Tác Nghiệp Nhập Kho
+            </Tag>
+          </div>
+
+          {/* Toggle Chế độ: CAMERA vs SÚNG QUÉT */}
+          <Segmented
+            size="large"
+            block
+            value={scanMode}
+            onChange={(val) => handleSwitchScanMode(val as 'CAMERA' | 'GUN')}
+            options={[
+              {
+                label: (
+                  <div className="flex items-center justify-center gap-2 py-1.5 font-bold">
+                    <Camera size={18} className="text-blue-600" />
+                    <span>Quét Bằng Camera (Điện thoại / Webcam)</span>
+                  </div>
+                ),
+                value: 'CAMERA',
+              },
+              {
+                label: (
+                  <div className="flex items-center justify-center gap-2 py-1.5 font-bold">
+                    <Barcode size={18} className="text-purple-600" />
+                    <span>Súng Bắn Barcode / Nhập Tay</span>
+                  </div>
+                ),
+                value: 'GUN',
+              },
+            ]}
           />
-          <Form layout="vertical">
-            <Form.Item
-              label="Nhập hoặc quét mã bao tải / mã kẹp chì (Seal)"
-              required
-            >
-              <Input
-                size="large"
-                prefix={<Barcode size={20} className="text-gray-400" />}
-                placeholder="Vd: BAG261124xxxx hoặc SEAL-..."
-                value={hubScanInput}
-                onChange={e => setHubScanInput(e.target.value)}
-                onPressEnter={handleHubScanInbound}
-                autoFocus
-                className="font-mono font-bold text-base uppercase"
-              />
-            </Form.Item>
-          </Form>
+
+          {/* THÔNG BÁO PHẢN HỒI KẾT QUẢ QUÉT GẦN NHẤT */}
+          {lastScannedFeedback && (
+            <Alert
+              message={
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between font-bold text-sm">
+                    <span>{lastScannedFeedback.success ? '✅ Tiếp Nhận Thành Công' : '⚠️ Lỗi Tiếp Nhận'}</span>
+                    <span className="text-xs font-normal text-gray-500">{lastScannedFeedback.time}</span>
+                  </div>
+                  <div className="text-xs text-gray-700">{lastScannedFeedback.message}</div>
+                </div>
+              }
+              type={lastScannedFeedback.success ? 'success' : 'error'}
+              showIcon
+              className="rounded-xl border shadow-xs"
+            />
+          )}
+
+          {/* NỘI DUNG CHẾ ĐỘ CAMERA */}
+          {scanMode === 'CAMERA' && (
+            <div className="space-y-2">
+              <div className="relative rounded-2xl overflow-hidden border-2 border-purple-500 bg-black shadow-lg">
+                <div id="hub-bag-camera-reader" className="w-full" style={{ minHeight: '300px' }} />
+                {!cameraActive && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-black/80 p-4 text-center">
+                    <RefreshCw className="animate-spin text-3xl text-purple-400 mb-2" size={32} />
+                    <p className="text-sm font-semibold mb-0">Đang khởi động Camera quét mã bao tải...</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Vui lòng cấp quyền truy cập Camera máy ảnh trên trình duyệt.
+                    </p>
+                  </div>
+                )}
+                <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 backdrop-blur-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>Camera Trực Tiếp Sẵn Sàng</span>
+                </div>
+              </div>
+              <div className="text-center text-xs text-gray-500 italic">
+                💡 Hướng camera vào mã vạch Code-128 hoặc mã QR trên tem dán bao tải A6 để hệ thống tự động nhận diện và nhập kho.
+              </div>
+            </div>
+          )}
+
+          {/* NỘI DUNG CHẾ ĐỘ SÚNG BẮN BARCODE */}
+          {scanMode === 'GUN' && (
+            <div className="p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-300 rounded-xl space-y-3">
+              <label className="text-xs font-extrabold text-purple-900 uppercase tracking-wide block">
+                Bắn Súng Quét Barcode Mã Bao Tải Hoặc Mã Seal (Enter):
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  ref={gunInputRef}
+                  size="large"
+                  prefix={<Barcode size={22} className="text-purple-600" />}
+                  placeholder="Quét mã bao tải (VD: BAG2611...) hoặc mã Seal rồi nhấn Enter..."
+                  value={hubScanInput}
+                  onChange={(e) => setHubScanInput(e.target.value)}
+                  onPressEnter={() => handleProcessInboundCode(hubScanInput)}
+                  className="font-mono font-bold text-lg h-12 uppercase"
+                  autoFocus
+                />
+                <Button
+                  type="primary"
+                  onClick={() => handleProcessInboundCode(hubScanInput)}
+                  loading={hubScanning}
+                  className="bg-purple-600 hover:bg-purple-700 h-12 px-6 font-bold"
+                >
+                  Nhập Kho
+                </Button>
+              </div>
+              <p className="text-[11px] text-gray-500 mb-0">
+                * Đầu đọc súng quét barcode khi bắn vào tem sẽ tự động nạp mã và gửi lệnh Enter để xác nhận nhập kho.
+              </p>
+            </div>
+          )}
+
+          {/* DANH SÁCH BAO TẢI ĐÃ TIẾP NHẬN PHIÊN NÀY */}
+          {sessionScannedBags.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between text-xs font-bold text-gray-700">
+                <span>Danh Sách Bao Đã Nhập Kho Phiên Này ({sessionScannedBags.length} bao):</span>
+                <Button
+                  size="small"
+                  type="link"
+                  onClick={() => setSessionScannedBags([])}
+                  className="text-xs text-gray-500 p-0"
+                >
+                  Xóa danh sách
+                </Button>
+              </div>
+              <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100 bg-white shadow-inner">
+                {sessionScannedBags.map((bag, idx) => (
+                  <div key={idx} className="p-2.5 flex items-center justify-between text-xs hover:bg-gray-50">
+                    <div>
+                      <span className="font-mono font-bold text-blue-700">{bag.bagCode}</span>
+                      {bag.sealNumber && (
+                        <span className="ml-2 font-mono text-[11px] text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
+                          Seal: {bag.sealNumber}
+                        </span>
+                      )}
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        {bag.originWarehouseName} ➔ {bag.destWarehouseName} | {bag.totalItems} kiện | {bag.totalWeightKg} kg
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <Tag color="green" className="text-[11px] font-semibold">
+                        Đã nhập kho
+                      </Tag>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{bag.time}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
 
