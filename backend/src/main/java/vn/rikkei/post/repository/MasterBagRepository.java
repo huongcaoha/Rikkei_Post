@@ -40,6 +40,10 @@ public interface MasterBagRepository extends JpaRepository<MasterBag, Long> {
     List<MasterBag> findByAssignedDriverIdOrderByCreatedAtDesc(Long assignedDriverId);
 
     @EntityGraph(attributePaths = {"originWarehouse", "destWarehouse"})
+    @org.springframework.data.jpa.repository.Query("SELECT b FROM MasterBag b WHERE b.assignedDriverId = :driverId OR (b.status = 'SEALED' AND b.assignedDriverId IS NULL) ORDER BY b.createdAt DESC")
+    List<MasterBag> findDriverTasksWithAvailableBags(@org.springframework.data.repository.query.Param("driverId") Long driverId);
+
+    @EntityGraph(attributePaths = {"originWarehouse", "destWarehouse"})
     List<MasterBag> findByDestWarehouseIdAndStatusInOrderByCreatedAtDesc(Long destWarehouseId, List<String> statuses);
 
     boolean existsByBagCode(String bagCode);

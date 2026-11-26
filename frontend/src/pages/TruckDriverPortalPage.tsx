@@ -274,7 +274,7 @@ export const TruckDriverPortalPage: React.FC = () => {
           </Button>
         </div>
         <p className="text-xs text-blue-700 mt-2 italic mb-0">
-          * Lưu ý: Chỉ tài xế được chỉ định cho bao tải mới có thể quét nhận. Khi quét, hệ thống tự động qua Kafka chuyển toàn bộ đơn hàng trong bao sang trạng thái đang trung chuyển.
+          * Lưu ý: Khi tài xế quét mã bao tải kẹp chì tại kho, hệ thống sẽ tự động gán tên tài xế và xe tải cho bao tải đó, đồng thời chuyển trạng thái bao tải và các đơn hàng sang Đang trung chuyển (IN_TRANSIT).
         </p>
       </Card>
 

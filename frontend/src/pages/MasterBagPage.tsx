@@ -24,7 +24,6 @@ import {
   Package,
   Plus,
   Lock,
-  Unlock,
   Printer,
   RotateCcw,
   Search,
@@ -40,10 +39,9 @@ import {
 import { wmsApi } from '../api/wms';
 import { locationApi } from '../api/location';
 import { orderApi } from '../api/order';
-import { truckApi } from '../api/truck';
 import { useAuth } from '../context/AuthContext';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
-import { MasterBag, Warehouse, Truck as TruckType } from '../types';
+import { MasterBag, Warehouse } from '../types';
 import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
@@ -95,14 +93,6 @@ export const MasterBagPage: React.FC = () => {
   >([]);
   const [newBagScanInput, setNewBagScanInput] = useState<string>('');
   const [checkingItem, setCheckingItem] = useState<boolean>(false);
-
-  // Modal gán tài xế xe tải
-  const [assignDriverModalOpen, setAssignDriverModalOpen] = useState<boolean>(false);
-  const [assigningBag, setAssigningBag] = useState<MasterBag | null>(null);
-  const [assignDriverForm] = Form.useForm();
-  const [drivers, setDrivers] = useState<Array<{ id: number; fullName: string; phoneNumber: string }>>([]);
-  const [trucks, setTrucks] = useState<TruckType[]>([]);
-  const [assigningDriver, setAssigningDriver] = useState<boolean>(false);
 
   // Modal quét nhập kho Hub
   const [hubScanModalOpen, setHubScanModalOpen] = useState<boolean>(false);
@@ -275,48 +265,6 @@ export const MasterBagPage: React.FC = () => {
     }
   };
 
-  const handleOpenAssignDriverModal = async (bag: MasterBag) => {
-    setAssigningBag(bag);
-    assignDriverForm.resetFields();
-    if (bag.assignedDriverId) {
-      assignDriverForm.setFieldsValue({
-        driverId: bag.assignedDriverId,
-        truckId: bag.assignedTruckId
-      });
-    }
-    setAssignDriverModalOpen(true);
-    try {
-      const [driversRes, trucksRes] = await Promise.all([
-        truckApi.getTruckDrivers(),
-        truckApi.getTrucks()
-      ]);
-      if (driversRes.success) setDrivers(driversRes.data);
-      if (trucksRes.success) setTrucks(trucksRes.data);
-    } catch (err: any) {
-      console.warn('Lỗi tải danh sách tài xế/xe:', err);
-    }
-  };
-
-  const handleSaveAssignDriver = async () => {
-    try {
-      if (!assigningBag) return;
-      const values = await assignDriverForm.validateFields();
-      setAssigningDriver(true);
-      const updated = await wmsApi.assignDriver(assigningBag.id, {
-        driverId: values.driverId,
-        truckId: values.truckId,
-        notes: values.notes
-      });
-      message.success(`Đã gán tài xế ${updated.assignedDriverName || ''} cho bao tải ${updated.bagCode}!`);
-      setAssignDriverModalOpen(false);
-      setBags(prev => prev.map(b => b.id === updated.id ? updated : b));
-    } catch (err: any) {
-      message.error(err.response?.data?.message || 'Không thể gán tài xế cho bao tải');
-    } finally {
-      setAssigningDriver(false);
-    }
-  };
-
   const handleOpenHubScanModal = (bag?: MasterBag) => {
     setHubScanInput(bag ? bag.bagCode : '');
     setHubScanModalOpen(true);
@@ -365,19 +313,6 @@ export const MasterBagPage: React.FC = () => {
       message.error(err.response?.data?.message || 'Có lỗi khi kẹp chì');
     } finally {
       setSealing(false);
-    }
-  };
-
-  const handleUnseal = async (bag: MasterBag) => {
-    try {
-      const updated = await wmsApi.unsealBag(bag.id);
-      message.success(`Đã cắt chì mở bao [${updated.bagCode}] và nhập kho đích thành công!`);
-      if (activeBag?.id === bag.id) {
-        setActiveBag(updated);
-      }
-      setBags((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
-    } catch (err: any) {
-      message.error(err.response?.data?.message || 'Lỗi cắt chì mở bao');
     }
   };
 
@@ -460,7 +395,9 @@ export const MasterBagPage: React.FC = () => {
               )}
             </div>
           ) : (
-            <span className="text-gray-400 italic">Chưa gán tài xế</span>
+            <Tag color="default" className="text-gray-500 italic">
+              Chờ tài xế quét mã
+            </Tag>
           )}
         </div>
       ),
@@ -510,17 +447,6 @@ export const MasterBagPage: React.FC = () => {
             </Button>
           )}
 
-          {['SEALED', 'ASSIGNED_TO_DRIVER'].includes(record.status) && (
-            <Button
-              size="small"
-              icon={<Truck size={14} />}
-              onClick={() => handleOpenAssignDriverModal(record)}
-              className="border-yellow-600 text-yellow-700 hover:bg-yellow-50 text-xs font-medium"
-            >
-              {record.assignedDriverId ? 'Đổi tài xế' : 'Gán tài xế'}
-            </Button>
-          )}
-
           {record.status === 'IN_TRANSIT' && (
             <Button
               size="small"
@@ -531,24 +457,6 @@ export const MasterBagPage: React.FC = () => {
             >
               Quét nhập Hub
             </Button>
-          )}
-
-          {['SEALED', 'ASSIGNED_TO_DRIVER', 'ARRIVED_AT_HUB', 'MANIFESTED', 'DISPATCHED', 'RECEIVED'].includes(record.status) && (
-            <Popconfirm
-              title="Xác nhận cắt chì mở bao"
-              description="Các kiện hàng bên trong sẽ được tự động nhập kho tại Hub đích."
-              onConfirm={() => handleUnseal(record)}
-              okText="Cắt chì"
-              cancelText="Hủy"
-            >
-              <Button
-                size="small"
-                icon={<Unlock size={14} />}
-                className="border-green-600 text-green-600 hover:bg-green-50 text-xs"
-              >
-                Cắt chì
-              </Button>
-            </Popconfirm>
           )}
 
           <Button
@@ -1093,65 +1001,6 @@ export const MasterBagPage: React.FC = () => {
                 placeholder="Nhập hoặc quét mã số kẹp chì..."
                 className="font-mono font-bold text-base"
               />
-            </Form.Item>
-          </Form>
-        </div>
-      </Modal>
-
-      {/* Modal Gán Tài Xế Xe Tải */}
-      <Modal
-        title={
-          <div className="flex items-center gap-2 text-base font-bold text-blue-600">
-            <Truck size={20} />
-            Gán Tài Xế Xe Tải Vận Chuyển Bao [{assigningBag?.bagCode}]
-          </div>
-        }
-        open={assignDriverModalOpen}
-        onCancel={() => setAssignDriverModalOpen(false)}
-        onOk={handleSaveAssignDriver}
-        confirmLoading={assigningDriver}
-        okText="Xác nhận gán tài xế"
-        cancelText="Hủy"
-        destroyOnClose
-        width={550}
-      >
-        <div className="my-2 space-y-4">
-          <Alert
-            type="info"
-            message="Chỉ định tài xế trung chuyển"
-            description="Chỉ tài xế được chọn mới có quyền quét mã code trên bao tải để chuyển trạng thái đang trung chuyển và mang bao tải đi."
-            showIcon
-          />
-          <Form form={assignDriverForm} layout="vertical">
-            <Form.Item
-              name="driverId"
-              label="Chọn tài xế xe tải (ROLE_TRUCK_DRIVER)"
-              rules={[{ required: true, message: 'Vui lòng chọn tài xế' }]}
-            >
-              <Select placeholder="Chọn tài xế xe tải" showSearch optionFilterProp="children">
-                {drivers.map(d => (
-                  <Select.Option key={d.id} value={d.id}>
-                    {d.fullName} (SĐT: {d.phoneNumber})
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-
-            <Form.Item
-              name="truckId"
-              label="Chọn xe ô tô tải vận chuyển (tùy chọn)"
-            >
-              <Select placeholder="Chọn xe tải trung chuyển" allowClear showSearch optionFilterProp="children">
-                {trucks.map(t => (
-                  <Select.Option key={t.id} value={t.id}>
-                    {t.licensePlate} - {t.truckType} ({t.payloadKg} kg) - [{t.status === 'AT_WAREHOUSE' ? 'Ở kho' : t.status}]
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-
-            <Form.Item name="notes" label="Ghi chú điều phối chuyến xe">
-              <Input.TextArea rows={2} placeholder="Ghi chú về giờ xuất bến, lộ trình đường trục..." />
             </Form.Item>
           </Form>
         </div>
