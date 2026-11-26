@@ -2,11 +2,12 @@ import apiClient from './client';
 import { DeliveryRoute } from '../types';
 
 export const routeApi = {
-  getRoutes: async (provinceId?: number, postOfficeId?: number, shipperId?: number): Promise<DeliveryRoute[]> => {
+  getRoutes: async (provinceId?: number, postOfficeId?: number, shipperId?: number, routeType?: string): Promise<DeliveryRoute[]> => {
     const params: any = {};
     if (provinceId) params.provinceId = provinceId;
     if (postOfficeId) params.postOfficeId = postOfficeId;
     if (shipperId) params.shipperId = shipperId;
+    if (routeType && routeType !== 'ALL') params.routeType = routeType;
     const res = await apiClient.get('/routes', { params });
     return res.data.data;
   },

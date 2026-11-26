@@ -30,6 +30,7 @@ import {
   CheckSquare,
   ChevronDown,
   ShoppingBag,
+  Boxes,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContinuousScannerModal } from './ContinuousScannerModal';
@@ -60,8 +61,9 @@ export const AppLayout: React.FC = () => {
   const isShipper = userRoles.includes('ROLE_SHIPPER');
   const isTruckDriver = userRoles.includes('ROLE_TRUCK_DRIVER');
   const isAccountant = userRoles.includes('ROLE_ACCOUNTANT');
+  const isInventoryManager = userRoles.includes('ROLE_INVENTORY_MANAGER');
   const isStaffOrAdmin = userRoles.some((r) =>
-    ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF', 'ROLE_TRUCK_DRIVER', 'ROLE_ACCOUNTANT'].includes(r)
+    ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_SHIPPER', 'ROLE_WAREHOUSE_STAFF', 'ROLE_TRUCK_DRIVER', 'ROLE_ACCOUNTANT', 'ROLE_INVENTORY_MANAGER'].includes(r)
   );
   const canCreateOrder = !isStaffOrAdmin && (userRoles.includes('ROLE_MERCHANT') || userRoles.includes('ROLE_CUSTOMER') || userRoles.length === 0);
 
@@ -168,6 +170,13 @@ export const AppLayout: React.FC = () => {
       key: '/wms/dispatch',
       icon: <Navigation size={16} />,
       label: 'Điều vận xe gom bao hàng (TMS/Hub)',
+    });
+  }
+  if (isAdmin || isBranchManager || isPostOfficeManager || isInventoryManager || isWarehouseStaff) {
+    wmsChildren.push({
+      key: '/wms/supplies',
+      icon: <Boxes size={16} />,
+      label: 'Quản lý Vật tư & Thiết bị',
     });
   }
   if (wmsChildren.length > 0) {
@@ -344,6 +353,7 @@ export const AppLayout: React.FC = () => {
     if (path.startsWith('/wms/bags')) return '/wms/bags';
     if (path.startsWith('/wms/dispatch')) return '/wms/dispatch';
     if (path.startsWith('/wms/trucks')) return '/wms/trucks';
+    if (path.startsWith('/wms/supplies') || path.startsWith('/inventory')) return '/wms/supplies';
     if (path.startsWith('/wms/sorting-scanner')) return '/wms/sorting-scanner';
     if (path.startsWith('/driver/portal')) return '/driver/portal';
     if (path.startsWith('/tms/manifests')) return '/tms/manifests';
@@ -366,7 +376,7 @@ export const AppLayout: React.FC = () => {
 
   const getSubMenuKeyForPath = (path: string): string | null => {
     if (path.startsWith('/orders') || path.startsWith('/track')) return 'sub-oms';
-    if (path.startsWith('/shipper') || path.startsWith('/wms/bags') || path.startsWith('/wms/dispatch') || path.startsWith('/wms/sorting-scanner')) return 'sub-wms';
+    if (path.startsWith('/shipper') || path.startsWith('/wms/bags') || path.startsWith('/wms/dispatch') || path.startsWith('/wms/sorting-scanner') || path.startsWith('/wms/supplies') || path.startsWith('/inventory')) return 'sub-wms';
     if (path.startsWith('/wms/trucks') || path.startsWith('/driver') || path.startsWith('/tms')) return 'sub-tms';
     if (path.startsWith('/accountant') || path.startsWith('/vouchers') || path.startsWith('/payroll') || path.startsWith('/billing')) return 'sub-finance';
     if (path.startsWith('/admin') || path.startsWith('/ecommerce')) return 'sub-admin';

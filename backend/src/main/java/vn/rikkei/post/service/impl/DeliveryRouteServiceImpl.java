@@ -26,16 +26,27 @@ public class DeliveryRouteServiceImpl implements DeliveryRouteService {
     @Override
     @Transactional(readOnly = true)
     public List<DeliveryRoute> getRoutes(Integer provinceId, Long postOfficeId, Long shipperId) {
-        if (shipperId != null) {
-            return routeRepository.findByAssignedShipperId(shipperId);
-        }
-        if (postOfficeId != null) {
-            return routeRepository.findByPostOfficeId(postOfficeId);
-        }
-        if (provinceId != null) {
-            return routeRepository.findByProvinceId(provinceId);
-        }
-        return routeRepository.findAll();
+        return getRoutes(provinceId, postOfficeId, shipperId, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DeliveryRoute> getRoutes(Integer provinceId, Long postOfficeId, Long shipperId, String routeType) {
+        List<DeliveryRoute> list = routeRepository.findAll();
+
+        return list.stream()
+                .filter(r -> postOfficeId == null || postOfficeId.equals(r.getPostOfficeId()))
+                .filter(r -> provinceId == null || provinceId.equals(r.getProvinceId()))
+                .filter(r -> shipperId == null || shipperId.equals(r.getAssignedShipperId()))
+                .filter(r -> {
+                    if (routeType == null || routeType.isBlank() || "ALL".equalsIgnoreCase(routeType)) {
+                        return true;
+                    }
+                    String currentType = r.getRouteType() != null ? r.getRouteType() : "MOTORBIKE_DELIVERY";
+                    return currentType.equalsIgnoreCase(routeType.trim());
+                })
+                .sorted((a, b) -> Long.compare(b.getId() != null ? b.getId() : 0L, a.getId() != null ? a.getId() : 0L))
+                .toList();
     }
 
     @Override
@@ -68,6 +79,9 @@ public class DeliveryRouteServiceImpl implements DeliveryRouteService {
         existing.setAssignedShipperId(updated.getAssignedShipperId());
         existing.setStreetKeywords(updated.getStreetKeywords());
         existing.setDescription(updated.getDescription());
+        if (updated.getRouteType() != null && !updated.getRouteType().isBlank()) {
+            existing.setRouteType(updated.getRouteType().trim().toUpperCase());
+        }
         if (updated.getIsActive() != null) {
             existing.setIsActive(updated.getIsActive());
         }
@@ -130,6 +144,9 @@ public class DeliveryRouteServiceImpl implements DeliveryRouteService {
     }
 
     private void enrichPostOfficeAndShipper(DeliveryRoute route) {
+        if (route.getRouteType() == null || route.getRouteType().isBlank()) {
+            route.setRouteType("MOTORBIKE_DELIVERY");
+        }
         if (route.getPostOfficeId() != null) {
             warehouseRepository.findById(route.getPostOfficeId()).ifPresent(wh -> {
                 route.setPostOfficeName(wh.getName());

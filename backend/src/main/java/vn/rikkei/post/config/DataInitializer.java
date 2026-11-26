@@ -55,6 +55,10 @@ public class DataInitializer implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
     private final vn.rikkei.post.repository.TruckRepository truckRepository;
+    private final vn.rikkei.post.repository.SupplyWarehouseRepository supplyWarehouseRepository;
+    private final vn.rikkei.post.repository.SupplyItemRepository supplyItemRepository;
+    private final vn.rikkei.post.repository.SupplyInventoryRepository supplyInventoryRepository;
+    private final vn.rikkei.post.repository.EquipmentRecallTicketRepository recallTicketRepository;
 
     @Override
     @Transactional
@@ -84,6 +88,7 @@ public class DataInitializer implements CommandLineRunner {
         Role roleBranchManager = initRole("ROLE_BRANCH_MANAGER", "Quản lý chi nhánh Tỉnh / Thành phố");
         Role rolePostOfficeManager = initRole("ROLE_POST_OFFICE_MANAGER", "Quản lý bưu cục kho vận");
         Role roleTruckDriver = initRole("ROLE_TRUCK_DRIVER", "Tài xế lái xe tải trung chuyển liên bưu cục và Hub");
+        Role roleInventoryManager = initRole("ROLE_INVENTORY_MANAGER", "Quản lý kho vật tư & trang thiết bị doanh nghiệp");
         Role roleAdmin = initRole("ROLE_ADMIN", "Quản trị viên toàn quyền hệ thống");
 
         // 2. Khởi tạo tài khoản Demo cho Chủ shop (merchant_demo)
@@ -464,6 +469,9 @@ public class DataInitializer implements CommandLineRunner {
             initDeliveryRoutes();
         }
 
+        // 8. Khởi tạo Hệ thống Quản lý Vật tư & Trang thiết bị công ty
+        initSupplyData(roleInventoryManager);
+
         log.info("Khởi tạo dữ liệu mẫu hoàn tất!");
     }
 
@@ -553,5 +561,174 @@ public class DataInitializer implements CommandLineRunner {
                         .roleName(roleName)
                         .description(desc)
                         .build()));
+    }
+
+    private void initSupplyData(Role roleInventoryManager) {
+        // Tài khoản Quản lý kho vật tư
+        User inventoryUser = userRepository.findByUsername("inventory_hn").orElse(null);
+        if (inventoryUser == null) {
+            inventoryUser = User.builder()
+                    .username("inventory_hn")
+                    .password(passwordEncoder.encode("Password@123"))
+                    .fullName("Trần Văn Quản Kho Vật Tư")
+                    .phoneNumber("0988776655")
+                    .email("inventory_hn@rikkeipost.vn")
+                    .isActive(true)
+                    .roles(new HashSet<>(Set.of(roleInventoryManager)))
+                    .build();
+            inventoryUser = userRepository.save(inventoryUser);
+            log.info("Đã tạo tài khoản demo: inventory_hn / Password@123 (ROLE_INVENTORY_MANAGER)");
+        }
+
+        // Khởi tạo kho vật tư
+        vn.rikkei.post.entity.SupplyWarehouse wh1 = supplyWarehouseRepository.findByCode("KVT_HN_01").orElse(null);
+        if (wh1 == null) {
+            wh1 = vn.rikkei.post.entity.SupplyWarehouse.builder()
+                    .code("KVT_HN_01")
+                    .name("Kho Vật Tư & Trang Thiết Bị Tổng Miền Bắc")
+                    .address("Lô B2 Cụm Công nghiệp Cầu Giấy, Phường Dịch Vọng Hậu, Cầu Giấy, Hà Nội")
+                    .googleMapsUrl("https://maps.google.com/?q=21.0313,105.7831")
+                    .latitude(21.0313)
+                    .longitude(105.7831)
+                    .managerId(inventoryUser.getId())
+                    .managerName(inventoryUser.getFullName())
+                    .managerPhone(inventoryUser.getPhoneNumber())
+                    .status("ACTIVE")
+                    .notes("Kho tổng trung tâm điều phối toàn bộ trang thiết bị máy móc, bao tải, cân điện tử và đồng phục khu vực phía Bắc.")
+                    .build();
+            wh1 = supplyWarehouseRepository.save(wh1);
+
+            vn.rikkei.post.entity.SupplyWarehouse wh2 = vn.rikkei.post.entity.SupplyWarehouse.builder()
+                    .code("KVT_SGN_01")
+                    .name("Kho Vật Tư & Thiết Bị Khu Vực Nam Sài Gòn")
+                    .address("Kho A3 KCN Tân Bình, Phường Tây Thạnh, Tân Phú, TP. Hồ Chí Minh")
+                    .googleMapsUrl("https://maps.google.com/?q=10.8010,106.6320")
+                    .latitude(10.8010)
+                    .longitude(106.6320)
+                    .managerId(inventoryUser.getId())
+                    .managerName(inventoryUser.getFullName())
+                    .managerPhone(inventoryUser.getPhoneNumber())
+                    .status("ACTIVE")
+                    .notes("Kho vật tư phục vụ các bưu cục và Hub phía Nam.")
+                    .build();
+            supplyWarehouseRepository.save(wh2);
+            log.info("Đã khởi tạo danh sách Kho Vật Tư mẫu (KVT_HN_01, KVT_SGN_01)");
+        }
+
+        // Khởi tạo danh mục vật tư
+        if (supplyItemRepository.count() == 0) {
+            List<vn.rikkei.post.entity.SupplyItem> sampleItems = List.of(
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_PRINT_420")
+                            .itemName("Máy in đơn nhiệt Xprinter XP-420B")
+                            .category("THIET_BI_MAY_MOC")
+                            .unit("Chiếc")
+                            .specifications("Khổ in 108mm, cổng kết nối USB + LAN, tốc độ 152mm/giây")
+                            .standardPrice(BigDecimal.valueOf(1850000))
+                            .minStockAlert(5)
+                            .isActive(true)
+                            .build(),
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_SCAN_2D")
+                            .itemName("Máy quét mã vạch 2D không dây Datalogic")
+                            .category("THIET_BI_MAY_MOC")
+                            .unit("Chiếc")
+                            .specifications("Quét mã QR và barcode 1D/2D, kết nối Bluetooth/Wireless 2.4Ghz")
+                            .standardPrice(BigDecimal.valueOf(2450000))
+                            .minStockAlert(5)
+                            .isActive(true)
+                            .build(),
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_CAN_100")
+                            .itemName("Cân điện tử công nghiệp 100kg tải trọng cao")
+                            .category("THIET_BI_MAY_MOC")
+                            .unit("Chiếc")
+                            .specifications("Độ chính xác 10g, mặt sàn inox 40x50cm, màn hình LED hiển thị rõ nét")
+                            .standardPrice(BigDecimal.valueOf(1200000))
+                            .minStockAlert(3)
+                            .isActive(true)
+                            .build(),
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_BAO_50")
+                            .itemName("Bao tải dứa dệt dày Rikkei Express (50kg)")
+                            .category("VAT_TU_DONG_GOI")
+                            .unit("Bao")
+                            .specifications("Kích thước 80x120cm, dệt sợi PP dày dặn chống rách khi trung chuyển")
+                            .standardPrice(BigDecimal.valueOf(18000))
+                            .minStockAlert(100)
+                            .isActive(true)
+                            .build(),
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_BANGDINH")
+                            .itemName("Cuộn băng dính in logo Rikkei Post 100m")
+                            .category("VAT_TU_DONG_GOI")
+                            .unit("Cuộn")
+                            .specifications("Bản rộng 5cm, dài 100m, độ dính cao 50 mic")
+                            .standardPrice(BigDecimal.valueOf(22000))
+                            .minStockAlert(50)
+                            .isActive(true)
+                            .build(),
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_AOKHOAC")
+                            .itemName("Áo khoác gió đồng phục bưu tá Rikkei (Size L)")
+                            .category("DONG_PHUC")
+                            .unit("Chiếc")
+                            .specifications("Chất liệu vải dù 2 lớp chống gió nước, viền phản quang ban đêm")
+                            .standardPrice(BigDecimal.valueOf(280000))
+                            .minStockAlert(20)
+                            .isActive(true)
+                            .build(),
+                    vn.rikkei.post.entity.SupplyItem.builder()
+                            .itemCode("VT_XE_DAY")
+                            .itemName("Xe đẩy hàng 4 bánh sàn thép gấp gọn 300kg")
+                            .category("DUNG_CU_KHO")
+                            .unit("Chiếc")
+                            .specifications("Tải trọng 300kg, bánh xe bọc cao su giảm tiếng ồn, tay gập")
+                            .standardPrice(BigDecimal.valueOf(950000))
+                            .minStockAlert(4)
+                            .isActive(true)
+                            .build()
+            );
+            List<vn.rikkei.post.entity.SupplyItem> savedItems = supplyItemRepository.saveAll(sampleItems);
+
+            // Nạp tồn kho cho Kho Tổng KVT_HN_01
+            for (vn.rikkei.post.entity.SupplyItem it : savedItems) {
+                int initialQty = switch (it.getItemCode()) {
+                    case "VT_PRINT_420" -> 25;
+                    case "VT_SCAN_2D" -> 35;
+                    case "VT_CAN_100" -> 12;
+                    case "VT_BAO_50" -> 600;
+                    case "VT_BANGDINH" -> 320;
+                    case "VT_AOKHOAC" -> 80;
+                    default -> 15;
+                };
+                int damagedQty = "VT_PRINT_420".equals(it.getItemCode()) ? 2 : 0;
+
+                supplyInventoryRepository.save(vn.rikkei.post.entity.SupplyInventory.builder()
+                        .warehouse(wh1)
+                        .item(it)
+                        .quantity(initialQty)
+                        .damagedQuantity(damagedQty)
+                        .build());
+            }
+            log.info("Đã khởi tạo {} loại vật tư thiết bị và tồn kho mẫu tại {}", savedItems.size(), wh1.getName());
+        }
+
+        // Khởi tạo phiếu thu hồi đồ hỏng mẫu
+        if (recallTicketRepository.count() == 0) {
+            recallTicketRepository.save(vn.rikkei.post.entity.EquipmentRecallTicket.builder()
+                    .ticketCode("TH_241126_1001")
+                    .postOfficeId(4L)
+                    .postOfficeName("Bưu cục Cầu Giấy")
+                    .equipmentName("Máy in đơn nhiệt Xprinter XP-420B (Cháy adapter nguồn)")
+                    .quantity(1)
+                    .serialNumber("XP420B-CG-9988")
+                    .damageDescription("Máy in bị sập nguồn sau sự cố chập điện tại bàn phân loại, cắm sạc không lên nguồn.")
+                    .status("CHO_THU_HOI")
+                    .requesterName("Nguyễn Văn Quản Lý CG")
+                    .requesterPhone("0987654321")
+                    .build());
+            log.info("Đã khởi tạo phiếu thu hồi đồ hỏng mẫu trạng thái CHO_THU_HOI");
+        }
     }
 }

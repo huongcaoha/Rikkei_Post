@@ -31,6 +31,7 @@ import { VoucherManagementPage } from './pages/VoucherManagementPage';
 import { HubPayrollApprovalPage } from './pages/HubPayrollApprovalPage';
 import { MyPayrollPage } from './pages/MyPayrollPage';
 import { EcommerceIntegrationPage } from './pages/EcommerceIntegrationPage';
+import { SupplyManagementPage } from './pages/SupplyManagementPage';
 
 const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -102,6 +103,8 @@ export const App: React.FC = () => {
               <Route path="/wms/bags" element={<MasterBagPage />} />
               <Route path="/wms/dispatch" element={<DispatchManagementPage />} />
               <Route path="/wms/trucks" element={<TruckManagementPage />} />
+              <Route path="/wms/supplies" element={<SupplyManagementPage />} />
+              <Route path="/inventory" element={<SupplyManagementPage />} />
               <Route path="/wms/sorting-scanner" element={<AreaSortingScannerPage />} />
               <Route path="/driver/portal" element={<TruckDriverPortalPage />} />
               <Route path="/tms/manifests" element={<ShipmentManifestPage />} />

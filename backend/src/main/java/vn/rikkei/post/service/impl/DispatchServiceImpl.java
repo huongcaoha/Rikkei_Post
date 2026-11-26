@@ -161,6 +161,24 @@ public class DispatchServiceImpl implements DispatchService {
             truck = truckRepository.findById(request.getTruckId()).orElse(null);
         }
 
+        // Kiểm tra phân quyền: Quản lý bưu cục chỉ được điều động tài xế và xe thuộc kho mình quản lý
+        boolean isAdmin = userRoles != null && userRoles.contains("ROLE_ADMIN");
+        if (!isAdmin && creator != null && creator.getAssignedPostOfficeId() != null) {
+            Long managedWhId = creator.getAssignedPostOfficeId();
+            if (!managedWhId.equals(origin.getId())) {
+                throw new IllegalArgumentException("Bạn chỉ được phép khởi tạo lệnh điều vận xuất phát từ kho bưu cục trực thuộc [" 
+                        + (creator.getPostOfficeName() != null ? creator.getPostOfficeName() : ("ID " + managedWhId)) + "]!");
+            }
+            if (driver.getAssignedPostOfficeId() != null && !managedWhId.equals(driver.getAssignedPostOfficeId())) {
+                throw new IllegalArgumentException("Tài xế [" + driver.getFullName() + "] không trực thuộc kho bưu cục của bạn (" 
+                        + (driver.getPostOfficeName() != null ? driver.getPostOfficeName() : "Kho khác") + ")!");
+            }
+            if (truck != null && truck.getCurrentWarehouse() != null && !managedWhId.equals(truck.getCurrentWarehouse().getId())) {
+                throw new IllegalArgumentException("Xe tải [" + truck.getLicensePlate() + "] không trực thuộc kho bưu cục của bạn (" 
+                        + truck.getCurrentWarehouse().getName() + ")!");
+            }
+        }
+
         String dispatchCode = generateUniqueDispatchCode();
         LocalDateTime departureTime = request.getDepartureTime() != null ? request.getDepartureTime() : LocalDateTime.now();
 

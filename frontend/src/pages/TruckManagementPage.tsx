@@ -36,7 +36,12 @@ import { useAuth } from '../context/AuthContext';
 export const TruckManagementPage: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.roles?.includes('ROLE_ADMIN');
-  const isManager = user?.roles?.some(r => ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER'].includes(r));
+  const isBranchManager = user?.roles?.includes('ROLE_BRANCH_MANAGER');
+  // Chỉ Admin và Quản lý chi nhánh mới có quyền tạo và chỉnh sửa thông tin các xe tải
+  const canManageFleet = !!(isAdmin || isBranchManager);
+  // Quản lý kho chỉ được xem và phân công tài xế cho xe thuộc kho mình quản lý
+  const isPostOfficeManager = user?.roles?.some(r => ['ROLE_POST_OFFICE_MANAGER', 'ROLE_WAREHOUSE_STAFF'].includes(r));
+  const userWarehouseId = user?.assignedPostOfficeId || (user as any)?.warehouseId;
 
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -287,60 +292,78 @@ export const TruckManagementPage: React.FC = () => {
     {
       title: 'Thao tác',
       key: 'actions',
-      render: (_: any, r: Truck) => (
-        <Space size="small">
-          {isManager && (
-            <>
-              <Tooltip title="Gán tài xế phụ trách">
+      render: (_: any, r: Truck) => {
+        const isBelongToUserWarehouse = !userWarehouseId || r.currentWarehouseId === userWarehouseId;
+        const canAssignThisTruck = canManageFleet || (isPostOfficeManager && isBelongToUserWarehouse);
+
+        return (
+          <Space size="small">
+            {/* Phân công tài xế: Admin, Quản lý chi nhánh hoặc Quản lý kho (đối với xe thuộc kho mình) */}
+            {(canManageFleet || isPostOfficeManager) && (
+              <Tooltip title={canAssignThisTruck ? "Phân công tài xế quản lý xe" : "Chỉ được phân công tài xế cho xe thuộc kho của bạn"}>
                 <Button
                   size="small"
                   icon={<UserSwitchOutlined />}
+                  disabled={!canAssignThisTruck}
                   onClick={() => handleOpenAssignModal(r)}
+                  className={canAssignThisTruck ? "text-purple-600 hover:text-purple-700" : ""}
                 />
               </Tooltip>
-              <Tooltip title="Chỉnh sửa thông tin">
+            )}
+
+            {/* Chỉnh sửa xe: CHỈ Admin và Quản lý chi nhánh */}
+            {canManageFleet && (
+              <Tooltip title="Chỉnh sửa thông tin xe tải">
                 <Button
                   size="small"
                   icon={<EditOutlined />}
                   onClick={() => handleOpenEditModal(r)}
                 />
               </Tooltip>
-              {r.status === 'AT_WAREHOUSE' && (
-                <Tooltip title="Chuyển vào bảo dưỡng">
-                  <Button
-                    size="small"
-                    icon={<ToolOutlined />}
-                    danger
-                    onClick={() => handleQuickStatusChange(r, 'MAINTENANCE')}
-                  />
-                </Tooltip>
-              )}
-              {r.status === 'MAINTENANCE' && (
-                <Tooltip title="Hoàn tất bảo dưỡng về kho">
-                  <Button
-                    size="small"
-                    icon={<CheckCircleOutlined />}
-                    type="primary"
-                    onClick={() => handleQuickStatusChange(r, 'AT_WAREHOUSE')}
-                  />
-                </Tooltip>
-              )}
-            </>
-          )}
-          {isAdmin && (
-            <Popconfirm
-              title="Xóa xe tải"
-              description={`Bạn có chắc chắn muốn xóa xe ${r.licensePlate}?`}
-              onConfirm={() => handleDeleteTruck(r.id)}
-              okText="Xóa"
-              cancelText="Hủy"
-              okButtonProps={{ danger: true }}
-            >
-              <Button size="small" icon={<DeleteOutlined />} danger />
-            </Popconfirm>
-          )}
-        </Space>
-      )
+            )}
+
+            {/* Chuyển trạng thái bảo dưỡng: Admin, Quản lý chi nhánh hoặc Quản lý kho (thuộc kho mình) */}
+            {(canManageFleet || (isPostOfficeManager && isBelongToUserWarehouse)) && (
+              <>
+                {r.status === 'AT_WAREHOUSE' && (
+                  <Tooltip title="Chuyển vào bảo dưỡng">
+                    <Button
+                      size="small"
+                      icon={<ToolOutlined />}
+                      danger
+                      onClick={() => handleQuickStatusChange(r, 'MAINTENANCE')}
+                    />
+                  </Tooltip>
+                )}
+                {r.status === 'MAINTENANCE' && (
+                  <Tooltip title="Hoàn tất bảo dưỡng về kho">
+                    <Button
+                      size="small"
+                      icon={<CheckCircleOutlined />}
+                      type="primary"
+                      onClick={() => handleQuickStatusChange(r, 'AT_WAREHOUSE')}
+                    />
+                  </Tooltip>
+                )}
+              </>
+            )}
+
+            {/* Xóa xe: CHỈ Admin */}
+            {isAdmin && (
+              <Popconfirm
+                title="Xóa xe tải"
+                description={`Bạn có chắc chắn muốn xóa xe ${r.licensePlate}?`}
+                onConfirm={() => handleDeleteTruck(r.id)}
+                okText="Xóa"
+                cancelText="Hủy"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" icon={<DeleteOutlined />} danger />
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      }
     }
   ];
 
@@ -356,7 +379,7 @@ export const TruckManagementPage: React.FC = () => {
             Quản lý phương tiện vận tải đường trục, gom hàng bưu cục và trung chuyển liên Hub
           </p>
         </div>
-        {isManager && (
+        {canManageFleet && (
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -591,25 +614,42 @@ export const TruckManagementPage: React.FC = () => {
 
       {/* Modal Gán Tài Xế Nhanh */}
       <Modal
-        title={`Gán tài xế xe tải cho xe ${assigningTruck?.licensePlate}`}
+        title={`Phân công tài xế quản lý xe ${assigningTruck?.licensePlate}`}
         open={isAssignModalOpen}
         onOk={handleSaveAssignDriver}
         onCancel={() => setIsAssignModalOpen(false)}
-        okText="Xác nhận gán"
+        okText="Xác nhận phân công"
         cancelText="Hủy"
       >
-        <Form form={assignForm} layout="vertical" className="mt-4">
+        <div className="mb-3 text-xs text-gray-500 bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+          <div><span className="font-semibold text-gray-700">Xe:</span> {assigningTruck?.licensePlate} ({assigningTruck?.truckType})</div>
+          <div><span className="font-semibold text-gray-700">Kho trực thuộc:</span> {assigningTruck?.currentWarehouseName || 'Chưa rõ'}</div>
+          {isPostOfficeManager && !canManageFleet && (
+            <div className="text-purple-600 font-medium mt-1">
+              * Quản lý kho: Chỉ hiển thị và phân công tài xế thuộc kho trực thuộc của bạn.
+            </div>
+          )}
+        </div>
+        <Form form={assignForm} layout="vertical" className="mt-2">
           <Form.Item
             name="driverId"
-            label="Chọn tài xế lái xe tải (ROLE_TRUCK_DRIVER)"
+            label="Chọn tài xế lái xe tải (ROLE_TRUCK_DRIVER / ROLE_SHIPPER)"
             rules={[{ required: true, message: 'Vui lòng chọn tài xế' }]}
           >
             <Select placeholder="Chọn tài xế" showSearch optionFilterProp="children">
-              {drivers.map(d => (
-                <Select.Option key={d.id} value={d.id}>
-                  {d.fullName} (SĐT: {d.phoneNumber})
-                </Select.Option>
-              ))}
+              <Select.Option key={0} value={0}>
+                <span className="text-gray-400 italic">-- Bỏ gán tài xế (Trống) --</span>
+              </Select.Option>
+              {drivers
+                .filter(d => {
+                  if (canManageFleet || !userWarehouseId) return true;
+                  return (d as any).assignedPostOfficeId === userWarehouseId;
+                })
+                .map(d => (
+                  <Select.Option key={d.id} value={d.id}>
+                    {d.fullName} (SĐT: {d.phoneNumber}) {(d as any).postOfficeName ? `[${(d as any).postOfficeName}]` : ''}
+                  </Select.Option>
+                ))}
             </Select>
           </Form.Item>
         </Form>

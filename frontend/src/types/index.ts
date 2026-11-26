@@ -294,6 +294,7 @@ export interface DeliveryRoute {
   id: number;
   routeCode: string;
   routeName: string;
+  routeType?: 'MOTORBIKE_DELIVERY' | 'TRUCK_TRANSFER';
   provinceId: number;
   provinceName?: string;
   districtName?: string;
@@ -963,6 +964,119 @@ export interface AccountantDashboard {
   approvedPaymentsAmount: number;
   paidSalariesAmount: number;
   expenseBreakdownByCategory?: Record<string, number>;
+}
+
+// ================= HỆ THỐNG QUẢN LÝ VẬT TƯ & THIẾT BỊ =================
+
+export interface SupplyWarehouse {
+  id: number;
+  code: string;
+  name: string;
+  address: string;
+  googleMapsUrl?: string;
+  latitude?: number;
+  longitude?: number;
+  managerId?: number;
+  managerName?: string;
+  managerPhone?: string;
+  status: 'ACTIVE' | 'MAINTENANCE' | 'CLOSED' | string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SupplyItem {
+  id: number;
+  itemCode: string;
+  itemName: string;
+  category: 'THIET_BI_MAY_MOC' | 'DUNG_CU_KHO' | 'VAT_TU_DONG_GOI' | 'DONG_PHUC' | string;
+  unit: string;
+  specifications?: string;
+  standardPrice?: number;
+  minStockAlert?: number;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SupplyInventoryDetail {
+  id: number;
+  warehouseId?: number;
+  warehouseName?: string;
+  itemId?: number;
+  itemCode?: string;
+  itemName?: string;
+  category?: string;
+  unit?: string;
+  quantity: number;
+  damagedQuantity: number;
+  minStockAlert: number;
+  isLowStock: boolean;
+  updatedAt?: string;
+}
+
+export interface SupplyTicketItem {
+  id?: number;
+  itemId: number;
+  itemCode?: string;
+  itemName?: string;
+  unit?: string;
+  quantity: number;
+  unitPrice?: number;
+  notes?: string;
+}
+
+export interface SupplyTicket {
+  id: number;
+  ticketCode: string;
+  ticketType: 'IMPORT' | 'EXPORT';
+  warehouse?: SupplyWarehouse;
+  targetPostOfficeId?: number;
+  targetPostOfficeName?: string;
+  partnerOrSupplier?: string;
+  reason?: string;
+  status: 'COMPLETED' | 'DRAFT' | 'CANCELLED' | string;
+  creatorId?: number;
+  creatorName?: string;
+  totalQuantity: number;
+  notes?: string;
+  items?: SupplyTicketItem[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EquipmentRecallTicket {
+  id: number;
+  ticketCode: string;
+  postOfficeId: number;
+  postOfficeName: string;
+  equipmentName: string;
+  supplyItemId?: number;
+  quantity: number;
+  serialNumber?: string;
+  damageDescription: string;
+  status: 'CHO_THU_HOI' | 'DA_THU_HOI';
+  requesterId?: number;
+  requesterName?: string;
+  requesterPhone?: string;
+  resolvedById?: number;
+  resolvedByName?: string;
+  resolvedAt?: string;
+  resolutionNotes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SupplyDashboardStats {
+  totalWarehouses: number;
+  totalItems: number;
+  totalInStock: number;
+  totalDamaged: number;
+  pendingRecallTickets: number;
+  resolvedRecallTickets: number;
+  totalImportTickets: number;
+  totalExportTickets: number;
+  lowStockAlerts: SupplyInventoryDetail[];
 }
 
 

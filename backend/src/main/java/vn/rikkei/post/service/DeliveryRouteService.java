@@ -6,6 +6,7 @@ import java.util.List;
 
 public interface DeliveryRouteService {
     List<DeliveryRoute> getRoutes(Integer provinceId, Long postOfficeId, Long shipperId);
+    List<DeliveryRoute> getRoutes(Integer provinceId, Long postOfficeId, Long shipperId, String routeType);
     DeliveryRoute getRouteById(Long id);
     DeliveryRoute createRoute(DeliveryRoute route);
     DeliveryRoute updateRoute(Long id, DeliveryRoute route);

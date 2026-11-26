@@ -102,6 +102,7 @@ export const DispatchManagementPage: React.FC = () => {
   // Form tạo lệnh điều vận
   const [form] = Form.useForm();
   const [createLoading, setCreateLoading] = useState(false);
+  const selectedOriginId = Form.useWatch('originWarehouseId', form);
 
   // Modal tài xế quét nạp bao tải lên xe
   const [loadBagInput, setLoadBagInput] = useState('');
@@ -118,6 +119,17 @@ export const DispatchManagementPage: React.FC = () => {
   const isDriverOnly = userRoles.includes('ROLE_TRUCK_DRIVER') &&
     !userRoles.some(r => ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_WAREHOUSE_STAFF'].includes(r));
   const canCreateDispatch = !isDriverOnly;
+
+  // Lọc tài xế và xe tải trực thuộc kho bưu cục quản lý
+  const effectiveOriginWhId = (!user?.roles?.includes('ROLE_ADMIN') && userWarehouseId) ? userWarehouseId : selectedOriginId;
+  const availableDrivers = drivers.filter(d => {
+    if (!effectiveOriginWhId) return true;
+    return d.assignedPostOfficeId === effectiveOriginWhId;
+  });
+  const availableTrucks = trucks.filter(t => {
+    if (!effectiveOriginWhId) return true;
+    return t.currentWarehouseId === effectiveOriginWhId;
+  });
 
   // Load danh mục
   const fetchMetadata = async () => {
@@ -795,14 +807,29 @@ export const DispatchManagementPage: React.FC = () => {
           <Row gutter={16}>
             <Col xs={24} sm={12}>
               <Form.Item
-                label={<span className="font-semibold text-gray-700">Tài xế nhận lệnh chuyến xe</span>}
+                label={
+                  <span className="font-semibold text-gray-700">
+                    Tài xế nhận lệnh chuyến xe
+                    <span className="text-xs text-purple-600 font-normal ml-1">
+                      (Chỉ tài xế thuộc kho {effectiveOriginWhId ? `ID ${effectiveOriginWhId}` : ''})
+                    </span>
+                  </span>
+                }
                 name="driverId"
                 rules={[{ required: true, message: 'Vui lòng chọn tài xế nhận lệnh' }]}
+                extra={
+                  availableDrivers.length === 0 ? (
+                    <span className="text-xs text-amber-600">
+                      ⚠️ Kho này hiện chưa có tài xế trực thuộc. Vui lòng gán tài xế vào kho trước.
+                    </span>
+                  ) : undefined
+                }
               >
                 <Select
-                  placeholder="Chọn tài xế xe tải (ROLE_TRUCK_DRIVER)"
-                  options={drivers.map(d => ({
-                    label: `👨‍✈️ ${d.fullName} (SĐT: ${d.phoneNumber || 'N/A'})`,
+                  placeholder="Chọn tài xế xe tải trực thuộc kho"
+                  notFoundContent="Không có tài xế thuộc kho này"
+                  options={availableDrivers.map(d => ({
+                    label: `👨‍✈️ ${d.fullName} (SĐT: ${d.phoneNumber || 'N/A'})${d.postOfficeName ? ` - ${d.postOfficeName}` : ''}`,
                     value: d.id
                   }))}
                   className="rounded-lg"
@@ -812,13 +839,28 @@ export const DispatchManagementPage: React.FC = () => {
 
             <Col xs={24} sm={12}>
               <Form.Item
-                label={<span className="font-semibold text-gray-700">Xe ô tô tải điều phối</span>}
+                label={
+                  <span className="font-semibold text-gray-700">
+                    Xe ô tô tải điều phối
+                    <span className="text-xs text-purple-600 font-normal ml-1">
+                      (Chỉ xe thuộc kho {effectiveOriginWhId ? `ID ${effectiveOriginWhId}` : ''})
+                    </span>
+                  </span>
+                }
                 name="truckId"
+                extra={
+                  availableTrucks.length === 0 ? (
+                    <span className="text-xs text-amber-600">
+                      ⚠️ Kho này hiện chưa có xe tải trực thuộc.
+                    </span>
+                  ) : undefined
+                }
               >
                 <Select
-                  placeholder="Chọn xe tải (Tùy chọn)"
+                  placeholder="Chọn xe tải trực thuộc kho (Tùy chọn)"
                   allowClear
-                  options={trucks.map(t => ({
+                  notFoundContent="Không có xe tải thuộc kho này"
+                  options={availableTrucks.map(t => ({
                     label: `🚛 ${t.licensePlate} (${t.truckType} - ${t.payloadKg}kg) [${t.status}]`,
                     value: t.id
                   }))}

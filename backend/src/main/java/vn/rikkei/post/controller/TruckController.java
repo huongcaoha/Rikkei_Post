@@ -45,7 +45,7 @@ public class TruckController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER')")
     public ResponseEntity<ApiResponse<TruckResponse>> createTruck(
             @Valid @RequestBody CreateTruckRequest request,
             @AuthenticationPrincipal CustomUserDetails userDetails
@@ -56,7 +56,7 @@ public class TruckController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER', 'POST_OFFICE_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'BRANCH_MANAGER')")
     public ResponseEntity<ApiResponse<TruckResponse>> updateTruck(
             @PathVariable Long id,
             @Valid @RequestBody UpdateTruckRequest request,

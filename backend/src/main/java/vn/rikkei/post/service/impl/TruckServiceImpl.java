@@ -69,6 +69,19 @@ public class TruckServiceImpl implements TruckService {
         Warehouse warehouse = warehouseRepository.findById(request.getCurrentWarehouseId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy Kho / HUB ID: " + request.getCurrentWarehouseId()));
 
+        if (userId != null) {
+            User user = userRepository.findById(userId).orElse(null);
+            if (user != null) {
+                boolean isAdmin = user.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+                boolean isBranchManager = user.getRoles().stream().anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()));
+                if (!isAdmin && isBranchManager && user.getManagedProvinceId() != null) {
+                    if (!user.getManagedProvinceId().equals(warehouse.getProvinceId())) {
+                        throw new IllegalArgumentException("Quản lý chi nhánh chỉ được thêm xe tải vào các kho bưu cục trực thuộc tỉnh/thành phố mình quản lý!");
+                    }
+                }
+            }
+        }
+
         User driver = null;
         if (request.getCurrentDriverId() != null) {
             driver = userRepository.findById(request.getCurrentDriverId())
@@ -101,6 +114,19 @@ public class TruckServiceImpl implements TruckService {
     public TruckResponse updateTruck(Long id, UpdateTruckRequest request, Long userId) {
         Truck truck = truckRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy xe tải ID: " + id));
+
+        if (userId != null) {
+            User user = userRepository.findById(userId).orElse(null);
+            if (user != null) {
+                boolean isAdmin = user.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+                boolean isBranchManager = user.getRoles().stream().anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()));
+                if (!isAdmin && isBranchManager && user.getManagedProvinceId() != null) {
+                    if (truck.getCurrentWarehouse() != null && !user.getManagedProvinceId().equals(truck.getCurrentWarehouse().getProvinceId())) {
+                        throw new IllegalArgumentException("Quản lý chi nhánh chỉ được chỉnh sửa thông tin xe tải thuộc khu vực tỉnh/thành phố mình quản lý!");
+                    }
+                }
+            }
+        }
 
         if (request.getLicensePlate() != null && !request.getLicensePlate().isBlank()) {
             String cleanPlate = request.getLicensePlate().trim().toUpperCase();
@@ -170,6 +196,22 @@ public class TruckServiceImpl implements TruckService {
     public TruckResponse assignDriver(Long truckId, Long driverId, Long userId) {
         Truck truck = truckRepository.findById(truckId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy xe tải ID: " + truckId));
+
+        if (userId != null) {
+            User user = userRepository.findById(userId).orElse(null);
+            if (user != null) {
+                boolean isAdmin = user.getRoles().stream().anyMatch(r -> "ROLE_ADMIN".equalsIgnoreCase(r.getRoleName()));
+                boolean isBranchManager = user.getRoles().stream().anyMatch(r -> "ROLE_BRANCH_MANAGER".equalsIgnoreCase(r.getRoleName()));
+                // Quản lý kho / Nhân viên kho: chỉ được phân công xe thuộc kho trực thuộc của mình
+                if (!isAdmin && !isBranchManager) {
+                    if (user.getAssignedPostOfficeId() != null) {
+                        if (truck.getCurrentWarehouse() == null || !user.getAssignedPostOfficeId().equals(truck.getCurrentWarehouse().getId())) {
+                            throw new IllegalArgumentException("Bạn chỉ có quyền phân công tài xế cho xe tải thuộc kho bưu cục trực thuộc quản lý của bạn!");
+                        }
+                    }
+                }
+            }
+        }
 
         if (driverId == null || driverId == 0L) {
             truck.setCurrentDriverId(null);

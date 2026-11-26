@@ -36,6 +36,15 @@ public class DeliveryRoute {
     @Column(name = "route_name", nullable = false, length = 150)
     private String routeName; // e.g. "Tuyến Cầu Giấy 01 - Duy Tân & Trần Thái Tông"
 
+    /**
+     * Loại tuyến đường:
+     * - MOTORBIKE_DELIVERY: Tuyến phân công cho Shipper giao hàng bằng xe máy
+     * - TRUCK_TRANSFER: Tuyến phân công cho Tài xế ô tô gom hàng hoặc chở hàng trung chuyển Hub
+     */
+    @Column(name = "route_type", length = 30)
+    @Builder.Default
+    private String routeType = "MOTORBIKE_DELIVERY";
+
     @Column(name = "province_id", nullable = false)
     private Integer provinceId;
 
