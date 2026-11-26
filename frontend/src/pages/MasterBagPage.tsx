@@ -35,6 +35,7 @@ import {
   Barcode,
   Layers,
   ArrowRight,
+  MapPin,
 } from 'lucide-react';
 import { wmsApi } from '../api/wms';
 import { locationApi } from '../api/location';
@@ -65,6 +66,7 @@ export const MasterBagPage: React.FC = () => {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [filterDestWarehouseId, setFilterDestWarehouseId] = useState<number | 'ALL'>('ALL');
   const [searchKeyword, setSearchKeyword] = useState<string>('');
 
   // Tự động lắng nghe sự kiện WebSocket cập nhật danh sách bao tải
@@ -316,14 +318,41 @@ export const MasterBagPage: React.FC = () => {
     }
   };
 
+  // Thống kê số lượng bao tải theo từng kho đích đến (Chỉ hiển thị các kho có số lượng bao > 0)
+  const destWarehouseStats = React.useMemo(() => {
+    const statsMap: Record<number, { id: number; name: string; count: number; totalWeightKg: number; totalItems: number }> = {};
+    bags.forEach((b) => {
+      const destId = b.destWarehouseId;
+      const destName = b.destWarehouseName || `Kho #${destId}`;
+      if (!destId) return;
+      if (!statsMap[destId]) {
+        statsMap[destId] = {
+          id: destId,
+          name: destName,
+          count: 0,
+          totalWeightKg: 0,
+          totalItems: 0,
+        };
+      }
+      statsMap[destId].count += 1;
+      statsMap[destId].totalWeightKg += Number(b.totalWeightKg || 0);
+      statsMap[destId].totalItems += Number(b.totalItems || 0);
+    });
+
+    return Object.values(statsMap)
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [bags]);
+
   const filteredBags = bags.filter((b) => {
     if (filterStatus !== 'ALL' && b.status !== filterStatus) return false;
+    if (filterDestWarehouseId !== 'ALL' && b.destWarehouseId !== filterDestWarehouseId) return false;
     if (searchKeyword.trim()) {
       const kw = searchKeyword.trim().toLowerCase();
       const matchCode = b.bagCode.toLowerCase().includes(kw);
       const matchSeal = b.sealNumber?.toLowerCase().includes(kw);
-      const matchOrig = b.originWarehouseName.toLowerCase().includes(kw);
-      const matchDest = b.destWarehouseName.toLowerCase().includes(kw);
+      const matchOrig = b.originWarehouseName?.toLowerCase().includes(kw);
+      const matchDest = b.destWarehouseName?.toLowerCase().includes(kw);
       return matchCode || matchSeal || matchOrig || matchDest;
     }
     return true;
@@ -559,6 +588,76 @@ export const MasterBagPage: React.FC = () => {
         </Col>
       </Row>
 
+      {/* Thống kê số lượng bao tải giao đến từng kho đích đến (Chỉ hiển thị các kho có số lượng bao > 0) */}
+      {destWarehouseStats.length > 0 && (
+        <Card className="rounded-2xl shadow-sm border border-gray-100 bg-gradient-to-r from-orange-50/40 via-white to-blue-50/40 p-1">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-orange-100 text-orange-600 rounded-xl">
+                <MapPin size={20} />
+              </div>
+              <div>
+                <span className="font-bold text-gray-800 text-sm">
+                  Thống Kê Số Lượng Bao Tải Giao Đến Từng Kho Đích Đến ({destWarehouseStats.length} kho có bao tải)
+                </span>
+                <div className="text-[11px] text-gray-500">
+                  Nhấn vào từng kho để lọc nhanh danh sách bao tải (Chỉ hiển thị các kho đích có số lượng bao tải &gt; 0)
+                </div>
+              </div>
+            </div>
+
+            {filterDestWarehouseId !== 'ALL' && (
+              <Button
+                size="small"
+                type="link"
+                onClick={() => setFilterDestWarehouseId('ALL')}
+                className="text-orange-600 font-semibold p-0 text-xs"
+              >
+                ✕ Bỏ lọc kho đích (Hiển thị tất cả)
+              </Button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {destWarehouseStats.map((stat) => {
+              const isSelected = filterDestWarehouseId === stat.id;
+              return (
+                <div
+                  key={stat.id}
+                  onClick={() => setFilterDestWarehouseId(isSelected ? 'ALL' : stat.id)}
+                  className={`cursor-pointer p-3 rounded-xl border transition-all duration-200 select-none ${
+                    isSelected
+                      ? 'bg-orange-600 text-white border-orange-700 shadow-md transform -translate-y-0.5'
+                      : 'bg-white hover:bg-orange-50 text-gray-800 border-gray-200 hover:border-orange-300 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span
+                      className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-gray-800'}`}
+                      title={stat.name}
+                    >
+                      {stat.name}
+                    </span>
+                    {isSelected && <CheckCircle2 size={14} className="text-white shrink-0 ml-1" />}
+                  </div>
+                  <div className="flex items-baseline justify-between mt-1">
+                    <span className={`text-lg font-black ${isSelected ? 'text-white' : 'text-orange-600'}`}>
+                      {stat.count} <span className="text-xs font-semibold">bao</span>
+                    </span>
+                    <span className={`text-[11px] ${isSelected ? 'text-orange-100' : 'text-gray-500'}`}>
+                      {stat.totalWeightKg.toFixed(1)} kg
+                    </span>
+                  </div>
+                  <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-orange-100' : 'text-gray-400'}`}>
+                    Tổng {stat.totalItems} kiện hàng
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       {/* Bảng danh sách bao tải */}
       <Card className="rounded-2xl shadow-sm border border-gray-100">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -568,13 +667,31 @@ export const MasterBagPage: React.FC = () => {
               placeholder="Tìm theo mã bao, mã seal, tên kho..."
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
-              style={{ width: 280 }}
+              style={{ width: 260 }}
               allowClear
             />
             <Select
+              value={filterDestWarehouseId}
+              onChange={setFilterDestWarehouseId}
+              style={{ width: 230 }}
+              placeholder="Lọc theo kho đích đến"
+              showSearch
+              optionFilterProp="children"
+            >
+              <Option value="ALL">🏢 Tất cả kho đích đến</Option>
+              {warehouses.map((w) => {
+                const countForWh = destWarehouseStats.find((s) => s.id === w.id)?.count || 0;
+                return (
+                  <Option key={w.id} value={w.id}>
+                    {w.name} {countForWh > 0 ? `(${countForWh} bao)` : ''}
+                  </Option>
+                );
+              })}
+            </Select>
+            <Select
               value={filterStatus}
               onChange={setFilterStatus}
-              style={{ width: 200 }}
+              style={{ width: 190 }}
             >
               <Option value="ALL">Tất cả trạng thái</Option>
               <Option value="OPEN">Đang mở đóng kiện</Option>
