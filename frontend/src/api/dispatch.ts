@@ -59,6 +59,12 @@ export const dispatchApi = {
     return res.data;
   },
 
+  // Tài xế quét mã bao tải nạp lên chuyến xe điều vận mang đi
+  loadBag: async (id: number, bagCode: string): Promise<ApiResponse<DispatchOrder>> => {
+    const res = await apiClient.post<ApiResponse<DispatchOrder>>(`/dispatch-orders/${id}/load-bag`, { bagCode });
+    return res.data;
+  },
+
   // Lấy danh sách bao tải sẵn sàng để điều vận tại kho xuất phát
   getAvailableBags: async (originWarehouseId: number, destWarehouseId?: number): Promise<ApiResponse<MasterBag[]>> => {
     const res = await apiClient.get<ApiResponse<MasterBag[]>>('/dispatch-orders/available-bags', {

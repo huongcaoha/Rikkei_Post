@@ -34,26 +34,45 @@ public class DispatchOrderController {
             @RequestParam(required = false) Long destWarehouseId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         LocalDateTime start = startDate != null ? startDate.atStartOfDay() : null;
         LocalDateTime end = endDate != null ? endDate.atTime(LocalTime.MAX) : null;
+        Long userId = userDetails != null ? userDetails.getId() : 1L;
+        List<String> roles = userDetails != null
+                ? userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList()
+                : List.of("ROLE_ADMIN");
 
         List<DispatchOrderResponse> list = dispatchService.getDispatchOrders(
-                originWarehouseId, destWarehouseId, status, start, end
+                originWarehouseId, destWarehouseId, status, start, end, userId, roles
         );
         return ResponseEntity.ok(ApiResponse.success(list));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<DispatchOrderResponse>> getDispatchById(@PathVariable Long id) {
-        DispatchOrderResponse res = dispatchService.getDispatchById(id);
+    public ResponseEntity<ApiResponse<DispatchOrderResponse>> getDispatchById(
+            @PathVariable Long id,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long userId = userDetails != null ? userDetails.getId() : 1L;
+        List<String> roles = userDetails != null
+                ? userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList()
+                : List.of("ROLE_ADMIN");
+        DispatchOrderResponse res = dispatchService.getDispatchById(id, userId, roles);
         return ResponseEntity.ok(ApiResponse.success(res));
     }
 
     @GetMapping("/code/{code}")
-    public ResponseEntity<ApiResponse<DispatchOrderResponse>> getDispatchByCode(@PathVariable String code) {
-        DispatchOrderResponse res = dispatchService.getDispatchByCode(code);
+    public ResponseEntity<ApiResponse<DispatchOrderResponse>> getDispatchByCode(
+            @PathVariable String code,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long userId = userDetails != null ? userDetails.getId() : 1L;
+        List<String> roles = userDetails != null
+                ? userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList()
+                : List.of("ROLE_ADMIN");
+        DispatchOrderResponse res = dispatchService.getDispatchByCode(code, userId, roles);
         return ResponseEntity.ok(ApiResponse.success(res));
     }
 
@@ -64,7 +83,10 @@ public class DispatchOrderController {
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         Long userId = userDetails != null ? userDetails.getId() : 1L;
-        DispatchOrderResponse res = dispatchService.createDispatchOrder(request, userId);
+        List<String> roles = userDetails != null
+                ? userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList()
+                : List.of("ROLE_ADMIN");
+        DispatchOrderResponse res = dispatchService.createDispatchOrder(request, userId, roles);
         return ResponseEntity.ok(ApiResponse.success(res, "Khởi tạo lệnh điều vận chuyến xe thành công"));
     }
 
@@ -87,8 +109,26 @@ public class DispatchOrderController {
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         Long userId = userDetails != null ? userDetails.getId() : 1L;
-        DispatchOrderResponse res = dispatchService.updateDispatchStatus(id, request, userId);
+        List<String> roles = userDetails != null
+                ? userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList()
+                : List.of("ROLE_ADMIN");
+        DispatchOrderResponse res = dispatchService.updateDispatchStatus(id, request, userId, roles);
         return ResponseEntity.ok(ApiResponse.success(res, "Cập nhật trạng thái chuyến xe điều vận thành công"));
+    }
+
+    @PostMapping("/{id}/load-bag")
+    public ResponseEntity<ApiResponse<DispatchOrderResponse>> driverLoadBag(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, String> payload,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long userId = userDetails != null ? userDetails.getId() : 1L;
+        List<String> roles = userDetails != null
+                ? userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList()
+                : List.of("ROLE_ADMIN");
+        String bagCode = payload.get("bagCode");
+        DispatchOrderResponse res = dispatchService.driverLoadBag(id, bagCode, userId, roles);
+        return ResponseEntity.ok(ApiResponse.success(res, "Đã nạp bao tải lên chuyến xe điều vận thành công"));
     }
 
     @PostMapping("/{id}/scan-bag")

@@ -96,16 +96,17 @@ export const DispatchManagementPage: React.FC = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isInboundModalOpen, setIsInboundModalOpen] = useState(false);
+  const [isLoadBagModalOpen, setIsLoadBagModalOpen] = useState(false);
   const [selectedDispatch, setSelectedDispatch] = useState<DispatchOrder | null>(null);
 
   // Form tạo lệnh điều vận
   const [form] = Form.useForm();
   const [createLoading, setCreateLoading] = useState(false);
-  const [scannedBagInput, setScannedBagInput] = useState('');
-  const [selectedBags, setSelectedBags] = useState<any[]>([]);
-  const [availableBags, setAvailableBags] = useState<MasterBag[]>([]);
-  const [loadingAvailableBags, setLoadingAvailableBags] = useState(false);
-  const bagInputRef = useRef<any>(null);
+
+  // Modal tài xế quét nạp bao tải lên xe
+  const [loadBagInput, setLoadBagInput] = useState('');
+  const [loadBagLoading, setLoadBagLoading] = useState(false);
+  const loadBagInputRef = useRef<any>(null);
 
   // Modal quét nhập kho đích
   const [inboundScanCode, setInboundScanCode] = useState('');
@@ -113,7 +114,10 @@ export const DispatchManagementPage: React.FC = () => {
   const inboundInputRef = useRef<any>(null);
 
   const userWarehouseId = user?.assignedPostOfficeId || (user as any)?.warehouseId;
-  const isDriver = user?.roles?.includes('ROLE_TRUCK_DRIVER');
+  const userRoles: string[] = user?.roles || [];
+  const isDriverOnly = userRoles.includes('ROLE_TRUCK_DRIVER') &&
+    !userRoles.some(r => ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_WAREHOUSE_STAFF'].includes(r));
+  const canCreateDispatch = !isDriverOnly;
 
   // Load danh mục
   const fetchMetadata = async () => {
@@ -182,7 +186,6 @@ export const DispatchManagementPage: React.FC = () => {
   // Mở modal tạo mới
   const handleOpenCreateModal = () => {
     form.resetFields();
-    setSelectedBags([]);
     const defaultCode = generateNewDispatchCode();
 
     form.setFieldsValue({
@@ -196,87 +199,10 @@ export const DispatchManagementPage: React.FC = () => {
     });
 
     setIsCreateModalOpen(true);
-    setTimeout(() => {
-      bagInputRef.current?.focus();
-    }, 200);
   };
 
-  // Nạp bao tải sẵn sàng tại kho xuất phát hướng về kho đích
-  const fetchAvailableBags = async (originWhId: number, destWhId?: number) => {
-    if (!originWhId) return;
-    try {
-      setLoadingAvailableBags(true);
-      const res = await dispatchApi.getAvailableBags(originWhId, destWhId);
-      if (res.success) {
-        setAvailableBags(res.data);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingAvailableBags(false);
-    }
-  };
-
-  // Thêm bao tải vào form (qua quét barcode hoặc chọn)
-  const handleAddBagToDispatch = (bagToAdd: any) => {
-    const bagCode = (typeof bagToAdd === 'string' ? bagToAdd : bagToAdd.bagCode || '').trim().toUpperCase();
-    if (!bagCode) return;
-
-    if (selectedBags.some(b => b.bagCode === bagCode)) {
-      message.warning(`Bao tải [${bagCode}] đã có trong chuyến xe này rồi!`);
-      setScannedBagInput('');
-      return;
-    }
-
-    // Nếu truyền object đầy đủ
-    if (typeof bagToAdd === 'object' && bagToAdd.bagCode) {
-      setSelectedBags(prev => [...prev, bagToAdd]);
-      playBeep();
-      message.success(`Đã thêm bao tải [${bagCode}] vào chuyến xe`);
-      setScannedBagInput('');
-      return;
-    }
-
-    // Nếu quét mã chuỗi
-    const matched = availableBags.find(b => b.bagCode === bagCode || b.sealNumber === bagCode);
-    if (matched) {
-      setSelectedBags(prev => [...prev, matched]);
-      playBeep();
-      message.success(`Đã thêm bao tải [${matched.bagCode}] vào chuyến xe`);
-    } else {
-      // Cho phép thêm dạng mã thủ công
-      setSelectedBags(prev => [
-        ...prev,
-        {
-          id: Date.now(),
-          bagCode: bagCode,
-          sealNumber: 'SEAL-SCAN',
-          totalItems: 1,
-          totalWeightKg: 5.0,
-          destWarehouseName: 'Kho Hub'
-        }
-      ]);
-      playBeep();
-      message.success(`Đã thêm bao tải [${bagCode}] vào chuyến xe`);
-    }
-
-    setScannedBagInput('');
-    setTimeout(() => {
-      bagInputRef.current?.focus();
-    }, 50);
-  };
-
-  const handleRemoveBag = (bagCode: string) => {
-    setSelectedBags(prev => prev.filter(b => b.bagCode !== bagCode));
-  };
-
-  // Submit tạo mới lệnh điều vận
+  // Submit tạo mới lệnh điều vận (Quản lý kho tạo lệnh - Bỏ quét bao tải)
   const handleCreateSubmit = async (values: any) => {
-    if (selectedBags.length === 0) {
-      message.warning('Vui lòng quét hoặc chọn ít nhất 1 bao tải cho chuyến xe điều vận!');
-      return;
-    }
-
     try {
       setCreateLoading(true);
       const payload = {
@@ -286,12 +212,12 @@ export const DispatchManagementPage: React.FC = () => {
         truckId: values.truckId,
         notes: values.notes,
         departureTime: values.departureTime ? values.departureTime.toISOString() : undefined,
-        bagCodes: selectedBags.map(b => b.bagCode)
+        bagCodes: [] // Mặc định tạo lệnh chưa có bao tải, tài xế sẽ quét mã nạp bao khi thực hiện
       };
 
       const res = await dispatchApi.createDispatchOrder(payload);
       if (res.success) {
-        message.success(`Khởi tạo lệnh điều vận [${res.data.dispatchCode}] thành công! Đã gửi thông báo tới kho đích.`);
+        message.success(`Khởi tạo lệnh điều vận [${res.data.dispatchCode}] thành công! Lệnh đã được gán cho tài xế.`);
         setIsCreateModalOpen(false);
         fetchDispatchOrders();
       }
@@ -299,6 +225,45 @@ export const DispatchManagementPage: React.FC = () => {
       message.error(err.response?.data?.message || 'Không thể tạo lệnh điều vận');
     } finally {
       setCreateLoading(false);
+    }
+  };
+
+  // Mở modal tài xế quét nạp bao tải lên xe
+  const handleOpenLoadBagModal = (dispatch: DispatchOrder) => {
+    setSelectedDispatch(dispatch);
+    setLoadBagInput('');
+    setIsLoadBagModalOpen(true);
+    setTimeout(() => {
+      loadBagInputRef.current?.focus();
+    }, 200);
+  };
+
+  // Tài xế thực hiện quét nạp bao tải vào chuyến xe
+  const handleLoadBagSubmit = async (codeToScan?: string) => {
+    if (!selectedDispatch) return;
+    const code = (codeToScan || loadBagInput).trim().toUpperCase();
+    if (!code) {
+      message.warning('Vui lòng nhập hoặc quét mã bao tải!');
+      return;
+    }
+
+    try {
+      setLoadBagLoading(true);
+      const res = await dispatchApi.loadBag(selectedDispatch.id, code);
+      if (res.success) {
+        playBeep();
+        message.success(`Đã nạp bao tải [${code}] lên chuyến xe điều vận thành công!`);
+        setSelectedDispatch(res.data);
+        setLoadBagInput('');
+        fetchDispatchOrders();
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Nạp bao tải lên chuyến xe thất bại');
+    } finally {
+      setLoadBagLoading(false);
+      setTimeout(() => {
+        loadBagInputRef.current?.focus();
+      }, 100);
     }
   };
 
@@ -507,64 +472,112 @@ export const DispatchManagementPage: React.FC = () => {
     {
       title: 'Thao Tác',
       key: 'action',
-      render: (_: any, record: DispatchOrder) => (
-        <Space direction="vertical" size={2}>
-          <Button
-            size="small"
-            icon={<Eye size={13} />}
-            onClick={() => {
-              setSelectedDispatch(record);
-              setIsDetailModalOpen(true);
-            }}
-          >
-            Chi tiết
-          </Button>
+      render: (_: any, record: DispatchOrder) => {
+        const totalBags = record.totalBags || 0;
+        const receivedCount = record.items?.filter(it => it.isReceivedAtDest)?.length || 0;
+        const allReceived = totalBags > 0 && receivedCount === totalBags;
 
-          {/* Nút xuất phát đi giao (nếu đang PICKED_UP) */}
-          {record.status === 'PICKED_UP' && (
-            <Popconfirm
-              title="Xuất phát chuyến xe"
-              description={`Xác nhận tài xế ${record.driverName} đã chất hàng và bắt đầu xuất bến đi giao?`}
-              onConfirm={() => handleUpdateStatus(record, 'IN_TRANSIT')}
-              okText="Xuất bến ngay"
-              cancelText="Hủy"
-            >
-              <Button size="small" type="primary" className="bg-orange-500 hover:bg-orange-600 font-bold">
-                🚚 Bắt đầu đi giao
-              </Button>
-            </Popconfirm>
-          )}
-
-          {/* Nút quét nhập kho tại Hub đích */}
-          {(record.status === 'IN_TRANSIT' || record.status === 'PICKED_UP') && (
+        return (
+          <Space direction="vertical" size={2}>
             <Button
               size="small"
-              type="primary"
-              icon={<ScanLine size={13} />}
-              className="bg-purple-600 hover:bg-purple-700 font-bold"
-              onClick={() => handleOpenInboundModal(record)}
+              icon={<Eye size={13} />}
+              onClick={() => {
+                setSelectedDispatch(record);
+                setIsDetailModalOpen(true);
+              }}
             >
-              Quét nhận tại Hub đích
+              Chi tiết
             </Button>
-          )}
 
-          {/* Nút hủy lệnh (chỉ khi đang PICKED_UP) */}
-          {record.status === 'PICKED_UP' && (
-            <Popconfirm
-              title="Hủy lệnh điều vận"
-              description="Bạn có chắc chắn muốn hủy chuyến xe điều vận này? Các bao tải sẽ được trả lại trạng thái sẵn sàng."
-              onConfirm={() => handleUpdateStatus(record, 'CANCELLED')}
-              okText="Hủy chuyến"
-              cancelText="Đóng"
-              okButtonProps={{ danger: true }}
-            >
-              <Button size="small" danger type="text">
-                Hủy lệnh
+            {/* Nút tài xế thực hiện quét nạp bao tải lên xe */}
+            {['PICKED_UP', 'IN_TRANSIT'].includes(record.status) && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<Barcode size={13} />}
+                className="bg-blue-600 hover:bg-blue-700 font-bold"
+                onClick={() => handleOpenLoadBagModal(record)}
+              >
+                📦 Quét nạp bao tải lên xe
               </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      )
+            )}
+
+            {/* Nút xuất phát đi giao (nếu đang PICKED_UP) */}
+            {record.status === 'PICKED_UP' && (
+              <Popconfirm
+                title="Xuất phát chuyến xe"
+                description={`Xác nhận tài xế ${record.driverName} đã chất hàng và bắt đầu xuất bến đi giao?`}
+                onConfirm={() => handleUpdateStatus(record, 'IN_TRANSIT')}
+                okText="Xuất bến ngay"
+                cancelText="Hủy"
+              >
+                <Button size="small" type="primary" className="bg-orange-500 hover:bg-orange-600 font-bold">
+                  🚚 Xuất bến đi giao
+                </Button>
+              </Popconfirm>
+            )}
+
+            {/* Nút quét nhập kho tại Hub đích */}
+            {(record.status === 'IN_TRANSIT' || record.status === 'PICKED_UP') && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<ScanLine size={13} />}
+                className="bg-purple-600 hover:bg-purple-700 font-bold"
+                onClick={() => handleOpenInboundModal(record)}
+              >
+                Quét nhận tại Hub đích
+              </Button>
+            )}
+
+            {/* Nút hoàn thành chuyến đi: CHỈ CHO PHÉP khi tất cả bao tải đã được nhập hết vào kho đích */}
+            {record.status === 'IN_TRANSIT' && (
+              allReceived ? (
+                <Popconfirm
+                  title="Xác nhận hoàn thành chuyến xe"
+                  description={`Toàn bộ ${totalBags} bao tải trên xe đã được kho đích [${record.destWarehouseName}] quét tiếp nhận nhập kho đầy đủ. Xác nhận hoàn tất chuyến đi?`}
+                  onConfirm={() => handleUpdateStatus(record, 'COMPLETED')}
+                  okText="Hoàn thành chuyến đi"
+                  cancelText="Hủy"
+                >
+                  <Button size="small" type="primary" className="bg-green-600 hover:bg-green-700 font-bold">
+                    ✅ Hoàn thành chuyến đi
+                  </Button>
+                </Popconfirm>
+              ) : (
+                <Tooltip
+                  title={
+                    totalBags === 0
+                      ? 'Chưa thể hoàn thành: Chuyến xe chưa nạp bao tải nào!'
+                      : `Chưa thể hoàn thành chuyến đi! Còn ${totalBags - receivedCount} bao tải chưa được kho đích [${record.destWarehouseName}] quét tiếp nhận nhập kho.`
+                  }
+                >
+                  <Button size="small" disabled className="font-bold opacity-60 cursor-not-allowed">
+                    ⏳ Chờ kho đích nhận ({receivedCount}/{totalBags} bao)
+                  </Button>
+                </Tooltip>
+              )
+            )}
+
+            {/* Nút hủy lệnh (chỉ khi đang PICKED_UP và là Quản lý/Admin) */}
+            {record.status === 'PICKED_UP' && canCreateDispatch && (
+              <Popconfirm
+                title="Hủy lệnh điều vận"
+                description="Bạn có chắc chắn muốn hủy chuyến xe điều vận này? Các bao tải sẽ được trả lại trạng thái sẵn sàng."
+                onConfirm={() => handleUpdateStatus(record, 'CANCELLED')}
+                okText="Hủy chuyến"
+                cancelText="Đóng"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" danger type="text">
+                  Hủy lệnh
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      }
     }
   ];
 
@@ -590,14 +603,16 @@ export const DispatchManagementPage: React.FC = () => {
           <Button icon={<RefreshCw size={15} />} onClick={fetchDispatchOrders} loading={loading}>
             Làm mới
           </Button>
-          <Button
-            type="primary"
-            icon={<Plus size={16} />}
-            onClick={handleOpenCreateModal}
-            className="bg-purple-600 hover:bg-purple-700 font-bold h-10 px-5 rounded-xl shadow-md"
-          >
-            + Tạo Lệnh Điều Vận Chuyến Xe
-          </Button>
+          {canCreateDispatch && (
+            <Button
+              type="primary"
+              icon={<Plus size={16} />}
+              onClick={handleOpenCreateModal}
+              className="bg-purple-600 hover:bg-purple-700 font-bold h-10 px-5 rounded-xl shadow-md"
+            >
+              + Tạo Lệnh Điều Vận Chuyến Xe
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -752,7 +767,6 @@ export const DispatchManagementPage: React.FC = () => {
                     label: `${w.type === 'REGIONAL_HUB' ? '🌐' : w.type === 'HUB' ? '🏢' : '🛵'} ${w.name}`,
                     value: w.id
                   }))}
-                  onChange={val => fetchAvailableBags(val, form.getFieldValue('destWarehouseId'))}
                   className="rounded-lg"
                 />
               </Form.Item>
@@ -772,7 +786,6 @@ export const DispatchManagementPage: React.FC = () => {
                       label: `${w.type === 'REGIONAL_HUB' ? '🌐' : '🏢'} ${w.name} (${w.type === 'REGIONAL_HUB' ? 'KHO MIỀN' : 'HUB TỈNH'})`,
                       value: w.id
                     }))}
-                  onChange={val => fetchAvailableBags(form.getFieldValue('originWarehouseId'), val)}
                   className="rounded-lg"
                 />
               </Form.Item>
@@ -815,104 +828,6 @@ export const DispatchManagementPage: React.FC = () => {
             </Col>
           </Row>
 
-          {/* Ô quét Barcode bao tải */}
-          <div className="bg-purple-50/60 p-4 rounded-xl border border-purple-200 space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
-                <Barcode size={16} className="text-purple-600" />
-                Quét Mã Barcode / QR Hoặc Nhập Mã Bao Tải (VD: BAG2611...):
-              </label>
-              <span className="text-xs text-purple-700 font-bold">
-                Đã nạp: {selectedBags.length} bao tải
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Input
-                ref={bagInputRef}
-                prefix={<ScanLine size={16} className="text-purple-600" />}
-                placeholder="Bắn súng quét barcode mã bao tải hoặc mã seal rồi nhấn Enter..."
-                value={scannedBagInput}
-                onChange={e => setScannedBagInput(e.target.value)}
-                onPressEnter={() => handleAddBagToDispatch(scannedBagInput)}
-                className="font-mono font-bold text-base h-11"
-              />
-              <Button
-                type="primary"
-                onClick={() => handleAddBagToDispatch(scannedBagInput)}
-                className="bg-purple-600 hover:bg-purple-700 h-11 px-5 font-bold"
-              >
-                + Thêm bao
-              </Button>
-            </div>
-
-            {/* Danh sách bao tải sẵn có để chọn nhanh */}
-            {availableBags.length > 0 && (
-              <div className="text-xs space-y-1">
-                <div className="text-gray-500 font-medium">Bao tải sẵn sàng tại kho:</div>
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {availableBags.map(b => (
-                    <Button
-                      key={b.id}
-                      size="small"
-                      type={selectedBags.some(sb => sb.bagCode === b.bagCode) ? 'primary' : 'dashed'}
-                      onClick={() => handleAddBagToDispatch(b)}
-                      className="font-mono text-[11px]"
-                    >
-                      {b.bagCode} ({b.totalItems} đơn)
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Bảng danh sách bao tải đã chọn */}
-            <div className="border border-purple-200 rounded-lg overflow-hidden bg-white">
-              <div className="max-h-48 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-purple-100 text-purple-900 font-bold">
-                    <tr>
-                      <th className="p-2 text-left">STT</th>
-                      <th className="p-2 text-left">Mã Bao Tải</th>
-                      <th className="p-2 text-left">Mã Kẹp Chì / Seal</th>
-                      <th className="p-2 text-center">Số Kiện</th>
-                      <th className="p-2 text-right">Khối Lượng</th>
-                      <th className="p-2 text-center">Xóa</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedBags.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="p-4 text-center text-gray-400">
-                          Chưa có bao tải nào được nạp vào chuyến xe điều vận này.
-                        </td>
-                      </tr>
-                    ) : (
-                      selectedBags.map((b, idx) => (
-                        <tr key={b.bagCode || idx} className="border-t border-gray-100 hover:bg-purple-50/30">
-                          <td className="p-2 text-gray-500 font-mono">{idx + 1}</td>
-                          <td className="p-2 font-mono font-bold text-blue-700">{b.bagCode}</td>
-                          <td className="p-2 font-mono text-gray-600">{b.sealNumber || 'N/A'}</td>
-                          <td className="p-2 text-center font-bold text-gray-800">{b.totalItems || 1}</td>
-                          <td className="p-2 text-right font-medium text-gray-700">{b.totalWeightKg || b.weightKg || 0} kg</td>
-                          <td className="p-2 text-center">
-                            <Button
-                              type="text"
-                              danger
-                              size="small"
-                              icon={<Trash2 size={13} />}
-                              onClick={() => handleRemoveBag(b.bagCode)}
-                            />
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
           <Form.Item label={<span className="font-semibold text-gray-700">Ghi chú chuyến xe</span>} name="notes">
             <Input.TextArea rows={2} placeholder="Ghi chú về hàng hóa, hướng dẫn bàn giao tại Hub đích..." className="rounded-lg" />
           </Form.Item>
@@ -925,10 +840,128 @@ export const DispatchManagementPage: React.FC = () => {
               loading={createLoading}
               className="bg-purple-600 hover:bg-purple-700 font-bold px-6"
             >
-              🚀 Tạo Lệnh Điều Vận ({selectedBags.length} bao tải)
+              🚀 Khởi Tạo Lệnh Điều Vận
             </Button>
           </div>
         </Form>
+      </Modal>
+
+      {/* ================= MODAL TÀI XẾ QUÉT MÃ BAO TẢI LÊN XE MANG ĐI ================= */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-base font-bold text-blue-700">
+            <Barcode size={20} className="text-blue-600" />
+            <span>Tài Xế Quét Mã Bao Tải Nạp Lên Xe [{selectedDispatch?.dispatchCode}]</span>
+          </div>
+        }
+        open={isLoadBagModalOpen}
+        onCancel={() => setIsLoadBagModalOpen(false)}
+        footer={null}
+        width={750}
+        destroyOnClose
+      >
+        {selectedDispatch && (
+          <div className="space-y-4 mt-2">
+            <Alert
+              message={
+                <div>
+                  Chuyến xe: <b className="font-mono text-blue-700">{selectedDispatch.dispatchCode}</b> | Tuyến:{' '}
+                  <b>{selectedDispatch.originWarehouseName}</b> → <b>{selectedDispatch.destWarehouseName}</b>
+                </div>
+              }
+              description="Tài xế dùng súng quét mã barcode hoặc nhập mã bao tải / mã seal kẹp chì để nạp bao lên xe. Khi quét nạp, bao tải sẽ tự động chuyển sang trạng thái Đang trung chuyển (IN_TRANSIT) và gán cho bạn."
+              type="info"
+              showIcon
+              className="rounded-xl"
+            />
+
+            {/* Ô quét Barcode lớn */}
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl space-y-2">
+              <label className="text-xs font-extrabold text-blue-900 uppercase tracking-wide block">
+                Bắn Súng Quét Barcode Mã Bao Tải Hoặc Mã Kẹp Chì (Seal):
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  ref={loadBagInputRef}
+                  prefix={<Barcode size={20} className="text-blue-600" />}
+                  placeholder="Quét mã bao tải (VD: BAG2611...) rồi nhấn Enter..."
+                  value={loadBagInput}
+                  onChange={e => setLoadBagInput(e.target.value)}
+                  onPressEnter={() => handleLoadBagSubmit()}
+                  className="font-mono font-bold text-lg h-12 uppercase"
+                  autoFocus
+                  disabled={loadBagLoading}
+                />
+                <Button
+                  type="primary"
+                  onClick={() => handleLoadBagSubmit()}
+                  loading={loadBagLoading}
+                  className="bg-blue-600 hover:bg-blue-700 h-12 px-6 font-bold"
+                >
+                  Nạp Vào Xe
+                </Button>
+              </div>
+            </div>
+
+            {/* Thống kê bao tải hiện có trên xe */}
+            <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-700">
+                Tổng số bao tải đã nạp lên xe:
+              </span>
+              <span className="text-xs font-bold text-blue-700">
+                {selectedDispatch.items ? selectedDispatch.items.length : 0} bao tải | {selectedDispatch.totalWeightKg || 0} kg
+              </span>
+            </div>
+
+            {/* Bảng danh sách bao tải đã nạp */}
+            <div className="border border-gray-200 rounded-xl overflow-hidden">
+              <div className="max-h-56 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-100 font-bold text-gray-700 sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">STT</th>
+                      <th className="p-2 text-left">Mã Bao Tải</th>
+                      <th className="p-2 text-left">Mã Seal Chì</th>
+                      <th className="p-2 text-center">Số Kiện</th>
+                      <th className="p-2 text-right">Khối Lượng</th>
+                      <th className="p-2 text-center">Trạng Thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(!selectedDispatch.items || selectedDispatch.items.length === 0) ? (
+                      <tr>
+                        <td colSpan={6} className="p-4 text-center text-gray-400">
+                          Chưa có bao tải nào được nạp lên chuyến xe này. Hãy quét mã bao tải ở trên.
+                        </td>
+                      </tr>
+                    ) : (
+                      selectedDispatch.items.map((it, idx) => (
+                        <tr key={it.id || idx} className="border-t border-gray-100 hover:bg-blue-50/30">
+                          <td className="p-2 font-mono text-gray-500">{idx + 1}</td>
+                          <td className="p-2 font-mono font-bold text-blue-700">{it.bagCode}</td>
+                          <td className="p-2 font-mono text-gray-600">{it.sealNumber || 'N/A'}</td>
+                          <td className="p-2 text-center font-semibold">{it.totalItems} đơn</td>
+                          <td className="p-2 text-right font-medium">{it.weightKg} kg</td>
+                          <td className="p-2 text-center">
+                            {it.isReceivedAtDest ? (
+                              <Tag color="success">Đã nhập kho đích</Tag>
+                            ) : (
+                              <Tag color="blue">Đang trên xe</Tag>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => setIsLoadBagModalOpen(false)}>Đóng</Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ================= MODAL QUÉT NHẬP KHO TẠI HUB ĐÍCH ================= */}

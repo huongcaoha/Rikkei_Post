@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -43,16 +44,29 @@ public class DispatchServiceImpl implements DispatchService {
             Long destWarehouseId,
             String status,
             LocalDateTime startDate,
-            LocalDateTime endDate
+            LocalDateTime endDate,
+            Long currentUserId,
+            List<String> currentUserRoles
     ) {
         String cleanStatus = (status != null && !status.isBlank() && !"ALL".equalsIgnoreCase(status))
                 ? status.trim().toUpperCase() : null;
 
+        boolean isTruckDriver = currentUserRoles != null && currentUserRoles.stream()
+                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
+        boolean isManagerOrAdmin = currentUserRoles != null && currentUserRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+                        .contains(r.toUpperCase()));
+
         Specification<DispatchOrder> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
-            if (originWarehouseId != null) {
+
+            // Nếu user là tài xế (và không có quyền quản lý/admin), CHỈ HIỂN THỊ lệnh điều vận mà chính tài xế đó được gán
+            if (isTruckDriver && !isManagerOrAdmin && currentUserId != null) {
+                predicates.add(cb.equal(root.get("driver").get("id"), currentUserId));
+            } else if (originWarehouseId != null) {
                 predicates.add(cb.equal(root.get("originWarehouse").get("id"), originWarehouseId));
             }
+
             if (destWarehouseId != null) {
                 predicates.add(cb.equal(root.get("destWarehouse").get("id"), destWarehouseId));
             }
@@ -76,22 +90,57 @@ public class DispatchServiceImpl implements DispatchService {
     }
 
     @Override
-    public DispatchOrderResponse getDispatchById(Long id) {
+    public DispatchOrderResponse getDispatchById(Long id, Long currentUserId, List<String> currentUserRoles) {
         DispatchOrder order = dispatchOrderRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy lệnh điều vận ID: " + id));
+
+        boolean isTruckDriver = currentUserRoles != null && currentUserRoles.stream()
+                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
+        boolean isManagerOrAdmin = currentUserRoles != null && currentUserRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+                        .contains(r.toUpperCase()));
+
+        if (isTruckDriver && !isManagerOrAdmin && currentUserId != null) {
+            if (order.getDriver() == null || !currentUserId.equals(order.getDriver().getId())) {
+                throw new org.springframework.security.access.AccessDeniedException("Bạn không có quyền truy cập lệnh điều vận này!");
+            }
+        }
+
         return mapToResponse(order);
     }
 
     @Override
-    public DispatchOrderResponse getDispatchByCode(String code) {
+    public DispatchOrderResponse getDispatchByCode(String code, Long currentUserId, List<String> currentUserRoles) {
         DispatchOrder order = dispatchOrderRepository.findByDispatchCode(code.trim().toUpperCase())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy lệnh điều vận mã: " + code));
+
+        boolean isTruckDriver = currentUserRoles != null && currentUserRoles.stream()
+                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
+        boolean isManagerOrAdmin = currentUserRoles != null && currentUserRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+                        .contains(r.toUpperCase()));
+
+        if (isTruckDriver && !isManagerOrAdmin && currentUserId != null) {
+            if (order.getDriver() == null || !currentUserId.equals(order.getDriver().getId())) {
+                throw new org.springframework.security.access.AccessDeniedException("Bạn không có quyền truy cập lệnh điều vận này!");
+            }
+        }
+
         return mapToResponse(order);
     }
 
     @Override
     @Transactional
-    public DispatchOrderResponse createDispatchOrder(CreateDispatchOrderRequest request, Long userId) {
+    public DispatchOrderResponse createDispatchOrder(CreateDispatchOrderRequest request, Long userId, List<String> userRoles) {
+        boolean isTruckDriver = userRoles != null && userRoles.stream()
+                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
+        boolean isManagerOrAdmin = userRoles != null && userRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+                        .contains(r.toUpperCase()));
+
+        if (isTruckDriver && !isManagerOrAdmin) {
+            throw new org.springframework.security.access.AccessDeniedException("Tài xế xe tải không được phép tạo lệnh điều vận! Chỉ quản lý kho/Hub mới có quyền tạo lệnh.");
+        }
         Warehouse origin = warehouseRepository.findById(request.getOriginWarehouseId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kho xuất phát ID: " + request.getOriginWarehouseId()));
 
@@ -304,9 +353,21 @@ public class DispatchServiceImpl implements DispatchService {
 
     @Override
     @Transactional
-    public DispatchOrderResponse updateDispatchStatus(Long id, UpdateDispatchStatusRequest request, Long userId) {
+    public DispatchOrderResponse updateDispatchStatus(Long id, UpdateDispatchStatusRequest request, Long userId, List<String> userRoles) {
         DispatchOrder dispatch = dispatchOrderRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy lệnh điều vận ID: " + id));
+
+        boolean isTruckDriver = userRoles != null && userRoles.stream()
+                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
+        boolean isManagerOrAdmin = userRoles != null && userRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+                        .contains(r.toUpperCase()));
+
+        if (isTruckDriver && !isManagerOrAdmin) {
+            if (dispatch.getDriver() == null || !dispatch.getDriver().getId().equals(userId)) {
+                throw new org.springframework.security.access.AccessDeniedException("Từ chối quyền: Bạn không phải tài xế phụ trách lệnh điều vận này!");
+            }
+        }
 
         String currentStatus = dispatch.getStatus();
         String targetStatus = request.getStatus() != null ? request.getStatus().trim().toUpperCase() : "";
@@ -355,6 +416,26 @@ public class DispatchServiceImpl implements DispatchService {
                 }
             }
         } else if ("COMPLETED".equalsIgnoreCase(targetStatus)) {
+            // Yêu cầu: Tài xế chỉ được phép chuyển trạng thái chuyến đi là đã hoàn thành khi các bao tải đã được nhập hết vào kho đích đến
+            if (dispatch.getItems() == null || dispatch.getItems().isEmpty()) {
+                throw new IllegalStateException("Chuyến xe chưa nạp bao tải nào, không thể hoàn thành chuyến đi!");
+            }
+            List<DispatchOrderItem> unreceived = dispatch.getItems().stream()
+                    .filter(it -> !Boolean.TRUE.equals(it.getIsReceivedAtDest()))
+                    .toList();
+            if (!unreceived.isEmpty()) {
+                String unreceivedCodes = unreceived.stream()
+                        .map(DispatchOrderItem::getBagCode)
+                        .limit(5)
+                        .collect(Collectors.joining(", "));
+                throw new IllegalStateException(String.format(
+                        "Không thể hoàn thành chuyến đi! Còn %d bao tải [%s%s] chưa được kho đích [%s] quét tiếp nhận nhập kho. Tài xế chỉ được phép hoàn thành khi toàn bộ bao tải đã nhập hết vào kho đích.",
+                        unreceived.size(),
+                        unreceivedCodes,
+                        unreceived.size() > 5 ? "..." : "",
+                        dispatch.getDestWarehouse().getName()
+                ));
+            }
             dispatch.setCompletedTime(LocalDateTime.now());
             if (dispatch.getTruck() != null) {
                 dispatch.getTruck().setStatus("AT_WAREHOUSE");
@@ -378,6 +459,173 @@ public class DispatchServiceImpl implements DispatchService {
 
         DispatchOrder saved = dispatchOrderRepository.save(dispatch);
         log.info("Lệnh điều vận {} chuyển trạng thái: {} -> {}", dispatch.getDispatchCode(), currentStatus, targetStatus);
+        return mapToResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public DispatchOrderResponse driverLoadBag(Long dispatchId, String bagCode, Long driverId, List<String> userRoles) {
+        final String cleanCode = bagCode != null ? bagCode.trim().toUpperCase() : "";
+        if (cleanCode.isBlank()) {
+            throw new IllegalArgumentException("Vui lòng nhập hoặc quét mã bao tải!");
+        }
+
+        DispatchOrder dispatch = dispatchOrderRepository.findById(dispatchId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy lệnh điều vận ID: " + dispatchId));
+
+        boolean isTruckDriver = userRoles != null && userRoles.stream()
+                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
+        boolean isManagerOrAdmin = userRoles != null && userRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+                        .contains(r.toUpperCase()));
+
+        if (isTruckDriver && !isManagerOrAdmin) {
+            if (dispatch.getDriver() == null || !dispatch.getDriver().getId().equals(driverId)) {
+                throw new org.springframework.security.access.AccessDeniedException("Từ chối quyền: Lệnh điều vận này được phân công cho tài xế khác!");
+            }
+        }
+
+        if ("COMPLETED".equalsIgnoreCase(dispatch.getStatus())) {
+            throw new IllegalStateException("Chuyến xe điều vận đã hoàn tất (COMPLETED), không thể nạp thêm bao tải!");
+        }
+
+        if ("CANCELLED".equalsIgnoreCase(dispatch.getStatus())) {
+            throw new IllegalStateException("Chuyến xe điều vận đã bị hủy, không thể nạp bao tải!");
+        }
+
+        MasterBag bag = masterBagRepository.findByBagCode(cleanCode)
+                .or(() -> masterBagRepository.findBySealNumber(cleanCode))
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bao tải với mã bao/mã seal: " + cleanCode));
+
+        // Kiểm tra kho xuất phát
+        if (bag.getOriginWarehouse() == null || !bag.getOriginWarehouse().getId().equals(dispatch.getOriginWarehouse().getId())) {
+            String originName = bag.getOriginWarehouse() != null ? bag.getOriginWarehouse().getName() : "Không xác định";
+            throw new IllegalArgumentException(String.format("Bao tải [%s] đang ở kho [%s], không thuộc kho xuất phát [%s] của chuyến xe điều vận!",
+                    bag.getBagCode(), originName, dispatch.getOriginWarehouse().getName()));
+        }
+
+        // Kiểm tra kho đích
+        if (bag.getDestWarehouse() == null || !bag.getDestWarehouse().getId().equals(dispatch.getDestWarehouse().getId())) {
+            String destName = bag.getDestWarehouse() != null ? bag.getDestWarehouse().getName() : "Không xác định";
+            throw new IllegalArgumentException(String.format("Bao tải [%s] có tuyến đích đến là [%s], không khớp với kho đích [%s] của chuyến xe này!",
+                    bag.getBagCode(), destName, dispatch.getDestWarehouse().getName()));
+        }
+
+        if ("OPEN".equalsIgnoreCase(bag.getStatus())) {
+            throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] chưa được kẹp chì niêm phong (OPEN)! Vui lòng kẹp chì trước khi nạp lên xe.");
+        }
+
+        if ("ARRIVED_AT_HUB".equalsIgnoreCase(bag.getStatus()) || "UNSEALED".equalsIgnoreCase(bag.getStatus()) || "RECEIVED".equalsIgnoreCase(bag.getStatus())) {
+            throw new IllegalStateException("Bao tải [" + bag.getBagCode() + "] đã hoàn thành tiếp nhận tại kho đích trước đó!");
+        }
+
+        // Kiểm tra đã có trong chuyến xe này chưa
+        boolean alreadyInDispatch = dispatch.getItems().stream()
+                .anyMatch(it -> it.getBagCode().equalsIgnoreCase(bag.getBagCode()));
+        if (alreadyInDispatch) {
+            throw new IllegalArgumentException("Bao tải [" + bag.getBagCode() + "] đã được nạp vào chuyến xe này rồi!");
+        }
+
+        // Thêm item vào chuyến xe
+        DispatchOrderItem item = DispatchOrderItem.builder()
+                .dispatchOrder(dispatch)
+                .masterBag(bag)
+                .bagCode(bag.getBagCode())
+                .sealNumber(bag.getSealNumber())
+                .totalItems(bag.getTotalItems() != null ? bag.getTotalItems() : 0)
+                .weightKg(bag.getTotalWeightKg() != null ? bag.getTotalWeightKg() : BigDecimal.ZERO)
+                .isReceivedAtDest(false)
+                .build();
+        dispatchOrderItemRepository.save(item);
+        dispatch.getItems().add(item);
+
+        // Gán thông tin tài xế và xe tải cho bao tải
+        User driver = dispatch.getDriver();
+        if (driver != null) {
+            bag.setAssignedDriverId(driver.getId());
+            bag.setAssignedDriverName(driver.getFullName());
+            bag.setAssignedDriverPhone(driver.getPhoneNumber());
+        }
+        if (dispatch.getTruck() != null) {
+            bag.setAssignedTruckId(dispatch.getTruck().getId());
+            bag.setAssignedTruckPlate(dispatch.getTruckPlate());
+        }
+        bag.setStatus("IN_TRANSIT");
+        bag.setDispatchedAt(LocalDateTime.now());
+        masterBagRepository.save(bag);
+
+        // Cập nhật thống kê chuyến xe
+        int totalBags = dispatch.getItems().size();
+        int totalItems = dispatch.getItems().stream().mapToInt(it -> it.getTotalItems() != null ? it.getTotalItems() : 0).sum();
+        BigDecimal totalWeight = dispatch.getItems().stream()
+                .map(it -> it.getWeightKg() != null ? it.getWeightKg() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        dispatch.setTotalBags(totalBags);
+        dispatch.setTotalItems(totalItems);
+        dispatch.setTotalWeightKg(totalWeight);
+
+        // Tự động chuyển chuyến xe sang IN_TRANSIT
+        if ("PICKED_UP".equalsIgnoreCase(dispatch.getStatus())) {
+            dispatch.setStatus("IN_TRANSIT");
+        }
+        if (dispatch.getDepartureTime() == null) {
+            dispatch.setDepartureTime(LocalDateTime.now());
+        }
+        if (dispatch.getTruck() != null) {
+            dispatch.getTruck().setStatus("IN_TRANSIT");
+            truckRepository.save(dispatch.getTruck());
+        }
+
+        DispatchOrder saved = dispatchOrderRepository.save(dispatch);
+
+        // Ghi log hành trình cho từng kiện hàng bên trong
+        List<BagItem> bagItems = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(bag.getId());
+        for (BagItem bi : bagItems) {
+            OrderTrackingLog trackingLog = OrderTrackingLog.builder()
+                    .trackingCode(bi.getTrackingCode())
+                    .status("IN_TRANSIT")
+                    .locationType("TRUCK")
+                    .locationId(dispatch.getOriginWarehouse().getId())
+                    .locationName(dispatch.getOriginWarehouse().getName())
+                    .description(String.format("Tài xế [%s] (SĐT: %s%s) đã quét nạp bao tải [%s] lên chuyến xe điều vận [%s], đang trung chuyển tới [%s]",
+                            dispatch.getDriverName(), dispatch.getDriverPhone(),
+                            dispatch.getTruckPlate() != null ? " - Xe: " + dispatch.getTruckPlate() : "",
+                            bag.getBagCode(), dispatch.getDispatchCode(), dispatch.getDestWarehouse().getName()))
+                    .actorId(driver != null ? driver.getId() : driverId)
+                    .actorName(dispatch.getDriverName())
+                    .build();
+            trackingLogRepository.save(trackingLog);
+
+            try {
+                webSocketNotificationService.notifyOrderTracking(bi.getTrackingCode(), "IN_TRANSIT",
+                        String.format("Đang trên chuyến xe điều vận [%s] tới [%s]",
+                                dispatch.getDispatchCode(), dispatch.getDestWarehouse().getName()));
+            } catch (Exception ignored) {}
+        }
+
+        // Bắn thông báo WebSocket
+        try {
+            Map<String, Object> notif = new HashMap<>();
+            notif.put("type", "BAG_LOADED_TO_DISPATCH");
+            notif.put("dispatchCode", dispatch.getDispatchCode());
+            notif.put("bagCode", bag.getBagCode());
+            notif.put("sealNumber", bag.getSealNumber());
+            notif.put("driverName", dispatch.getDriverName());
+            notif.put("truckPlate", dispatch.getTruckPlate());
+            notif.put("totalBags", totalBags);
+            notif.put("message", String.format("Tài xế [%s] đã quét nạp bao tải [%s] lên chuyến xe điều vận [%s]!",
+                    dispatch.getDriverName(), bag.getBagCode(), dispatch.getDispatchCode()));
+
+            webSocketNotificationService.notifyGeneric("/topic/master-bags", notif);
+            webSocketNotificationService.notifyGeneric("/topic/hub/" + dispatch.getDestWarehouse().getId() + "/dispatch", notif);
+        } catch (Exception ex) {
+            log.warn("Lỗi gửi notify WebSocket khi nạp bao: {}", ex.getMessage());
+        }
+
+        log.info("Tài xế {} đã quét nạp thành công bao tải {} lên chuyến xe điều vận {}",
+                dispatch.getDriverName(), bag.getBagCode(), dispatch.getDispatchCode());
+
         return mapToResponse(saved);
     }
 
