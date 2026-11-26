@@ -142,29 +142,41 @@ public class SupplyController {
     // ================= PHIẾU XUẤT NHẬP KHO =================
 
     @GetMapping("/tickets")
-    public ResponseEntity<ApiResponse<List<SupplyTicket>>> getTickets(
+    public ResponseEntity<ApiResponse<List<SupplyDto.SupplyTicketResponse>>> getTickets(
             @RequestParam(required = false) String ticketType,
             @RequestParam(required = false) Long warehouseId
     ) {
-        List<SupplyTicket> list = supplyService.getTickets(ticketType, warehouseId);
+        List<SupplyDto.SupplyTicketResponse> list = supplyService.getTickets(ticketType, warehouseId);
         return ResponseEntity.ok(ApiResponse.success(list));
     }
 
     @GetMapping("/tickets/{id}")
-    public ResponseEntity<ApiResponse<SupplyTicket>> getTicketById(@PathVariable Long id) {
-        SupplyTicket ticket = supplyService.getTicketById(id);
+    public ResponseEntity<ApiResponse<SupplyDto.SupplyTicketResponse>> getTicketById(@PathVariable Long id) {
+        SupplyDto.SupplyTicketResponse ticket = supplyService.getTicketById(id);
         return ResponseEntity.ok(ApiResponse.success(ticket));
     }
 
     @PostMapping("/tickets")
     @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
-    public ResponseEntity<ApiResponse<SupplyTicket>> createTicket(
+    public ResponseEntity<ApiResponse<SupplyDto.SupplyTicketResponse>> createTicket(
             @Valid @RequestBody SupplyDto.CreateTicketRequest request,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         Long userId = userDetails != null ? userDetails.getId() : 1L;
-        SupplyTicket ticket = supplyService.createTicket(request, userId);
+        SupplyDto.SupplyTicketResponse ticket = supplyService.createTicket(request, userId);
         return ResponseEntity.ok(ApiResponse.success(ticket, "Tạo phiếu xuất/nhập kho thành công"));
+    }
+
+    @PostMapping("/tickets/{id}/confirm-received")
+    @PreAuthorize("hasAnyRole('ADMIN', 'POST_OFFICE_MANAGER', 'INVENTORY_MANAGER', 'BRANCH_MANAGER', 'WAREHOUSE_STAFF')")
+    public ResponseEntity<ApiResponse<SupplyDto.SupplyTicketResponse>> confirmReceivedTicket(
+            @PathVariable Long id,
+            @RequestBody(required = false) SupplyDto.ConfirmReceivedTicketRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long userId = userDetails != null ? userDetails.getId() : 1L;
+        SupplyDto.SupplyTicketResponse ticket = supplyService.confirmReceivedTicket(id, request, userId);
+        return ResponseEntity.ok(ApiResponse.success(ticket, "Đã xác nhận nhận đủ vật tư, thiết bị thành công"));
     }
 
     // ================= PHIẾU THU HỒI ĐỒ HỎNG =================

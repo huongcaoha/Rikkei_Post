@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Card,
   Table,
@@ -13,7 +13,8 @@ import {
   Tabs,
   Alert,
   Modal,
-  Typography
+  Typography,
+  Badge
 } from 'antd';
 import {
   CarOutlined,
@@ -23,8 +24,13 @@ import {
   ArrowRightOutlined,
   EnvironmentOutlined,
   ClockCircleOutlined,
-  InboxOutlined
+  InboxOutlined,
+  CameraOutlined,
+  SoundOutlined,
+  MutedOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { wmsApi } from '../api/wms';
 import { MasterBag } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -45,6 +51,205 @@ export const TruckDriverPortalPage: React.FC = () => {
   // Chi tiết bao tải
   const [selectedBag, setSelectedBag] = useState<MasterBag | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+
+  // State Camera quét mã trực tiếp bằng điện thoại
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [lastScannedFeedback, setLastScannedFeedback] = useState<{
+    code: string;
+    message: string;
+    success: boolean;
+    time: string;
+  } | null>(null);
+  const [sessionScannedList, setSessionScannedList] = useState<Array<{ code: string; time: string }>>([]);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const lastScannedCodeRef = useRef<string>('');
+  const lastScannedTimeRef = useRef<number>(0);
+  const isProcessingRef = useRef<boolean>(false);
+
+  // Âm thanh Beep báo hiệu (Web Audio API)
+  const playSound = (isSuccess: boolean) => {
+    if (isMuted) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      if (isSuccess) {
+        osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.15);
+      } else {
+        osc.frequency.setValueAtTime(329.6, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      }
+    } catch (e) {
+      // Bỏ qua lỗi âm thanh nếu trình duyệt hạn chế
+    }
+  };
+
+  const handleOpenCameraModal = () => {
+    setIsCameraModalOpen(true);
+    setLastScannedFeedback(null);
+    setTimeout(() => {
+      startCamera(facingMode);
+    }, 350);
+  };
+
+  const handleCloseCameraModal = async () => {
+    await stopCamera();
+    setIsCameraModalOpen(false);
+  };
+
+  const startCamera = async (mode: 'environment' | 'user') => {
+    try {
+      if (html5QrCodeRef.current) {
+        await stopCamera();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      const element = document.getElementById('truck-camera-reader');
+      if (!element) return;
+
+      const qrCode = new Html5Qrcode('truck-camera-reader');
+      html5QrCodeRef.current = qrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 280, height: 200 },
+        aspectRatio: 1.333,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+      };
+
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          const backCam =
+            cameras.find(
+              (c) =>
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('sau') ||
+                c.label.toLowerCase().includes('environment')
+            ) || cameras[cameras.length - 1];
+
+          await qrCode.start(
+            mode === 'environment'
+              ? backCam
+                ? backCam.id
+                : { facingMode: 'environment' }
+              : { facingMode: 'user' },
+            config,
+            (decodedText) => handleCameraDecoded(decodedText),
+            () => {}
+          );
+        } else {
+          await qrCode.start(
+            { facingMode: mode },
+            config,
+            (decodedText) => handleCameraDecoded(decodedText),
+            () => {}
+          );
+        }
+        setCameraActive(true);
+      } catch (camErr) {
+        await qrCode.start(
+          { facingMode: mode },
+          config,
+          (decodedText) => handleCameraDecoded(decodedText),
+          () => {}
+        );
+        setCameraActive(true);
+      }
+    } catch (err: any) {
+      console.warn('Lỗi bật camera:', err);
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = async () => {
+    if (html5QrCodeRef.current) {
+      try {
+        if (html5QrCodeRef.current.isScanning) {
+          await html5QrCodeRef.current.stop();
+        }
+        await html5QrCodeRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      html5QrCodeRef.current = null;
+    }
+    setCameraActive(false);
+  };
+
+  const handleSwitchCamera = async () => {
+    const nextMode = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(nextMode);
+    await startCamera(nextMode);
+  };
+
+  const handleCameraDecoded = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) return;
+
+    // Chặn quét lặp cùng 1 mã trong vòng 2.5 giây
+    const now = Date.now();
+    if (code === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2500) {
+      return;
+    }
+
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    lastScannedCodeRef.current = code;
+    lastScannedTimeRef.current = now;
+
+    try {
+      const res = await wmsApi.driverScanTransit(code);
+      playSound(true);
+      const timeStr = new Date().toLocaleTimeString('vi-VN');
+      setLastScannedFeedback({
+        code: res.bagCode || code,
+        message: `Đã quét nhận bao tải [${res.bagCode || code}] lên xe thành công!`,
+        success: true,
+        time: timeStr,
+      });
+      setSessionScannedList((prev) => [{ code: res.bagCode || code, time: timeStr }, ...prev]);
+      fetchDriverTasks();
+    } catch (err: any) {
+      playSound(false);
+      const errMsg = err.response?.data?.message || err.message || 'Lỗi quét bao tải';
+      setLastScannedFeedback({
+        code,
+        message: errMsg,
+        success: false,
+        time: new Date().toLocaleTimeString('vi-VN'),
+      });
+    } finally {
+      setTimeout(() => {
+        isProcessingRef.current = false;
+      }, 700);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   const fetchDriverTasks = async () => {
     try {
@@ -244,38 +449,59 @@ export const TruckDriverPortalPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Quét nhanh mã bao tải */}
-      <Card className="shadow-sm border-2 border-blue-200 bg-blue-50/50">
-        <div className="flex flex-col md:flex-row items-center gap-4">
+      {/* Quét nhanh mã bao tải & Camera trực tiếp */}
+      <Card className="shadow-sm border-2 border-blue-300 bg-gradient-to-br from-blue-50/90 to-indigo-50/60">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex items-center justify-center p-1.5 rounded-lg bg-blue-600 text-white">
+                <CameraOutlined />
+              </span>
+              <h3 className="text-base font-bold text-blue-950 mb-0">
+                Tác Nghiệp Quét Mã Bao Tải Hàng & Kẹp Chì Lên Xe
+              </h3>
+            </div>
+            <p className="text-xs text-blue-800 mb-0">
+              Quét liên tục bằng Camera điện thoại hoặc nhập mã thủ công. Hệ thống tự động gán tên tài xế & xe tải, đồng thời cập nhật realtime qua Kafka sang trạng thái Đang trung chuyển (IN_TRANSIT).
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
+            <Button
+              type="primary"
+              size="large"
+              icon={<CameraOutlined />}
+              onClick={handleOpenCameraModal}
+              className="bg-red-600 hover:bg-red-700 h-12 px-6 text-base font-bold shadow-md rounded-xl flex items-center justify-center gap-2"
+            >
+              📷 MỞ CAMERA QUÉT MÃ BAO TẢI
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-blue-200/60 flex flex-col md:flex-row items-center gap-3">
           <div className="flex-1 w-full">
-            <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-1">
-              Quét Barcode / QR Code hoặc Nhập Mã Bao Tải Để Lên Xe Trung Chuyển
-            </label>
             <Input
               size="large"
               prefix={<BarcodeOutlined className="text-blue-600 text-xl" />}
-              placeholder="Nhập hoặc quét mã bao tải (Vd: BAG261124xxxx hoặc mã Seal)..."
+              placeholder="Hoặc nhập mã bao tải / mã seal (Vd: BAG261124xxxx hoặc SL12345)..."
               value={scanCode}
               onChange={e => setScanCode(e.target.value)}
               onPressEnter={() => handleScanTransit()}
-              className="font-mono font-bold text-lg uppercase h-12"
-              autoFocus
+              className="font-mono font-bold text-base uppercase h-11"
             />
           </div>
           <Button
-            type="primary"
+            type="default"
             size="large"
             icon={<CarOutlined />}
             onClick={() => handleScanTransit()}
             loading={scanning}
-            className="bg-blue-600 hover:bg-blue-700 h-12 px-6 text-base font-bold w-full md:w-auto"
+            className="border-blue-500 text-blue-700 hover:bg-blue-50 font-bold h-11 px-5 w-full md:w-auto"
           >
-            Quét Nhận Lên Xe (IN_TRANSIT)
+            Quét nhận thủ công
           </Button>
         </div>
-        <p className="text-xs text-blue-700 mt-2 italic mb-0">
-          * Lưu ý: Khi tài xế quét mã bao tải kẹp chì tại kho, hệ thống sẽ tự động gán tên tài xế và xe tải cho bao tải đó, đồng thời chuyển trạng thái bao tải và các đơn hàng sang Đang trung chuyển (IN_TRANSIT).
-        </p>
       </Card>
 
       {/* KPI Cards */}
@@ -421,6 +647,108 @@ export const TruckDriverPortalPage: React.FC = () => {
             />
           </div>
         )}
+      </Modal>
+
+      {/* ================= MODAL QUÉT MÃ BAO TẢI BẰNG CAMERA ĐIỆN THOẠI ================= */}
+      <Modal
+        title={
+          <div className="flex items-center justify-between pr-6">
+            <div className="flex items-center gap-2 text-base font-bold text-blue-900">
+              <CameraOutlined className="text-blue-600 text-lg" />
+              <span>Camera Quét Mã Bao Tải & Kẹp Chì</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="small"
+                icon={isMuted ? <MutedOutlined /> : <SoundOutlined />}
+                onClick={() => setIsMuted(!isMuted)}
+                className="text-xs font-semibold"
+              >
+                {isMuted ? 'Bật âm' : 'Tắt âm'}
+              </Button>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={handleSwitchCamera}
+                className="text-xs font-semibold"
+              >
+                Đổi Cam
+              </Button>
+            </div>
+          </div>
+        }
+        open={isCameraModalOpen}
+        onCancel={handleCloseCameraModal}
+        footer={[
+          <Button key="close" type="primary" onClick={handleCloseCameraModal} className="bg-blue-600 font-bold px-6">
+            Hoàn tất & Đóng Camera
+          </Button>
+        ]}
+        width={580}
+        destroyOnClose
+      >
+        <div className="space-y-4 pt-2">
+          {/* Thông báo kết quả quét gần nhất */}
+          {lastScannedFeedback && (
+            <Alert
+              message={
+                <div className="flex items-center justify-between">
+                  <span className="font-bold">
+                    {lastScannedFeedback.success ? '✅ ' : '⚠️ '}
+                    {lastScannedFeedback.message}
+                  </span>
+                  <span className="text-xs text-gray-500">{lastScannedFeedback.time}</span>
+                </div>
+              }
+              type={lastScannedFeedback.success ? 'success' : 'error'}
+              showIcon
+              className="animate-pulse shadow-sm"
+            />
+          )}
+
+          {/* Vùng Camera ngắm quét */}
+          <div className="relative rounded-2xl overflow-hidden border-2 border-blue-400 bg-black shadow-lg">
+            <div id="truck-camera-reader" className="w-full" style={{ minHeight: '280px' }} />
+            {!cameraActive && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-black/80 p-4 text-center">
+                <SyncOutlined spin className="text-3xl text-blue-400 mb-2" />
+                <p className="text-sm font-semibold mb-0">Đang khởi động camera điện thoại...</p>
+                <p className="text-xs text-gray-400 mt-1">Vui lòng cấp quyền truy cập máy ảnh nếu trình duyệt yêu cầu.</p>
+              </div>
+            )}
+            <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 backdrop-blur-xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>Chế độ quét liên tục</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500 text-center italic mb-0">
+            * Hướng camera vào mã vạch (Barcode 128) hoặc QR code trên bao tải/seal kẹp chì. Hệ thống sẽ tự động nhận diện và cập nhật ngay khi quét thành công.
+          </p>
+
+          {/* Thống kê phiên quét hiện tại */}
+          <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-100">
+            <div className="flex items-center justify-between text-xs font-bold text-blue-900 mb-2">
+              <span>Đã quét trong phiên làm việc này:</span>
+              <Badge count={sessionScannedList.length} showZero color="#1677ff" />
+            </div>
+
+            {sessionScannedList.length > 0 ? (
+              <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                {sessionScannedList.map((item, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-xs bg-white px-2.5 py-1.5 rounded-lg border border-blue-100">
+                    <span className="font-mono font-bold text-blue-800">{item.code}</span>
+                    <span className="text-gray-400 text-2xs">{item.time}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-xs text-gray-400 py-1">
+                Chưa quét bao tải nào trong phiên này
+              </div>
+            )}
+          </div>
+        </div>
       </Modal>
     </div>
   );

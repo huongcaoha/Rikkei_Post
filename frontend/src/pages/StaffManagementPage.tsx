@@ -5,6 +5,7 @@ import { staffApi } from '../api/staff';
 import { locationApi } from '../api/location';
 import { authApi } from '../api/auth';
 import { attendanceApi } from '../api/attendance';
+import { roleApi, RoleItem } from '../api/role';
 import { StaffUser, Province, Warehouse, CreateStaffRequest, UpdateStaffRequest } from '../types';
 import { useAuth } from '../context/AuthContext';
 
@@ -12,6 +13,10 @@ export const StaffManagementPage: React.FC = () => {
   const { user, updateUser } = useAuth();
   const [staffList, setStaffList] = useState<StaffUser[]>([]);
   const [assignableRoles, setAssignableRoles] = useState<string[]>([]);
+  const [allRoles, setAllRoles] = useState<RoleItem[]>([]);
+  const [isRoleModalOpen, setIsRoleModalOpen] = useState<boolean>(false);
+  const [addingRole, setAddingRole] = useState<boolean>(false);
+  const [roleForm] = Form.useForm();
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState<boolean>(false);
@@ -72,18 +77,56 @@ export const StaffManagementPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [staffData, rolesData, provData] = await Promise.all([
+      const [staffData, rolesData, provData, allRolesRes] = await Promise.all([
         staffApi.getStaffList(selectedRoleFilter),
         staffApi.getAssignableRoles(),
         locationApi.getProvinces(),
+        roleApi.getAllRoles(),
       ]);
       setStaffList(staffData);
       setAssignableRoles(rolesData);
       setProvinces(provData);
+      if (allRolesRes?.data) {
+        setAllRoles(allRolesRes.data);
+      }
     } catch (err: any) {
       message.error(err.response?.data?.message || 'Lỗi khi tải danh sách nhân viên!');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreateRole = async (values: { roleName: string; description: string }) => {
+    setAddingRole(true);
+    try {
+      await roleApi.createRole(values);
+      message.success('Thêm vai trò mới thành công! Bạn có thể phân quyền vai trò này ngay.');
+      roleForm.resetFields();
+      const [rolesRes, assignable] = await Promise.all([
+        roleApi.getAllRoles(),
+        staffApi.getAssignableRoles()
+      ]);
+      if (rolesRes?.data) setAllRoles(rolesRes.data);
+      setAssignableRoles(assignable);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Không thể tạo vai trò mới');
+    } finally {
+      setAddingRole(false);
+    }
+  };
+
+  const handleDeleteRole = async (roleId: number) => {
+    try {
+      await roleApi.deleteRole(roleId);
+      message.success('Đã xóa vai trò thành công!');
+      const [rolesRes, assignable] = await Promise.all([
+        roleApi.getAllRoles(),
+        staffApi.getAssignableRoles()
+      ]);
+      if (rolesRes?.data) setAllRoles(rolesRes.data);
+      setAssignableRoles(assignable);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Không thể xóa vai trò');
     }
   };
 
@@ -316,6 +359,8 @@ export const StaffManagementPage: React.FC = () => {
         return <Tag color="gold">Quản lý Chi nhánh</Tag>;
       case 'ROLE_POST_OFFICE_MANAGER':
         return <Tag color="cyan">Quản lý Bưu cục</Tag>;
+      case 'ROLE_INVENTORY_MANAGER':
+        return <Tag color="geekblue">Quản lý kho vật tư</Tag>;
       case 'ROLE_SHIPPER':
         return <Tag color="blue">Bưu tá (Shipper)</Tag>;
       case 'ROLE_WAREHOUSE_STAFF':
@@ -324,8 +369,10 @@ export const StaffManagementPage: React.FC = () => {
         return <Tag color="orange">Tài xế xe tải</Tag>;
       case 'ROLE_ACCOUNTANT':
         return <Tag color="magenta">Kế toán viên</Tag>;
-      default:
-        return <Tag>{roleName.replace('ROLE_', '')}</Tag>;
+      default: {
+        const found = allRoles.find(r => r.roleName === roleName);
+        return <Tag color="default">{found?.description || roleName.replace('ROLE_', '')}</Tag>;
+      }
     }
   };
 
@@ -472,14 +519,25 @@ export const StaffManagementPage: React.FC = () => {
             Phân cấp ủy quyền: Admin quản lý toàn bộ nhân viên; Quản lý chi nhánh quản lý bưu cục và shipper trên địa bàn.
           </p>
         </div>
-        <Button
-          type="primary"
-          icon={<UserPlus size={16} />}
-          onClick={handleOpenCreateModal}
-          className="bg-red-600 hover:bg-red-700 font-semibold h-10 px-5 shadow-sm"
-        >
-          Thêm nhân viên mới
-        </Button>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Button
+              icon={<Shield size={16} />}
+              onClick={() => setIsRoleModalOpen(true)}
+              className="border-purple-600 text-purple-700 hover:bg-purple-50 font-semibold h-10 px-4"
+            >
+              Quản lý Vai trò (Roles)
+            </Button>
+          )}
+          <Button
+            type="primary"
+            icon={<UserPlus size={16} />}
+            onClick={handleOpenCreateModal}
+            className="bg-red-600 hover:bg-red-700 font-semibold h-10 px-5 shadow-sm"
+          >
+            Thêm nhân viên mới
+          </Button>
+        </div>
       </div>
 
       <Card className="shadow-xs border-gray-200">
@@ -488,17 +546,26 @@ export const StaffManagementPage: React.FC = () => {
           <Select
             allowClear
             placeholder="Tất cả vai trò"
-            className="w-64"
+            className="w-72"
             value={selectedRoleFilter}
             onChange={(val) => setSelectedRoleFilter(val)}
-            options={[
-              { label: 'Quản lý Chi nhánh (BRANCH_MANAGER)', value: 'ROLE_BRANCH_MANAGER' },
-              { label: 'Quản lý Bưu cục (POST_OFFICE_MANAGER)', value: 'ROLE_POST_OFFICE_MANAGER' },
-              { label: 'Bưu tá giao nhận (SHIPPER)', value: 'ROLE_SHIPPER' },
-              { label: 'Nhân viên kho (WAREHOUSE_STAFF)', value: 'ROLE_WAREHOUSE_STAFF' },
-              { label: 'Tài xế xe tải (TRUCK_DRIVER)', value: 'ROLE_TRUCK_DRIVER' },
-              { label: 'Kế toán viên (ACCOUNTANT)', value: 'ROLE_ACCOUNTANT' },
-            ]}
+            options={
+              allRoles.length > 0
+                ? allRoles.map((r) => ({
+                    label: `${r.description || r.roleName} (${r.roleName})`,
+                    value: r.roleName,
+                  }))
+                : [
+                    { label: 'Quản trị viên (ADMIN)', value: 'ROLE_ADMIN' },
+                    { label: 'Quản lý kho vật tư (INVENTORY_MANAGER)', value: 'ROLE_INVENTORY_MANAGER' },
+                    { label: 'Quản lý Chi nhánh (BRANCH_MANAGER)', value: 'ROLE_BRANCH_MANAGER' },
+                    { label: 'Quản lý Bưu cục (POST_OFFICE_MANAGER)', value: 'ROLE_POST_OFFICE_MANAGER' },
+                    { label: 'Bưu tá giao nhận (SHIPPER)', value: 'ROLE_SHIPPER' },
+                    { label: 'Nhân viên kho (WAREHOUSE_STAFF)', value: 'ROLE_WAREHOUSE_STAFF' },
+                    { label: 'Tài xế xe tải (TRUCK_DRIVER)', value: 'ROLE_TRUCK_DRIVER' },
+                    { label: 'Kế toán viên (ACCOUNTANT)', value: 'ROLE_ACCOUNTANT' },
+                  ]
+            }
           />
         </div>
 
@@ -581,26 +648,27 @@ export const StaffManagementPage: React.FC = () => {
                 rules={[{ required: true, message: 'Vui lòng chọn vai trò' }]}
               >
                 <Select placeholder="Chọn vai trò">
-                  {assignableRoles.map((r) => (
-                    <Select.Option key={r} value={r}>
-                      {r === 'ROLE_ADMIN' && 'Quản trị viên hệ thống (Admin)'}
-                      {r === 'ROLE_BRANCH_MANAGER' && 'Quản lý Chi nhánh Tỉnh/TP'}
-                      {r === 'ROLE_POST_OFFICE_MANAGER' && 'Quản lý Bưu cục kho vận'}
-                      {r === 'ROLE_SHIPPER' && 'Bưu tá (Shipper)'}
-                      {r === 'ROLE_WAREHOUSE_STAFF' && 'Nhân viên khai thác kho'}
-                      {r === 'ROLE_TRUCK_DRIVER' && 'Tài xế xe tải trung chuyển (TRUCK_DRIVER)'}
-                      {r === 'ROLE_ACCOUNTANT' && 'Kế toán viên / Kế toán trưởng (Accountant)'}
-                      {r === 'ROLE_MERCHANT' && 'Khách hàng / Shop'}
-                      {r !== 'ROLE_ADMIN' &&
-                        r !== 'ROLE_BRANCH_MANAGER' &&
-                        r !== 'ROLE_POST_OFFICE_MANAGER' &&
-                        r !== 'ROLE_SHIPPER' &&
-                        r !== 'ROLE_WAREHOUSE_STAFF' &&
-                        r !== 'ROLE_TRUCK_DRIVER' &&
-                        r !== 'ROLE_MERCHANT' &&
-                        r.replace('ROLE_', '')}
-                    </Select.Option>
-                  ))}
+                  {assignableRoles.map((r) => {
+                    const matched = allRoles.find((role) => role.roleName === r);
+                    let label = matched?.description;
+                    if (!label) {
+                      if (r === 'ROLE_ADMIN') label = 'Quản trị viên hệ thống (Admin)';
+                      else if (r === 'ROLE_INVENTORY_MANAGER') label = 'Quản lý kho vật tư & trang thiết bị doanh nghiệp';
+                      else if (r === 'ROLE_BRANCH_MANAGER') label = 'Quản lý Chi nhánh Tỉnh/TP';
+                      else if (r === 'ROLE_POST_OFFICE_MANAGER') label = 'Quản lý Bưu cục kho vận';
+                      else if (r === 'ROLE_SHIPPER') label = 'Bưu tá (Shipper)';
+                      else if (r === 'ROLE_WAREHOUSE_STAFF') label = 'Nhân viên khai thác kho';
+                      else if (r === 'ROLE_TRUCK_DRIVER') label = 'Tài xế xe tải trung chuyển (TRUCK_DRIVER)';
+                      else if (r === 'ROLE_ACCOUNTANT') label = 'Kế toán viên / Kế toán trưởng (Accountant)';
+                      else if (r === 'ROLE_MERCHANT') label = 'Khách hàng / Shop';
+                      else label = r.replace('ROLE_', '');
+                    }
+                    return (
+                      <Select.Option key={r} value={r}>
+                        {label} <span className="text-gray-400 font-mono text-xs">({r})</span>
+                      </Select.Option>
+                    );
+                  })}
                 </Select>
               </Form.Item>
             </Col>
@@ -888,6 +956,112 @@ export const StaffManagementPage: React.FC = () => {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Modal Quản lý Vai trò (Roles) cho Admin */}
+      <Modal
+        title={
+          <div className="flex items-center space-x-2 text-base font-bold text-gray-800 border-b pb-3">
+            <Shield className="text-purple-600" size={20} />
+            <span>Quản Lý Danh Mục Vai Trò (Roles) Hệ Thống</span>
+          </div>
+        }
+        open={isRoleModalOpen}
+        onCancel={() => setIsRoleModalOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setIsRoleModalOpen(false)}>
+            Đóng
+          </Button>
+        ]}
+        width={700}
+        destroyOnClose
+      >
+        <div className="space-y-4 pt-2">
+          <Alert
+            message="Quản lý vai trò động"
+            description="Admin có thể thêm mới vai trò tùy biến tại đây. Các vai trò mới thêm sẽ có hiệu lực ngay lập tức trong form phân quyền nhân viên mà không cần sửa code."
+            type="info"
+            showIcon
+          />
+
+          <Card title="Thêm vai trò mới" size="small" className="bg-gray-50/70 border-purple-200">
+            <Form form={roleForm} layout="vertical" onFinish={handleCreateRole}>
+              <Row gutter={12}>
+                <Col span={10}>
+                  <Form.Item
+                    name="roleName"
+                    label="Mã vai trò (Bắt đầu bằng ROLE_)"
+                    rules={[{ required: true, message: 'Nhập mã vai trò (vd: ROLE_SECURITY)' }]}
+                  >
+                    <Input placeholder="e.g. ROLE_SECURITY" className="font-mono uppercase font-bold" />
+                  </Form.Item>
+                </Col>
+                <Col span={14}>
+                  <Form.Item
+                    name="description"
+                    label="Tên / Mô tả chi tiết vai trò"
+                    rules={[{ required: true, message: 'Nhập mô tả vai trò' }]}
+                  >
+                    <Input placeholder="e.g. Nhân viên an ninh / Bảo vệ kho" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <div className="flex justify-end">
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={addingRole}
+                  className="bg-purple-600 hover:bg-purple-700 font-bold"
+                >
+                  + Thêm vai trò mới
+                </Button>
+              </div>
+            </Form>
+          </Card>
+
+          <div>
+            <div className="font-bold text-gray-800 text-sm mb-2">Danh sách tất cả vai trò hiện có ({allRoles.length}):</div>
+            <Table
+              dataSource={allRoles}
+              rowKey="id"
+              pagination={{ pageSize: 6 }}
+              size="small"
+              columns={[
+                {
+                  title: 'Mã vai trò',
+                  dataIndex: 'roleName',
+                  key: 'roleName',
+                  render: (code: string) => <Tag color="purple" className="font-mono font-bold">{code}</Tag>
+                },
+                {
+                  title: 'Mô tả vai trò',
+                  dataIndex: 'description',
+                  key: 'description',
+                  render: (desc: string) => <span className="font-medium text-gray-800">{desc}</span>
+                },
+                {
+                  title: 'Thao tác',
+                  key: 'action',
+                  width: 90,
+                  render: (_: any, r: RoleItem) => {
+                    const isCore = ['ROLE_ADMIN', 'ROLE_SHIPPER', 'ROLE_MERCHANT'].includes(r.roleName);
+                    if (isCore) return <span className="text-xs text-gray-400 italic">Mặc định</span>;
+                    return (
+                      <Popconfirm
+                        title="Bạn có chắc chắn muốn xóa vai trò này không?"
+                        onConfirm={() => handleDeleteRole(r.id)}
+                        okText="Xóa"
+                        cancelText="Hủy"
+                      >
+                        <Button danger type="link" size="small">Xóa</Button>
+                      </Popconfirm>
+                    );
+                  }
+                }
+              ]}
+            />
+          </div>
+        </div>
       </Modal>
     </div>
   );

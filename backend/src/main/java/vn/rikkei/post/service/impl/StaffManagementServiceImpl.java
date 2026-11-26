@@ -37,8 +37,15 @@ public class StaffManagementServiceImpl implements StaffManagementService {
     @Override
     public List<String> getAssignableRoles(CustomUserDetails currentUser) {
         if (hasRole(currentUser, "ROLE_ADMIN")) {
-            // Admin có quyền phân quyền tất cả vai trò bao gồm cả Quản trị viên, Kế toán và Tài xế ô tô
-            return List.of("ROLE_ADMIN", "ROLE_ACCOUNTANT", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_TRUCK_DRIVER", "ROLE_MERCHANT");
+            // Admin có quyền phân quyền tất cả vai trò động được lưu trong hệ thống
+            List<String> dbRoles = roleRepository.findAll().stream()
+                    .map(Role::getRoleName)
+                    .sorted()
+                    .toList();
+            if (!dbRoles.isEmpty()) {
+                return dbRoles;
+            }
+            return List.of("ROLE_ADMIN", "ROLE_INVENTORY_MANAGER", "ROLE_ACCOUNTANT", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_TRUCK_DRIVER", "ROLE_MERCHANT");
         } else if (hasRole(currentUser, "ROLE_BRANCH_MANAGER")) {
             // Quản lý chi nhánh có quyền tạo các tài khoản cấp thấp hơn thuộc địa bàn
             return List.of("ROLE_POST_OFFICE_MANAGER", "ROLE_SHIPPER", "ROLE_WAREHOUSE_STAFF", "ROLE_TRUCK_DRIVER");

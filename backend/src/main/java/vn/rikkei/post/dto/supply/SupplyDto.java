@@ -168,4 +168,59 @@ public class SupplyDto {
         private long totalExportTickets;
         private List<InventoryDetailDto> lowStockAlerts;
     }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class ConfirmReceivedTicketRequest {
+        private String notes;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class SupplyTicketItemResponse {
+        private Long id;
+        private Long itemId;
+        private String itemCode;
+        private String itemName;
+        private String unit;
+        private Integer quantity;
+        private BigDecimal unitPrice;
+        private String notes;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class SupplyTicketResponse {
+        private Long id;
+        private String ticketCode;
+        private String ticketType;
+        private Long warehouseId;
+        private String warehouseCode;
+        private String warehouseName;
+        private Long targetPostOfficeId;
+        private String targetPostOfficeName;
+        private String partnerOrSupplier;
+        private String reason;
+        private String status; // COMPLETED, CHO_XAC_NHAN, CANCELLED
+        private Long creatorId;
+        private String creatorName;
+        private Long receivedByUserId;
+        private String receivedByName;
+        private LocalDateTime receivedAt;
+        private String receivedNotes;
+        private Integer totalQuantity;
+        private String notes;
+        private List<SupplyTicketItemResponse> items;
+        private LocalDateTime createdAt;
+        private LocalDateTime updatedAt;
+    }
 }

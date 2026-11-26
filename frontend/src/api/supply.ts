@@ -92,6 +92,11 @@ export const supplyApi = {
     return res.data;
   },
 
+  confirmReceived: async (ticketId: number, notes?: string): Promise<ApiResponse<SupplyTicket>> => {
+    const res = await apiClient.post<ApiResponse<SupplyTicket>>(`/supplies/tickets/${ticketId}/confirm-received`, { notes });
+    return res.data;
+  },
+
   // Phiếu thu hồi đồ hỏng
   getRecalls: async (params?: { status?: string; postOfficeId?: number }): Promise<ApiResponse<EquipmentRecallTicket[]>> => {
     const res = await apiClient.get<ApiResponse<EquipmentRecallTicket[]>>('/supplies/recalls', { params });

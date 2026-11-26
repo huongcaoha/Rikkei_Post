@@ -1,5 +1,6 @@
 package vn.rikkei.post.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -24,6 +25,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class SupplyTicket {
 
     @Id
@@ -43,6 +45,7 @@ public class SupplyTicket {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private SupplyWarehouse warehouse;
 
     /**
@@ -65,13 +68,25 @@ public class SupplyTicket {
 
     @Column(name = "status", nullable = false, length = 30)
     @Builder.Default
-    private String status = "COMPLETED"; // COMPLETED, DRAFT, CANCELLED
+    private String status = "COMPLETED"; // COMPLETED, CHO_XAC_NHAN, CANCELLED
 
     @Column(name = "creator_id")
     private Long creatorId;
 
     @Column(name = "creator_name", length = 100)
     private String creatorName;
+
+    @Column(name = "received_by_user_id")
+    private Long receivedByUserId;
+
+    @Column(name = "received_by_name", length = 100)
+    private String receivedByName;
+
+    @Column(name = "received_at")
+    private LocalDateTime receivedAt;
+
+    @Column(name = "received_notes", columnDefinition = "TEXT")
+    private String receivedNotes;
 
     @Column(name = "total_quantity", nullable = false)
     @Builder.Default

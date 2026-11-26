@@ -28,6 +28,7 @@ public class SupplyServiceImpl implements SupplyService {
     private final EquipmentRecallTicketRepository recallRepository;
     private final UserRepository userRepository;
     private final WarehouseRepository postOfficeRepository;
+    private final vn.rikkei.post.service.NotificationService notificationService;
 
     // ================= KHO VẬT TƯ =================
 
@@ -239,26 +240,29 @@ public class SupplyServiceImpl implements SupplyService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<SupplyTicket> getTickets(String ticketType, Long warehouseId) {
+    public List<SupplyDto.SupplyTicketResponse> getTickets(String ticketType, Long warehouseId) {
+        List<SupplyTicket> list;
         if (warehouseId != null) {
-            return ticketRepository.findByWarehouseIdOrderByCreatedAtDesc(warehouseId);
+            list = ticketRepository.findByWarehouseIdOrderByCreatedAtDesc(warehouseId);
+        } else if (ticketType != null && !ticketType.isBlank() && !"ALL".equalsIgnoreCase(ticketType)) {
+            list = ticketRepository.findByTicketTypeOrderByCreatedAtDesc(ticketType.trim().toUpperCase());
+        } else {
+            list = ticketRepository.findAllByOrderByCreatedAtDesc();
         }
-        if (ticketType != null && !ticketType.isBlank() && !"ALL".equalsIgnoreCase(ticketType)) {
-            return ticketRepository.findByTicketTypeOrderByCreatedAtDesc(ticketType.trim().toUpperCase());
-        }
-        return ticketRepository.findAllByOrderByCreatedAtDesc();
+        return list.stream().map(this::mapToTicketResponse).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public SupplyTicket getTicketById(Long id) {
-        return ticketRepository.findById(id)
+    public SupplyDto.SupplyTicketResponse getTicketById(Long id) {
+        SupplyTicket ticket = ticketRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy phiếu xuất/nhập ID: " + id));
+        return mapToTicketResponse(ticket);
     }
 
     @Override
     @Transactional
-    public SupplyTicket createTicket(SupplyDto.CreateTicketRequest req, Long userId) {
+    public SupplyDto.SupplyTicketResponse createTicket(SupplyDto.CreateTicketRequest req, Long userId) {
         SupplyWarehouse warehouse = getWarehouseById(req.getWarehouseId());
         String type = req.getTicketType().trim().toUpperCase();
         if (!List.of("IMPORT", "EXPORT").contains(type)) {
@@ -272,6 +276,8 @@ public class SupplyServiceImpl implements SupplyService {
         int randSeq = (int) (1000 + Math.random() * 9000);
         String ticketCode = prefix + datePart + "_" + randSeq;
 
+        String initialStatus = "EXPORT".equalsIgnoreCase(type) ? "CHO_XAC_NHAN" : "COMPLETED";
+
         SupplyTicket ticket = SupplyTicket.builder()
                 .ticketCode(ticketCode)
                 .ticketType(type)
@@ -280,7 +286,7 @@ public class SupplyServiceImpl implements SupplyService {
                 .targetPostOfficeName(req.getTargetPostOfficeName())
                 .partnerOrSupplier(req.getPartnerOrSupplier())
                 .reason(req.getReason())
-                .status("COMPLETED")
+                .status(initialStatus)
                 .creatorId(userId)
                 .creatorName(creator != null ? creator.getFullName() : "Quản lý kho")
                 .notes(req.getNotes())
@@ -336,7 +342,106 @@ public class SupplyServiceImpl implements SupplyService {
         ticket.setItems(ticketItems);
         SupplyTicket saved = ticketRepository.save(ticket);
         log.info("Đã tạo phiếu {} mã: {} tổng số lượng: {}", type, saved.getTicketCode(), totalQty);
-        return saved;
+
+        // Nếu là phiếu xuất cấp phát cho bưu cục, gửi thông báo đến quản lý bưu cục đích
+        if ("EXPORT".equalsIgnoreCase(type) && req.getTargetPostOfficeId() != null) {
+            String title = "📦 Phiếu xuất vật tư mới: " + saved.getTicketCode();
+            String content = "Kho [" + warehouse.getName() + "] vừa xuất cấp phát " + totalQty 
+                    + " vật tư, thiết bị cho bưu cục của bạn. Vui lòng kiểm đếm và bấm xác nhận nhận đủ đồ.";
+            List<User> targetStaff = userRepository.findAll().stream()
+                    .filter(u -> req.getTargetPostOfficeId().equals(u.getAssignedPostOfficeId()))
+                    .toList();
+            if (!targetStaff.isEmpty()) {
+                for (User u : targetStaff) {
+                    notificationService.createNotification(u.getId(), title, content, "SUPPLY_EXPORT", "/wms/supplies");
+                }
+            } else {
+                notificationService.notifyUsersByRole("ROLE_POST_OFFICE_MANAGER", title, content, "SUPPLY_EXPORT", "/wms/supplies");
+            }
+        }
+
+        return mapToTicketResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public SupplyDto.SupplyTicketResponse confirmReceivedTicket(Long id, SupplyDto.ConfirmReceivedTicketRequest req, Long userId) {
+        SupplyTicket ticket = ticketRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy phiếu xuất/nhập ID: " + id));
+
+        if ("COMPLETED".equalsIgnoreCase(ticket.getStatus())) {
+            throw new IllegalStateException("Phiếu [" + ticket.getTicketCode() + "] đã ở trạng thái Hoàn thành, không thể sửa đổi hoặc thao tác lại!");
+        }
+
+        User receiver = userId != null ? userRepository.findById(userId).orElse(null) : null;
+        String receiverName = receiver != null ? receiver.getFullName() : "Quản lý bưu cục";
+
+        ticket.setStatus("COMPLETED");
+        ticket.setReceivedByUserId(userId);
+        ticket.setReceivedByName(receiverName);
+        ticket.setReceivedAt(LocalDateTime.now());
+        if (req != null && req.getNotes() != null && !req.getNotes().isBlank()) {
+            ticket.setReceivedNotes(req.getNotes().trim());
+        }
+
+        SupplyTicket saved = ticketRepository.save(ticket);
+        log.info("Phiếu {} đã được xác nhận nhận đủ đồ bởi {}", saved.getTicketCode(), receiverName);
+
+        // Gửi thông báo đến người tạo phiếu xuất hoặc Quản lý kho vật tư
+        String title = "✅ Đã nhận đủ vật tư: " + saved.getTicketCode();
+        String content = "Bưu cục [" + (saved.getTargetPostOfficeName() != null ? saved.getTargetPostOfficeName() : "Đích") 
+                + "] đã kiểm đếm và bấm xác nhận nhận đủ toàn bộ " + saved.getTotalQuantity() + " vật tư, thiết bị.";
+        if (saved.getCreatorId() != null) {
+            notificationService.createNotification(saved.getCreatorId(), title, content, "SUPPLY_CONFIRMED", "/wms/supplies");
+        }
+        notificationService.notifyUsersByRole("ROLE_INVENTORY_MANAGER", title, content, "SUPPLY_CONFIRMED", "/wms/supplies");
+
+        return mapToTicketResponse(saved);
+    }
+
+    private SupplyDto.SupplyTicketResponse mapToTicketResponse(SupplyTicket ticket) {
+        if (ticket == null) return null;
+        SupplyWarehouse wh = ticket.getWarehouse();
+        List<SupplyDto.SupplyTicketItemResponse> itemResponses = new ArrayList<>();
+        if (ticket.getItems() != null) {
+            for (SupplyTicketItem ti : ticket.getItems()) {
+                itemResponses.add(SupplyDto.SupplyTicketItemResponse.builder()
+                        .id(ti.getId())
+                        .itemId(ti.getItem() != null ? ti.getItem().getId() : null)
+                        .itemCode(ti.getItemCode() != null ? ti.getItemCode() : (ti.getItem() != null ? ti.getItem().getItemCode() : null))
+                        .itemName(ti.getItemName() != null ? ti.getItemName() : (ti.getItem() != null ? ti.getItem().getItemName() : null))
+                        .unit(ti.getUnit() != null ? ti.getUnit() : (ti.getItem() != null ? ti.getItem().getUnit() : null))
+                        .quantity(ti.getQuantity())
+                        .unitPrice(ti.getUnitPrice())
+                        .notes(ti.getNotes())
+                        .build());
+            }
+        }
+
+        return SupplyDto.SupplyTicketResponse.builder()
+                .id(ticket.getId())
+                .ticketCode(ticket.getTicketCode())
+                .ticketType(ticket.getTicketType())
+                .warehouseId(wh != null ? wh.getId() : null)
+                .warehouseCode(wh != null ? wh.getCode() : null)
+                .warehouseName(wh != null ? wh.getName() : null)
+                .targetPostOfficeId(ticket.getTargetPostOfficeId())
+                .targetPostOfficeName(ticket.getTargetPostOfficeName())
+                .partnerOrSupplier(ticket.getPartnerOrSupplier())
+                .reason(ticket.getReason())
+                .status(ticket.getStatus())
+                .creatorId(ticket.getCreatorId())
+                .creatorName(ticket.getCreatorName())
+                .receivedByUserId(ticket.getReceivedByUserId())
+                .receivedByName(ticket.getReceivedByName())
+                .receivedAt(ticket.getReceivedAt())
+                .receivedNotes(ticket.getReceivedNotes())
+                .totalQuantity(ticket.getTotalQuantity())
+                .notes(ticket.getNotes())
+                .items(itemResponses)
+                .createdAt(ticket.getCreatedAt())
+                .updatedAt(ticket.getUpdatedAt())
+                .build();
     }
 
     // ================= PHIẾU THU HỒI ĐỒ HỎNG =================

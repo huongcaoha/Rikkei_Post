@@ -314,6 +314,35 @@ export const SupplyManagementPage: React.FC = () => {
     }
   };
 
+  const handleConfirmReceived = (record: SupplyTicket) => {
+    Modal.confirm({
+      title: 'Xác nhận đã nhận đủ đồ vật tư / thiết bị?',
+      content: (
+        <div>
+          <p>
+            Bạn có chắc chắn đã kiểm đếm và nhận đủ <b>{record.totalQuantity}</b> thiết bị / vật tư từ phiếu xuất mã{' '}
+            <span className="font-mono font-bold text-blue-600">{record.ticketCode}</span> không?
+          </p>
+          <p className="text-xs text-gray-500 mb-0">
+            * Sau khi xác nhận, trạng thái phiếu sẽ chuyển sang Hoàn thành và tự động thông báo tới Quản lý kho cấp phát. Phiếu hoàn tất sẽ được khóa chỉnh sửa.
+          </p>
+        </div>
+      ),
+      okText: 'Xác nhận đã nhận đủ',
+      cancelText: 'Hủy bỏ',
+      okButtonProps: { className: 'bg-emerald-600 hover:bg-emerald-700 font-bold' },
+      onOk: async () => {
+        try {
+          await supplyApi.confirmReceived(record.id);
+          message.success(`🎉 Đã xác nhận nhận đủ vật tư cho phiếu [${record.ticketCode}] thành công!`);
+          loadAllData();
+        } catch (err: any) {
+          message.error(err.response?.data?.message || 'Không thể xác nhận nhận đồ');
+        }
+      }
+    });
+  };
+
   // ================= PHIẾU THU HỒI ĐỒ HỎNG =================
 
   const handleOpenCreateRecall = () => {
@@ -627,7 +656,7 @@ export const SupplyManagementPage: React.FC = () => {
     {
       title: 'Kho Vật Tư',
       key: 'wh',
-      render: (_: any, r: SupplyTicket) => r.warehouse?.name || 'Kho Tổng'
+      render: (_: any, r: SupplyTicket) => r.warehouseName || r.warehouse?.name || 'Kho Tổng'
     },
     {
       title: 'Đối tác / Bưu cục nhận',
@@ -647,25 +676,62 @@ export const SupplyManagementPage: React.FC = () => {
       render: (tq: number) => <span className="font-bold text-gray-900">{tq} cái/bộ</span>
     },
     {
-      title: 'Người lập phiếu',
-      dataIndex: 'creatorName',
-      key: 'creatorName',
-      render: (name: string) => <span className="text-xs text-gray-600">{name || 'Quản lý kho'}</span>
+      title: 'Trạng thái',
+      key: 'status',
+      render: (_: any, r: SupplyTicket) => {
+        if (r.status === 'CHO_XAC_NHAN') {
+          return (
+            <Tag color="orange" className="font-semibold flex items-center gap-1 w-max">
+              <Clock size={12} /> Chờ bưu cục nhận đủ
+            </Tag>
+          );
+        }
+        return (
+          <Tag color="green" className="font-semibold flex items-center gap-1 w-max">
+            <CheckCircle2 size={12} /> Đã nhận đủ / Hoàn tất
+          </Tag>
+        );
+      }
+    },
+    {
+      title: 'Người lập & nhận',
+      key: 'creatorAndReceiver',
+      render: (_: any, r: SupplyTicket) => (
+        <div className="text-xs space-y-0.5">
+          <div className="text-gray-600">Lập: <span className="font-medium text-gray-800">{r.creatorName || 'Quản lý kho'}</span></div>
+          {r.receivedByName && (
+            <div className="text-emerald-700 font-medium">Nhận: {r.receivedByName}</div>
+          )}
+        </div>
+      )
     },
     {
       title: 'Thao tác',
       key: 'actions',
       render: (_: any, r: SupplyTicket) => (
-        <Button
-          type="link"
-          size="small"
-          onClick={() => {
-            setSelectedTicketDetail(r);
-            setIsTicketDetailOpen(true);
-          }}
-        >
-          Xem chi tiết
-        </Button>
+        <Space size="small">
+          {r.ticketType === 'EXPORT' && r.status === 'CHO_XAC_NHAN' && (
+            <Button
+              type="primary"
+              size="small"
+              className="bg-emerald-600 hover:bg-emerald-700 font-bold"
+              onClick={() => handleConfirmReceived(r)}
+            >
+              Xác nhận nhận đủ
+            </Button>
+          )}
+
+          <Button
+            type="link"
+            size="small"
+            onClick={() => {
+              setSelectedTicketDetail(r);
+              setIsTicketDetailOpen(true);
+            }}
+          >
+            Chi tiết
+          </Button>
+        </Space>
       )
     }
   ];
@@ -1517,11 +1583,35 @@ export const SupplyManagementPage: React.FC = () => {
           <div className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-3 bg-gray-50 p-3 rounded-xl border text-xs">
               <div><span className="font-semibold text-gray-600">Loại phiếu:</span> {selectedTicketDetail.ticketType === 'IMPORT' ? 'Nhập kho NCC' : 'Xuất cấp phát bưu cục'}</div>
-              <div><span className="font-semibold text-gray-600">Kho thực hiện:</span> {selectedTicketDetail.warehouse?.name}</div>
+              <div><span className="font-semibold text-gray-600">Kho thực hiện:</span> {selectedTicketDetail.warehouseName || selectedTicketDetail.warehouse?.name || 'Kho Tổng'}</div>
               <div><span className="font-semibold text-gray-600">Nơi nhận/NCC:</span> {selectedTicketDetail.targetPostOfficeName || selectedTicketDetail.partnerOrSupplier || 'N/A'}</div>
               <div><span className="font-semibold text-gray-600">Người lập:</span> {selectedTicketDetail.creatorName}</div>
+              <div>
+                <span className="font-semibold text-gray-600">Trạng thái:</span>{' '}
+                {selectedTicketDetail.status === 'CHO_XAC_NHAN' ? (
+                  <Tag color="orange">Chờ bưu cục nhận đủ</Tag>
+                ) : (
+                  <Tag color="green">Đã nhận đủ / Hoàn tất (Khóa sửa)</Tag>
+                )}
+              </div>
+              <div>
+                <span className="font-semibold text-gray-600">Người nhận đủ:</span>{' '}
+                {selectedTicketDetail.receivedByName
+                  ? `${selectedTicketDetail.receivedByName} (${selectedTicketDetail.receivedAt ? new Date(selectedTicketDetail.receivedAt).toLocaleString('vi-VN') : ''})`
+                  : 'Chưa có'}
+              </div>
               <div className="col-span-2"><span className="font-semibold text-gray-600">Lý do:</span> {selectedTicketDetail.reason || 'N/A'}</div>
+              {selectedTicketDetail.receivedNotes && (
+                <div className="col-span-2"><span className="font-semibold text-gray-600">Ghi chú nhận:</span> {selectedTicketDetail.receivedNotes}</div>
+              )}
             </div>
+
+            {selectedTicketDetail.status === 'COMPLETED' && (
+              <div className="p-2.5 bg-green-50 text-green-800 rounded-lg text-xs border border-green-200 flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-green-600 shrink-0" />
+                <span>Phiếu này đã hoàn thành và được khóa bảo vệ. Thông tin phiếu không thể chỉnh sửa.</span>
+              </div>
+            )}
 
             <Table
               dataSource={selectedTicketDetail.items || []}

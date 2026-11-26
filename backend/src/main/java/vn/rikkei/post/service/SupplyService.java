@@ -25,9 +25,10 @@ public interface SupplyService {
     SupplyInventory updateInventoryQuantity(Long warehouseId, Long itemId, int quantity, int damagedQuantity);
 
     // Phiếu xuất nhập kho
-    List<SupplyTicket> getTickets(String ticketType, Long warehouseId);
-    SupplyTicket getTicketById(Long id);
-    SupplyTicket createTicket(SupplyDto.CreateTicketRequest request, Long userId);
+    List<SupplyDto.SupplyTicketResponse> getTickets(String ticketType, Long warehouseId);
+    SupplyDto.SupplyTicketResponse getTicketById(Long id);
+    SupplyDto.SupplyTicketResponse createTicket(SupplyDto.CreateTicketRequest request, Long userId);
+    SupplyDto.SupplyTicketResponse confirmReceivedTicket(Long id, SupplyDto.ConfirmReceivedTicketRequest request, Long userId);
 
     // Phiếu thu hồi đồ hỏng
     List<EquipmentRecallTicket> getRecallTickets(String status, Long postOfficeId);
