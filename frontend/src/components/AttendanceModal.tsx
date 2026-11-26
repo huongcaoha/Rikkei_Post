@@ -66,6 +66,10 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     let cameraTimer: any = null;
 
     if (open) {
+      // Xóa ảnh chụp cũ mỗi khi mở modal để bắt buộc chụp ảnh mới
+      setCapturedPhoto(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+
       loadTodayAttendance();
       loadFaceProfile();
       loadWarehouseInfo();
@@ -78,6 +82,8 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
         startCamera();
       }, 700);
     } else {
+      setCapturedPhoto(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       stopCamera();
       clearGpsWatch();
     }
@@ -398,6 +404,9 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
         message.success(`🎉 Check-in thành công! Bạn đang ở trong bán kính bưu cục (${record.distanceFromWarehouseKm || 0} km).`);
         setTodayRecord(record);
         loadFaceProfile();
+        // Xóa sạch ảnh chụp cũ ngay sau khi Check-in thành công để không bị dùng lại cho Check-out
+        setCapturedPhoto(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     } catch (e: any) {
       message.error(e.response?.data?.message || e.message || 'Check-in thất bại!');
@@ -454,6 +463,9 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       if (record && (record.id || res.success)) {
         message.success(`🎉 Check-out hoàn tất! Tổng giờ làm hôm nay: ${record.workHours ?? ''} giờ.`);
         setTodayRecord(record);
+        // Xóa sạch ảnh chụp cũ ngay sau khi Check-out hoàn tất
+        setCapturedPhoto(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     } catch (e: any) {
       message.error(e.response?.data?.message || e.message || 'Check-out thất bại!');
@@ -482,6 +494,9 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
         message.success('Đã đăng ký hồ sơ khuôn mặt FaceID thành công!');
         setFaceProfile(profile);
         setActiveTab('checkin');
+        // Xóa ảnh chụp sau khi đăng ký FaceID
+        setCapturedPhoto(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     } catch (e: any) {
       message.error(e.response?.data?.message || e.message);
@@ -495,36 +510,50 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       title: 'Ngày làm',
       dataIndex: 'workDate',
       key: 'workDate',
-      render: (text: string) => <span className="font-semibold">{text}</span>,
+      render: (text: string) => (
+        <span className="font-semibold text-xs whitespace-nowrap text-gray-800">
+          {text}
+        </span>
+      ),
     },
     {
-      title: 'Giờ vào (Check-in)',
+      title: 'Check-in',
       dataIndex: 'checkInTime',
       key: 'checkInTime',
-      render: (t: string) => (t ? t.substring(11, 19) : '-'),
+      render: (t: string) => (
+        <span className="text-xs font-mono font-bold text-emerald-700 whitespace-nowrap">
+          {t ? t.substring(11, 16) : '-'}
+        </span>
+      ),
     },
     {
-      title: 'Giờ ra (Check-out)',
+      title: 'Check-out',
       dataIndex: 'checkOutTime',
       key: 'checkOutTime',
-      render: (t: string) => (t ? t.substring(11, 19) : '-'),
+      render: (t: string) => (
+        <span className="text-xs font-mono font-bold text-amber-700 whitespace-nowrap">
+          {t ? t.substring(11, 16) : '-'}
+        </span>
+      ),
     },
     {
       title: 'Số giờ',
       dataIndex: 'workHours',
       key: 'workHours',
-      render: (h: number) => <span className="font-bold text-blue-600">{h ? h + 'h' : '-'}</span>,
+      responsive: ['md' as const],
+      render: (h: number) => <span className="font-bold text-blue-600 text-xs">{h ? h + 'h' : '-'}</span>,
     },
     {
       title: 'Vị trí GPS',
       key: 'location',
+      responsive: ['md' as const],
       render: (_: any, r: AttendanceRecordDTO) =>
         r.isLocationValid ? (
-          <Tag color="green" className="flex items-center gap-1 w-fit">
+          <Tag color="green" className="flex items-center gap-1 w-fit text-xs">
             <CheckCircle2 size={12} /> Hợp lệ ({r.distanceFromWarehouseKm}km)
           </Tag>
         ) : (
-          <Tag color="red" className="flex items-center gap-1 w-fit">
+          <Tag color="red" className="flex items-center gap-1 w-fit text-xs">
             <AlertTriangle size={12} /> {r.distanceFromWarehouseKm}km (Ngoài kho)
           </Tag>
         ),
@@ -532,11 +561,12 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
     {
       title: 'Khuôn mặt FaceID',
       key: 'face',
+      responsive: ['md' as const],
       render: (_: any, r: AttendanceRecordDTO) =>
         r.isFaceMatched ? (
-          <Tag color="blue">{r.faceMatchConfidence}% Khớp</Tag>
+          <Tag color="blue" className="text-xs">{r.faceMatchConfidence}% Khớp</Tag>
         ) : (
-          <Tag color="red">Không khớp</Tag>
+          <Tag color="red" className="text-xs">Không khớp</Tag>
         ),
     },
     {
@@ -546,15 +576,15 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       render: (st: string) => {
         switch (st) {
           case 'COMPLETED':
-            return <Tag color="green">Đủ công</Tag>;
+            return <Tag color="green" className="text-[10px] sm:text-xs font-semibold px-1 py-0.5 m-0 whitespace-nowrap">Đủ công</Tag>;
           case 'CHECKED_IN':
-            return <Tag color="processing">Đang làm việc</Tag>;
+            return <Tag color="processing" className="text-[10px] sm:text-xs font-semibold px-1 py-0.5 m-0 whitespace-nowrap">Đang làm</Tag>;
           case 'LATE':
-            return <Tag color="orange">Đi muộn</Tag>;
+            return <Tag color="orange" className="text-[10px] sm:text-xs font-semibold px-1 py-0.5 m-0 whitespace-nowrap">Đi muộn</Tag>;
           case 'EARLY_LEAVE':
-            return <Tag color="volcano">Về sớm</Tag>;
+            return <Tag color="volcano" className="text-[10px] sm:text-xs font-semibold px-1 py-0.5 m-0 whitespace-nowrap">Về sớm</Tag>;
           default:
-            return <Tag color="default">{st}</Tag>;
+            return <Tag color="default" className="text-[10px] sm:text-xs px-1 py-0.5 m-0 whitespace-nowrap">{st}</Tag>;
         }
       },
     },
@@ -585,23 +615,37 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
       onCancel={onClose}
       footer={null}
       width={780}
+      style={{ top: 8, maxWidth: 'calc(100vw - 12px)', margin: '0 auto', paddingBottom: 8 }}
+      styles={{
+        body: {
+          maxHeight: '82vh',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '6px 10px',
+        },
+      }}
+      className="attendance-modal overflow-x-hidden max-w-full"
       title={
-        <div className="flex items-center gap-2 text-red-600 font-bold text-lg">
-          <Clock size={20} />
-          Chấm Công Bưu Cục & Nhận Diện Khuôn Mặt (Smart FaceID & GPS)
+        <div className="flex items-center gap-2 text-red-600 font-bold text-sm sm:text-base truncate">
+          <Clock size={18} className="shrink-0" />
+          <span className="truncate">Chấm Công Bưu Cục & Nhận Diện Khuôn Mặt</span>
         </div>
       }
       destroyOnClose
     >
       <Tabs
         activeKey={activeTab}
-        onChange={setActiveTab}
+        onChange={(k) => {
+          setActiveTab(k);
+          setCapturedPhoto(null);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }}
         items={[
           {
             key: 'checkin',
             label: (
-              <span className="flex items-center gap-1.5 font-medium">
-                <Clock size={16} /> Chấm công hôm nay
+              <span className="flex items-center gap-1 font-medium text-xs sm:text-sm">
+                <Clock size={14} /> Chấm công
               </span>
             ),
             children: (
@@ -936,7 +980,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
                   ) : !isFaceRegistered ? (
                     <span className="text-amber-600">⚠️ Bạn cần được Quản lý bưu cục đăng ký FaceID trước khi chấm công</span>
                   ) : !capturedPhoto ? (
-                    <span className="text-blue-600">📸 Vui lòng chụp ảnh khuôn mặt để hệ thống đối chiếu FaceID</span>
+                    <span className="text-blue-600 font-medium">📸 Vui lòng chụp ảnh khuôn mặt mới để đối soát FaceID</span>
                   ) : null}
                 </div>
               </div>
@@ -945,19 +989,24 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
           {
             key: 'history',
             label: (
-              <span className="flex items-center gap-1.5 font-medium">
-                <History size={16} /> Lịch sử chấm công tháng này
+              <span className="flex items-center gap-1 font-medium text-xs sm:text-sm">
+                <History size={14} /> Lịch sử công
               </span>
             ),
             children: (
-              <div className="py-2">
+              <div className="py-2 w-full max-w-full overflow-x-hidden">
+                <div className="mb-2 text-xs text-gray-500 font-medium md:hidden flex items-center justify-between">
+                  <span>Lịch sử chấm công (4 cột tối ưu di động)</span>
+                  <Tag color="blue" className="text-[10px]">Vuốt dọc</Tag>
+                </div>
                 <Table
                   dataSource={history}
                   columns={columns}
                   rowKey="id"
                   size="small"
-                  pagination={{ pageSize: 7 }}
+                  pagination={{ pageSize: 7, size: 'small', showSizeChanger: false }}
                   loading={loading}
+                  className="w-full max-w-full overflow-x-hidden"
                 />
               </div>
             ),
@@ -965,8 +1014,8 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({ open, onClose 
           {
             key: 'profile',
             label: (
-              <span className="flex items-center gap-1.5 font-medium">
-                <UserCheck size={16} /> Hồ sơ khuôn mặt mẫu
+              <span className="flex items-center gap-1 font-medium text-xs sm:text-sm">
+                <UserCheck size={14} /> Hồ sơ FaceID
               </span>
             ),
             children: (

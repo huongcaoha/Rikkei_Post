@@ -435,7 +435,7 @@ export const AppLayout: React.FC = () => {
   ];
 
   return (
-    <Layout className="min-h-screen">
+    <Layout className="min-h-screen overflow-x-hidden max-w-full">
       {/* Drawer menu cho màn hình Mobile */}
       <Drawer
         title={
@@ -590,7 +590,7 @@ export const AppLayout: React.FC = () => {
         </div>
       </Sider>
 
-      <Layout>
+      <Layout className="overflow-x-hidden max-w-full flex-1 min-w-0">
         {/* Mobile Header (< md): Tối ưu gọn gàng: Logo bên trái, Chuông + Dropdown Tên người dùng + Nút Menu bên phải */}
         <div className="bg-white px-3 flex md:hidden items-center justify-between border-b border-gray-200 h-14 shadow-xs sticky top-0 z-40">
           <div
@@ -710,8 +710,8 @@ export const AppLayout: React.FC = () => {
         </Header>
 
         {/* Nội dung trang (có padding-bottom để tránh bị che bởi thanh Mobile Bottom Bar) */}
-        <Content className="p-3 md:p-6 bg-gray-50 overflow-y-auto pb-24 md:pb-6">
-          <div className="max-w-7xl mx-auto">
+        <Content className="p-2 sm:p-3 md:p-6 bg-gray-50 overflow-y-auto overflow-x-hidden max-w-full pb-24 md:pb-6">
+          <div className="max-w-7xl mx-auto w-full overflow-x-hidden">
             <Outlet />
           </div>
         </Content>
