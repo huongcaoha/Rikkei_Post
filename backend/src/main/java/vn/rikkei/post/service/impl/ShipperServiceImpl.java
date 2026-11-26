@@ -55,7 +55,7 @@ public class ShipperServiceImpl implements ShipperService {
     private final vn.rikkei.post.service.RedisService redisService;
 
     private Order saveOrderAndEvictCache(Order order) {
-        Order saved = saveOrderAndEvictCache(order);
+        Order saved = orderRepository.save(order);
         if (redisService != null && saved.getTrackingCode() != null) {
             try {
                 redisService.evictOrderCache(saved.getTrackingCode());
