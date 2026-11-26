@@ -43,6 +43,7 @@ import { orderApi } from '../api/order';
 import { useAuth } from '../context/AuthContext';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 import { MasterBag, Warehouse } from '../types';
+import { MasterBagThermalLabel } from '../components/MasterBagThermalLabel';
 import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
@@ -1180,59 +1181,16 @@ export const MasterBagPage: React.FC = () => {
             type="primary"
             icon={<Printer size={16} />}
             onClick={() => window.print()}
-            className="bg-red-600 hover:bg-red-700"
+            className="bg-red-600 hover:bg-red-700 font-bold"
           >
             In tem ngay
           </Button>,
         ]}
-        width={500}
+        width={560}
       >
         {printBag && (
-          <div className="border-2 border-black p-4 rounded-lg bg-white font-sans text-black space-y-3 print:m-0">
-            <div className="flex justify-between items-center border-b-2 border-black pb-2">
-              <div>
-                <span className="font-extrabold text-lg tracking-wider">RIKKEI POST</span>
-                <div className="text-xs text-gray-600">SMART EXPRESS LOGISTICS</div>
-              </div>
-              <div className="text-right">
-                <span className="font-mono font-extrabold text-xl">{printBag.bagCode}</span>
-                <div className="text-xs">MÃ BAO TẢI TỔNG</div>
-              </div>
-            </div>
-
-            <div className="border-b-2 border-black pb-2 space-y-1">
-              <div className="text-xs font-semibold">TỪ: {printBag.originWarehouseName}</div>
-              <div className="text-sm font-extrabold text-red-600">
-                ĐẾN: {printBag.destWarehouseName}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 border-b-2 border-black pb-2 text-xs">
-              <div>
-                <span className="text-gray-600 block">Số lượng kiện:</span>
-                <span className="font-extrabold text-base">{printBag.totalItems} KIỆN</span>
-              </div>
-              <div>
-                <span className="text-gray-600 block">Tổng trọng lượng:</span>
-                <span className="font-extrabold text-base">{Number(printBag.totalWeightKg).toFixed(2)} KG</span>
-              </div>
-            </div>
-
-            <div className="border-b-2 border-black pb-2">
-              <span className="text-xs text-gray-600 block">SỐ HIỆU KẸP CHÌ NIÊM PHONG (SEAL):</span>
-              <span className="font-mono font-extrabold text-lg text-red-600">
-                {printBag.sealNumber || 'CHƯA KẸP CHÌ'}
-              </span>
-            </div>
-
-            <div className="text-center pt-2">
-              <div className="inline-block p-2 bg-gray-100 rounded font-mono text-sm tracking-widest font-bold">
-                * {printBag.bagCode} *
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                Quét mã này khi xuất kho nạp lên xe tải vận chuyển
-              </div>
-            </div>
+          <div className="py-2">
+            <MasterBagThermalLabel bag={printBag} />
           </div>
         )}
       </Modal>
