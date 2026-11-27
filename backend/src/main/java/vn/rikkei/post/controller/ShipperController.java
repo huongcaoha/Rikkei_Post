@@ -184,6 +184,27 @@ public class ShipperController {
         return ResponseEntity.ok(ApiResponse.success(response, "Đã ghi nhận báo cáo giao thất bại."));
     }
 
+    @PostMapping("/scan-outbound-return")
+    public ResponseEntity<ApiResponse<OrderResponse>> scanOutboundReturn(
+            @RequestBody Map<String, String> payload,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        String trackingCode = payload.get("trackingCode");
+        OrderResponse response = shipperService.scanOutboundForReturn(shipperId, trackingCode);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã quét xuất kho lấy đơn hàng chuyển hoàn đi trả Shop thành công!"));
+    }
+
+    @PostMapping("/complete-return")
+    public ResponseEntity<ApiResponse<OrderResponse>> completeReturn(
+            @RequestBody CompleteReturnRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        Long shipperId = userDetails != null ? userDetails.getId() : 1L;
+        OrderResponse response = shipperService.completeReturn(shipperId, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Đã xác nhận hoàn trả hàng cho Shop thành công! Đã lưu ảnh chụp bằng chứng."));
+    }
+
     @GetMapping("/cash-reconciliation")
     public ResponseEntity<ApiResponse<CashReconciliationResponse>> getCashReconciliation(
             @RequestParam(required = false) Long shipperId,

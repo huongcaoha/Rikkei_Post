@@ -37,10 +37,7 @@ import java.math.BigDecimal;
 import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.Random;
+import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -62,6 +59,14 @@ public class OrderServiceImpl implements OrderService {
     private final WebSocketNotificationService webSocketNotificationService;
     private final RedisService redisService;
     private final Random random = new Random();
+    private final Map<Long, String> warehouseNameCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String getWarehouseName(Long warehouseId) {
+        if (warehouseId == null) return null;
+        return warehouseNameCache.computeIfAbsent(warehouseId, id ->
+                warehouseRepository.findById(id).map(Warehouse::getName).orElse(null)
+        );
+    }
 
     @Override
     @Transactional
@@ -312,10 +317,14 @@ public class OrderServiceImpl implements OrderService {
                 // Quản lý chi nhánh Tỉnh/TP: Xem đơn hàng gửi từ hoặc nhận đến địa bàn tỉnh mình quản lý
                 orders = orderRepository.findByBranchProvinceAndStatus(user.getManagedProvinceId(), hasStatus ? status : null, pageable);
             } else if (isPostOfficeManager && user.getAssignedPostOfficeId() != null) {
-                // Quản lý bưu cục: Xem đơn hàng được phân bổ về bưu cục của mình
-                orders = hasStatus
-                        ? orderRepository.findByAssignedPostOfficeIdAndCurrentStatus(user.getAssignedPostOfficeId(), status, pageable)
-                        : orderRepository.findByAssignedPostOfficeId(user.getAssignedPostOfficeId(), pageable);
+                // Quản lý bưu cục: Xem đơn hàng được phân bổ về bưu cục của mình hoặc thuộc phạm vi bưu cục
+                Warehouse po = warehouseRepository.findById(user.getAssignedPostOfficeId()).orElse(null);
+                String keyword = po != null ? extractPostOfficeKeyword(po.getName(), po.getAddress()) : "";
+                orders = orderRepository.findByPostOfficeScope(
+                        user.getAssignedPostOfficeId(),
+                        keyword,
+                        hasStatus ? status : null,
+                        pageable);
             } else if (isShipper) {
                 // Shipper: Chỉ xem đơn hàng được gắn tên mình để đi lấy hoặc đi giao
                 orders = hasStatus
@@ -413,7 +422,9 @@ public class OrderServiceImpl implements OrderService {
                     .filter(o -> user.getManagedProvinceId().equals(o.getSenderProvinceId()) || user.getManagedProvinceId().equals(o.getReceiverProvinceId()))
                     .collect(Collectors.toList());
         } else if (isPostOfficeManager && user.getAssignedPostOfficeId() != null) {
-            return orderRepository.findByAssignedPostOfficeId(user.getAssignedPostOfficeId());
+            Warehouse po = warehouseRepository.findById(user.getAssignedPostOfficeId()).orElse(null);
+            String keyword = po != null ? extractPostOfficeKeyword(po.getName(), po.getAddress()) : "";
+            return orderRepository.findByPostOfficeScopeList(user.getAssignedPostOfficeId(), keyword);
         } else if (isShipper) {
             return orderRepository.findByAssignedShipperId(user.getId());
         } else {
@@ -593,11 +604,165 @@ public class OrderServiceImpl implements OrderService {
         return R * c;
     }
 
+    private String extractPostOfficeKeyword(String poName, String poAddress) {
+        if (poName != null) {
+            String lower = poName.toLowerCase();
+            if (lower.contains("bến thành")) return "Bến Thành";
+            if (lower.contains("cầu giấy")) return "Cầu Giấy";
+            if (lower.contains("hai bà trưng")) return "Hai Bà Trưng";
+            if (lower.contains("hoài đức")) return "Hoài Đức";
+            if (lower.contains("tân bình")) return "Tân Bình";
+            if (lower.contains("hải châu")) return "Hải Châu";
+            if (lower.contains("ninh kiều")) return "Ninh Kiều";
+            if (lower.contains("the pride")) return "The Pride";
+            if (lower.contains("thanh xuân")) return "Thanh Xuân";
+            if (lower.contains("hoàng mai")) return "Hoàng Mai";
+            String cleaned = poName.replaceAll("(?i)^(bưu cục|kho|hub|trung tâm khai thác)\\s*", "").trim();
+            if (!cleaned.isBlank()) return cleaned;
+        }
+        return "";
+    }
+
     @Override
     @Transactional(readOnly = true)
     @Cacheable(value = "order:timeline", key = "#trackingCode")
     public List<OrderTrackingLog> getOrderTimeline(String trackingCode) {
-        return trackingLogRepository.findByTrackingCodeOrderByCreatedAtDesc(trackingCode);
+        List<OrderTrackingLog> list = trackingLogRepository.findByTrackingCodeOrderByCreatedAtDesc(trackingCode);
+        for (OrderTrackingLog logEntry : list) {
+            if (logEntry.getGpsLat() == null && logEntry.getLocationId() != null) {
+                warehouseRepository.findById(logEntry.getLocationId()).ifPresent(wh -> {
+                    logEntry.setGpsLat(wh.getLatitude());
+                    logEntry.setGpsLng(wh.getLongitude());
+                });
+            }
+        }
+        return list;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getPublicTrackingData(String trackingCode) {
+        OrderResponse order = getOrderByTrackingCode(trackingCode);
+        List<OrderTrackingLog> timeline = getOrderTimeline(trackingCode);
+
+        // Bảo mật thông tin cá nhân & mã OTP khi tra cứu công khai
+        if (order != null) {
+            order.setDeliveryOtp(null);
+            if (order.getReceiverPhone() != null && order.getReceiverPhone().length() >= 7) {
+                String phone = order.getReceiverPhone();
+                order.setReceiverPhone(phone.substring(0, 3) + "****" + phone.substring(phone.length() - 3));
+            }
+            if (order.getSenderPhone() != null && order.getSenderPhone().length() >= 7) {
+                String phone = order.getSenderPhone();
+                order.setSenderPhone(phone.substring(0, 3) + "****" + phone.substring(phone.length() - 3));
+            }
+        }
+
+        List<Map<String, Object>> routeWaypoints = buildRouteWaypoints(order, timeline);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("order", order);
+        data.put("timeline", timeline);
+        data.put("routeWaypoints", routeWaypoints);
+        return data;
+    }
+
+    private List<Map<String, Object>> buildRouteWaypoints(OrderResponse order, List<OrderTrackingLog> timeline) {
+        List<Map<String, Object>> waypoints = new ArrayList<>();
+        if (order == null) return waypoints;
+
+        // 1. Điểm gửi (Shop)
+        Map<String, Object> senderWp = new HashMap<>();
+        senderWp.put("id", "WP_SENDER");
+        senderWp.put("index", 1);
+        senderWp.put("name", "Điểm gửi (Shop): " + (order.getSenderName() != null ? order.getSenderName() : "Người gửi"));
+        senderWp.put("address", order.getSenderAddress());
+        senderWp.put("lat", order.getSenderLat() != null ? order.getSenderLat() : 20.9720);
+        senderWp.put("lng", order.getSenderLng() != null ? order.getSenderLng() : 105.7574);
+        senderWp.put("type", "SENDER");
+        senderWp.put("status", "CREATED");
+        senderWp.put("statusLabel", "Khởi tạo đơn hàng");
+        senderWp.put("timestamp", order.getCreatedAt());
+        senderWp.put("isCompleted", true);
+        waypoints.add(senderWp);
+
+        // 2. Trích xuất các trạm/kho từ timeline (sắp xếp tăng dần theo thời gian)
+        List<OrderTrackingLog> ascLogs = new ArrayList<>(timeline);
+        ascLogs.sort(Comparator.comparing(OrderTrackingLog::getCreatedAt));
+
+        Set<Long> visitedWarehouseIds = new LinkedHashSet<>();
+        for (OrderTrackingLog logEntry : ascLogs) {
+            Long locId = logEntry.getLocationId();
+            if (locId != null && !visitedWarehouseIds.contains(locId)) {
+                Warehouse wh = warehouseRepository.findById(locId).orElse(null);
+                if (wh != null && wh.getLatitude() != null && wh.getLongitude() != null) {
+                    visitedWarehouseIds.add(locId);
+
+                    Map<String, Object> wp = new HashMap<>();
+                    wp.put("id", "WP_WH_" + wh.getId());
+                    wp.put("index", waypoints.size() + 1);
+                    wp.put("name", wh.getName());
+                    wp.put("code", wh.getCode());
+                    wp.put("address", wh.getAddress());
+                    wp.put("lat", wh.getLatitude());
+                    wp.put("lng", wh.getLongitude());
+                    wp.put("type", wh.getType());
+                    wp.put("status", logEntry.getStatus());
+                    wp.put("statusLabel", logEntry.getLocationName() != null ? logEntry.getLocationName() : wh.getName());
+                    wp.put("timestamp", logEntry.getCreatedAt());
+                    wp.put("description", logEntry.getDescription());
+                    wp.put("actorName", logEntry.getActorName());
+                    wp.put("isCompleted", true);
+                    waypoints.add(wp);
+                }
+            }
+        }
+
+        // 3. Điểm nhận (Khách hàng)
+        Double recLat = order.getReceiverLat();
+        Double recLng = order.getReceiverLng();
+        if (recLat == null || recLng == null) {
+            if (order.getReceiverProvinceId() != null && order.getReceiverProvinceId() == 79) {
+                recLat = 10.7728;
+                recLng = 106.7001;
+            } else {
+                recLat = 10.8231;
+                recLng = 106.6297;
+            }
+        }
+
+        Map<String, Object> receiverWp = new HashMap<>();
+        receiverWp.put("id", "WP_RECEIVER");
+        receiverWp.put("index", waypoints.size() + 1);
+        receiverWp.put("name", "Điểm nhận (Khách): " + (order.getReceiverName() != null ? order.getReceiverName() : "Người nhận"));
+        receiverWp.put("address", order.getReceiverAddress());
+        receiverWp.put("lat", recLat);
+        receiverWp.put("lng", recLng);
+        receiverWp.put("type", "RECEIVER");
+        receiverWp.put("status", order.getCurrentStatus());
+        receiverWp.put("statusLabel", "Điểm giao nhận chặng cuối");
+        receiverWp.put("timestamp", order.getDeliveredAt() != null ? order.getDeliveredAt() : order.getUpdatedAt());
+        receiverWp.put("isCompleted", "DELIVERED".equalsIgnoreCase(order.getCurrentStatus()));
+        waypoints.add(receiverWp);
+
+        // 4. Nếu đơn hàng chuyển hoàn (RETURNING hoặc RETURNED)
+        if ("RETURNING".equalsIgnoreCase(order.getCurrentStatus()) || "RETURNED".equalsIgnoreCase(order.getCurrentStatus())) {
+            Map<String, Object> returnWp = new HashMap<>();
+            returnWp.put("id", "WP_RETURN_SHOP");
+            returnWp.put("index", waypoints.size() + 1);
+            returnWp.put("name", "Hoàn trả về Shop: " + (order.getSenderName() != null ? order.getSenderName() : "Người gửi"));
+            returnWp.put("address", order.getSenderAddress());
+            returnWp.put("lat", order.getSenderLat() != null ? order.getSenderLat() : 20.9720);
+            returnWp.put("lng", order.getSenderLng() != null ? order.getSenderLng() : 105.7574);
+            returnWp.put("type", "RETURN_SENDER");
+            returnWp.put("status", order.getCurrentStatus());
+            returnWp.put("statusLabel", "RETURNED".equalsIgnoreCase(order.getCurrentStatus()) ? "Đã hoàn trả tận tay Shop thành công" : "Đang luân chuyển hoàn về Shop");
+            returnWp.put("timestamp", order.getUpdatedAt());
+            returnWp.put("isCompleted", "RETURNED".equalsIgnoreCase(order.getCurrentStatus()));
+            waypoints.add(returnWp);
+        }
+
+        return waypoints;
     }
 
     private String generateUniqueTrackingCode() {
@@ -617,11 +782,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private OrderResponse mapToResponse(Order order) {
-        String poName = null;
-        if (order.getAssignedPostOfficeId() != null) {
-            poName = warehouseRepository.findById(order.getAssignedPostOfficeId())
-                    .map(Warehouse::getName).orElse(null);
-        }
+        String poName = getWarehouseName(order.getAssignedPostOfficeId());
 
         return OrderResponse.builder()
                 .id(order.getId())

@@ -4,6 +4,7 @@ import vn.rikkei.post.dto.order.OrderResponse;
 import vn.rikkei.post.dto.shipper.CashReconciliationResponse;
 import vn.rikkei.post.dto.shipper.CashSubmitRequest;
 import vn.rikkei.post.dto.shipper.CompleteDeliveryRequest;
+import vn.rikkei.post.dto.shipper.CompleteReturnRequest;
 import vn.rikkei.post.dto.shipper.DeliveryFailureRequest;
 
 import java.time.LocalDate;
@@ -34,6 +35,12 @@ public interface ShipperService {
 
     // Sprint 3 - US-18: Báo cáo ngoại lệ giao thất bại & Tự động tăng lần phát / Hàng hoàn
     OrderResponse reportDeliveryFailure(Long shipperId, DeliveryFailureRequest request);
+
+    // Quét xuất kho lấy đơn chuyển hoàn mang về trả Shop
+    OrderResponse scanOutboundForReturn(Long shipperId, String trackingCode);
+
+    // Hoàn tất bàn giao hàng hoàn tận tay cho Shop kèm ảnh chụp bằng chứng
+    OrderResponse completeReturn(Long shipperId, CompleteReturnRequest request);
 
     // Sprint 3 - US-17 & Sprint 4: Quản lý Thu hộ COD, Nộp tiền cuối ca PayOS & Đối soát
     CashReconciliationResponse getCashReconciliation(Long userId, Long filterShipperId, LocalDate date);

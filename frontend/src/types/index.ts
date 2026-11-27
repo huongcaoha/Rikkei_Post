@@ -145,6 +145,15 @@ export interface CompleteDeliveryRequest {
   paymentMethod?: 'CASH' | 'VIETQR' | string;
 }
 
+export interface CompleteReturnRequest {
+  trackingCode: string;
+  proofPhotoUrl: string; // Bắt buộc chụp ảnh làm bằng chứng
+  receiverName?: string; // Người đại diện Shop nhận lại hàng
+  notes?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface DeliveryFailureRequest {
   trackingCode: string;
   reason: string;

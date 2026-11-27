@@ -44,7 +44,7 @@ export const orderApi = {
     return res.data.data;
   },
 
-  trackOrderPublic: async (trackingCode: string): Promise<{ order: Order; timeline: OrderTrackingLog[] }> => {
+  trackOrderPublic: async (trackingCode: string): Promise<{ order: Order; timeline: OrderTrackingLog[]; routeWaypoints?: any[] }> => {
     const res = await apiClient.get(`/orders/track/${trackingCode}`);
     return res.data.data;
   },

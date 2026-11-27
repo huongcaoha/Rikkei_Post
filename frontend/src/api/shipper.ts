@@ -3,6 +3,7 @@ import {
   Order,
   ShipperSummary,
   CompleteDeliveryRequest,
+  CompleteReturnRequest,
   DeliveryFailureRequest,
   CashReconciliationResponse,
   CashSubmission,
@@ -48,8 +49,18 @@ export const shipperApi = {
     return res.data.data;
   },
 
+  scanOutboundReturn: async (trackingCode: string): Promise<Order> => {
+    const res = await apiClient.post('/shipper/scan-outbound-return', { trackingCode });
+    return res.data.data;
+  },
+
   scanReturn: async (trackingCode: string, reason?: string, note?: string): Promise<Order> => {
     const res = await apiClient.post('/shipper/scan-return', { trackingCode, reason, note });
+    return res.data.data;
+  },
+
+  completeReturn: async (data: CompleteReturnRequest): Promise<Order> => {
+    const res = await apiClient.post('/shipper/complete-return', data);
     return res.data.data;
   },
 

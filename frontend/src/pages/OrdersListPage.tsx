@@ -118,7 +118,8 @@ export const OrdersListPage: React.FC = () => {
       DELIVERING: { color: 'orange', label: 'Đang đi giao' },
       DELIVERED: { color: 'green', label: 'Giao thành công' },
       DELIVERY_FAILED: { color: 'red', label: 'Giao thất bại' },
-      RETURNING: { color: 'volcano', label: 'Đang hoàn hàng' },
+      RETURNING: { color: 'volcano', label: 'Đang chuyển hoàn về Shop' },
+      RETURNED: { color: 'magenta', label: 'Đã hoàn về Shop (Kết thúc)' },
     };
     const s = map[status] || { color: 'default', label: status };
     return <Tag color={s.color}>{s.label}</Tag>;
@@ -343,7 +344,8 @@ export const OrdersListPage: React.FC = () => {
               { value: 'DELIVERING', label: 'Đang giao hàng' },
               { value: 'DELIVERED', label: 'Giao thành công' },
               { value: 'DELIVERY_FAILED', label: 'Giao thất bại' },
-              { value: 'RETURNING', label: 'Đang hoàn hàng' },
+              { value: 'RETURNING', label: 'Đang chuyển hoàn về Shop' },
+              { value: 'RETURNED', label: 'Đã hoàn về Shop' },
             ]}
           />
         </div>
@@ -535,6 +537,11 @@ export const OrdersListPage: React.FC = () => {
                         : `Đang chuyển hoàn về shop (RETURNING) - Cần phát đủ 3 lần (${selectedOrder?.deliveryAttempts || 0}/3)`,
                       value: 'RETURNING',
                       disabled: (selectedOrder?.deliveryAttempts || 0) < 3,
+                    },
+                    {
+                      label: 'Đã hoàn trả tận tay cho Shop (RETURNED - Kết thúc đơn hàng)',
+                      value: 'RETURNED',
+                      disabled: selectedOrder?.currentStatus !== 'RETURNING',
                     },
                   ]}
                 />

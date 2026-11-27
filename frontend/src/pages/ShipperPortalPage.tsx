@@ -19,6 +19,7 @@ import {
   Check,
   Navigation,
   UserCheck,
+  Send,
 } from 'lucide-react';
 import dayjs, { Dayjs } from 'dayjs';
 import { shipperApi } from '../api/shipper';
@@ -31,6 +32,7 @@ import { VietQrModal } from '../components/VietQrModal';
 import { DeliveryFailureModal } from '../components/DeliveryFailureModal';
 import { CashReconciliationModal } from '../components/CashReconciliationModal';
 import { SmartDispatchModal } from '../components/SmartDispatchModal';
+import { ReturnProofModal } from '../components/ReturnProofModal';
 import { QrCode, PenTool, Cpu, FileSpreadsheet, Sparkles, Camera } from 'lucide-react';
 
 const { RangePicker } = DatePicker;
@@ -62,7 +64,11 @@ export const ShipperPortalPage: React.FC = () => {
 
   // Continuous Scanner Modal states
   const [isScanModalOpen, setIsScanModalOpen] = useState<boolean>(false);
-  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN'>('PICKUP');
+  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN' | 'OUTBOUND_RETURN'>('PICKUP');
+
+  // Modal xác nhận hoàn hàng cho Shop kèm chụp ảnh bằng chứng bắt buộc
+  const [returnProofModalVisible, setReturnProofModalVisible] = useState<boolean>(false);
+  const [selectedReturnOrder, setSelectedReturnOrder] = useState<Order | null>(null);
 
   // Modal thu hồi hoàn kho cho đơn không giao được
   const [returnModalVisible, setReturnModalVisible] = useState<boolean>(false);
@@ -188,7 +194,7 @@ export const ShipperPortalPage: React.FC = () => {
     }
   };
 
-  const handleOpenScanner = (mode: 'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN') => {
+  const handleOpenScanner = (mode: 'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN' | 'OUTBOUND_RETURN') => {
     setScanMode(mode);
     setIsScanModalOpen(true);
   };
@@ -362,6 +368,16 @@ export const ShipperPortalPage: React.FC = () => {
             className="bg-amber-400 hover:bg-amber-300 text-gray-900 font-bold border-none h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
           >
             Quét mã lấy đơn đi giao
+          </Button>
+
+          <Button
+            size="large"
+            type="primary"
+            icon={<RotateCcw size={18} />}
+            onClick={() => handleOpenScanner('OUTBOUND_RETURN')}
+            className="bg-orange-500 hover:bg-orange-600 text-white font-bold border-none h-11 px-4 rounded-xl shadow-md flex items-center justify-center flex-1 md:flex-initial"
+          >
+            Quét lấy đơn trả Shop
           </Button>
 
           <Button
@@ -998,8 +1014,59 @@ export const ShipperPortalPage: React.FC = () => {
                   )}
 
                   {task.currentStatus === 'RETURNING' && (
-                    <div className="w-full text-center py-2 px-3 bg-orange-50 text-orange-800 font-bold rounded-xl border border-orange-200 text-xs">
-                      Đã thu hồi hoàn kho - Đang lưu kho chờ trả Shop
+                    <div className="w-full flex flex-col gap-2">
+                      <div className="text-center py-1.5 px-3 bg-orange-50 text-orange-800 font-bold rounded-xl border border-orange-200 text-xs">
+                        🔄 Đang chuyển hoàn về Shop
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <Button
+                          icon={<Send size={13} />}
+                          onClick={async () => {
+                            try {
+                              await shipperApi.scanOutboundReturn(task.trackingCode);
+                              message.success(`Đã xuất kho lấy đơn [${task.trackingCode}] đi trả Shop thành công!`);
+                              loadTasksAndSummary();
+                            } catch (e: any) {
+                              message.error(e.response?.data?.message || 'Lỗi khi xuất kho trả Shop');
+                            }
+                          }}
+                          className="bg-amber-50 text-amber-800 hover:bg-amber-100 font-semibold h-8 rounded-lg border border-amber-300 text-[11px]"
+                        >
+                          Đi trả Shop
+                        </Button>
+                        <Button
+                          type="primary"
+                          icon={<Camera size={13} />}
+                          onClick={() => {
+                            setSelectedReturnOrder(task);
+                            setReturnProofModalVisible(true);
+                          }}
+                          className="bg-amber-600 hover:bg-amber-700 text-white font-bold h-8 rounded-lg text-[11px]"
+                        >
+                          Đã trả (Chụp ảnh)
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {task.currentStatus === 'RETURNED' && (
+                    <div className="w-full space-y-1.5">
+                      <div className="w-full text-center py-2 px-3 bg-purple-50 text-purple-800 font-bold rounded-xl border border-purple-200 text-xs">
+                        ✓ Đã hoàn trả về Shop thành công (Kết thúc đơn)
+                      </div>
+                      {task.podPhotoUrl && (
+                        <Button
+                          size="small"
+                          icon={<Camera size={13} />}
+                          onClick={() => {
+                            setSelectedPodOrder(task);
+                            setViewPodModalVisible(true);
+                          }}
+                          className="w-full text-xs font-semibold text-purple-700 border-purple-200 hover:border-purple-400 rounded-lg h-7"
+                        >
+                          Xem ảnh bằng chứng hoàn hàng
+                        </Button>
+                      )}
                     </div>
                   )}
 
@@ -1178,7 +1245,20 @@ export const ShipperPortalPage: React.FC = () => {
         canPickup={true}
         canDelivery={true}
         canReturn={canInboundWarehouse}
+        canOutboundReturn={true}
         onOrderUpdated={loadTasksAndSummary}
+        onOpenReturnProof={(ord) => {
+          setSelectedReturnOrder(ord);
+          setReturnProofModalVisible(true);
+        }}
+      />
+
+      {/* Modal Xác Nhận Hoàn Hàng Cho Shop Kèm Ảnh Bằng Chứng Bắt Buộc */}
+      <ReturnProofModal
+        visible={returnProofModalVisible}
+        order={selectedReturnOrder}
+        onClose={() => setReturnProofModalVisible(false)}
+        onSuccess={loadTasksAndSummary}
       />
 
       {/* Sprint 3 - US-15 & US-16: Bằng chứng giao hàng POD & Xác thực OTP */}
@@ -1259,23 +1339,33 @@ export const ShipperPortalPage: React.FC = () => {
         title={
           <div className="flex items-center space-x-2 text-emerald-700">
             <CheckCircle2 size={20} />
-            <span>Bằng Chứng Giao Hàng POD #{viewPodOrder?.trackingCode}</span>
+            <span>
+              {viewPodOrder?.currentStatus === 'RETURNED'
+                ? `Bằng Chứng Hoàn Hàng Cho Shop #${viewPodOrder?.trackingCode}`
+                : `Bằng Chứng Giao Hàng POD #${viewPodOrder?.trackingCode}`}
+            </span>
           </div>
         }
       >
         <div className="space-y-3 py-2 text-xs">
           <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-200">
             <div className="flex justify-between mb-1">
-              <span className="text-gray-500">Người nhận hàng:</span>
-              <span className="font-bold text-gray-800">{viewPodOrder?.podReceiverName || viewPodOrder?.receiverName}</span>
+              <span className="text-gray-500">
+                {viewPodOrder?.currentStatus === 'RETURNED' ? 'Đại diện Shop nhận hàng hoàn:' : 'Người nhận hàng:'}
+              </span>
+              <span className="font-bold text-gray-800">
+                {viewPodOrder?.podReceiverName || (viewPodOrder?.currentStatus === 'RETURNED' ? viewPodOrder?.senderName : viewPodOrder?.receiverName)}
+              </span>
             </div>
-            <div className="flex justify-between mb-1">
-              <span className="text-gray-500">Hình thức thanh toán:</span>
-              <span className="font-bold text-blue-700">{viewPodOrder?.paymentMethod || 'Tiền mặt (CASH)'}</span>
-            </div>
+            {viewPodOrder?.currentStatus !== 'RETURNED' && (
+              <div className="flex justify-between mb-1">
+                <span className="text-gray-500">Hình thức thanh toán:</span>
+                <span className="font-bold text-blue-700">{viewPodOrder?.paymentMethod || 'Tiền mặt (CASH)'}</span>
+              </div>
+            )}
             {viewPodOrder?.podLatitude && (
               <div className="flex justify-between">
-                <span className="text-gray-500">Tọa độ GPS POD:</span>
+                <span className="text-gray-500">Tọa độ GPS hiện trường:</span>
                 <span className="font-mono font-bold text-green-700">
                   {viewPodOrder.podLatitude.toFixed(6)}, {viewPodOrder.podLongitude?.toFixed(6)}
                 </span>
@@ -1303,7 +1393,11 @@ export const ShipperPortalPage: React.FC = () => {
             <div>
               <div className="font-bold text-gray-700 mb-1 flex items-center space-x-1">
                 <Camera size={13} className="text-green-600" />
-                <span>Ảnh hiện trường đóng dấu Watermark GPS:</span>
+                <span>
+                  {viewPodOrder?.currentStatus === 'RETURNED'
+                    ? 'Ảnh chụp hiện trường bàn giao hàng hoàn cho Shop (Watermark):'
+                    : 'Ảnh hiện trường đóng dấu Watermark GPS:'}
+                </span>
               </div>
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 <img

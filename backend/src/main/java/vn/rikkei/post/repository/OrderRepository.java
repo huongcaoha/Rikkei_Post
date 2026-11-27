@@ -25,6 +25,25 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT o FROM Order o WHERE (o.senderProvinceId = :provId OR o.receiverProvinceId = :provId) AND (:status IS NULL OR :status = 'ALL' OR o.currentStatus = :status)")
     Page<Order> findByBranchProvinceAndStatus(@Param("provId") Integer provId, @Param("status") String status, Pageable pageable);
 
+    @Query("SELECT o FROM Order o WHERE " +
+           "(o.assignedPostOfficeId = :poId " +
+           " OR (:poKeyword <> '' AND (LOWER(COALESCE(o.receiverWardName, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')) " +
+           "     OR LOWER(COALESCE(o.receiverAddress, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')) " +
+           "     OR LOWER(COALESCE(o.senderWardName, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')) " +
+           "     OR LOWER(COALESCE(o.senderAddress, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')))) " +
+           " OR o.trackingCode IN (SELECT DISTINCT otl.trackingCode FROM OrderTrackingLog otl WHERE otl.locationId = :poId)) " +
+           "AND (:status IS NULL OR :status = 'ALL' OR o.currentStatus = :status)")
+    Page<Order> findByPostOfficeScope(@Param("poId") Long poId, @Param("poKeyword") String poKeyword, @Param("status") String status, Pageable pageable);
+
+    @Query("SELECT o FROM Order o WHERE " +
+           "(o.assignedPostOfficeId = :poId " +
+           " OR (:poKeyword <> '' AND (LOWER(COALESCE(o.receiverWardName, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')) " +
+           "     OR LOWER(COALESCE(o.receiverAddress, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')) " +
+           "     OR LOWER(COALESCE(o.senderWardName, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')) " +
+           "     OR LOWER(COALESCE(o.senderAddress, '')) LIKE LOWER(CONCAT('%', :poKeyword, '%')))) " +
+           " OR o.trackingCode IN (SELECT DISTINCT otl.trackingCode FROM OrderTrackingLog otl WHERE otl.locationId = :poId))")
+    java.util.List<Order> findByPostOfficeScopeList(@Param("poId") Long poId, @Param("poKeyword") String poKeyword);
+
     java.util.List<Order> findByAssignedShipperId(Long shipperId);
     java.util.List<Order> findByAssignedShipperIdAndCurrentStatusIn(Long shipperId, java.util.List<String> statuses);
     java.util.List<Order> findByAssignedPostOfficeId(Long postOfficeId);

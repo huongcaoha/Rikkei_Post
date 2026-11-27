@@ -19,12 +19,14 @@ import { Order } from '../types';
 interface ContinuousScannerModalProps {
   open: boolean;
   onClose: () => void;
-  defaultMode?: 'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN';
+  defaultMode?: 'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN' | 'OUTBOUND_RETURN';
   canInbound?: boolean;
   canPickup?: boolean;
   canDelivery?: boolean;
   canReturn?: boolean;
+  canOutboundReturn?: boolean;
   onOrderUpdated?: () => void;
+  onOpenReturnProof?: (order: Order) => void;
 }
 
 interface PopupFeedback {
@@ -33,6 +35,7 @@ interface PopupFeedback {
   message: string;
   routingCode?: string;
   chuteGate?: string;
+  order?: Order;
 }
 
 const getChuteGate = (routingCode?: string, receiverProvinceId?: number): string => {
@@ -57,9 +60,11 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   canPickup = true,
   canDelivery = true,
   canReturn = false,
+  canOutboundReturn = true,
   onOrderUpdated,
+  onOpenReturnProof,
 }) => {
-  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN'>(defaultMode);
+  const [scanMode, setScanMode] = useState<'PICKUP' | 'INBOUND' | 'DELIVERY' | 'RETURN' | 'OUTBOUND_RETURN'>(defaultMode);
   // Yêu cầu: Mặc định là quét mã bằng CAMERA
   const [inputMode, setInputMode] = useState<'CAMERA' | 'MANUAL'>('CAMERA');
   const [barcodeInput, setBarcodeInput] = useState<string>('');
@@ -77,6 +82,17 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   const isPopupOpenRef = useRef<boolean>(false);
   const isProcessingRef = useRef<boolean>(false);
 
+  // Dùng Ref để chống Stale Closure trong camera event callback (html5-qrcode chạy độc lập ngoài React cycle)
+  const scanModeRef = useRef(scanMode);
+  useEffect(() => {
+    scanModeRef.current = scanMode;
+  }, [scanMode]);
+
+  const returnReasonRef = useRef(returnReason);
+  useEffect(() => {
+    returnReasonRef.current = returnReason;
+  }, [returnReason]);
+
   // Đồng bộ ref trạng thái popup để chặn quét camera khi popup đang mở
   useEffect(() => {
     isPopupOpenRef.current = !!popupFeedback;
@@ -86,6 +102,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   useEffect(() => {
     if (open) {
       setScanMode(defaultMode);
+      scanModeRef.current = defaultMode;
       // Luôn đặt mặc định là CAMERA khi mở
       setInputMode('CAMERA');
       setBarcodeInput('');
@@ -113,11 +130,23 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
     };
   }, [open, inputMode]);
 
-  // Âm thanh Beep báo hiệu (Web Audio API)
+  // Âm thanh Beep báo hiệu (Tái sử dụng singleton AudioContext tránh tràn luồng âm thanh trên thiết bị di động)
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const playSound = (isSuccess: boolean) => {
     if (isMuted) return;
     try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) {
+          audioCtxRef.current = new AudioCtxClass();
+        }
+      }
+      const audioCtx = audioCtxRef.current;
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain);
@@ -282,6 +311,10 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       return;
     }
 
+    // Đọc chính xác chế độ quét và lý do từ Ref để không bao giờ bị Stale Closure
+    const activeScanMode = scanModeRef.current;
+    const activeReturnReason = returnReasonRef.current;
+
     setIsProcessing(true);
 
     try {
@@ -290,14 +323,17 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
       let routingCodeInfo: string | undefined;
       let chuteGateInfo: string | undefined;
 
-      if (scanMode === 'PICKUP') {
+      if (activeScanMode === 'PICKUP') {
         updatedOrder = await shipperApi.scanPickup(code);
         successMsg = `Đã lấy hàng thành công đơn [${code}] từ Shop!`;
-      } else if (scanMode === 'DELIVERY') {
+      } else if (activeScanMode === 'DELIVERY') {
         updatedOrder = await shipperApi.scanDelivery(code);
         successMsg = `Đã xuất kho lấy đơn [${code}] mang đi giao thành công!`;
-      } else if (scanMode === 'RETURN') {
-        updatedOrder = await shipperApi.scanReturn(code, returnReason);
+      } else if (activeScanMode === 'OUTBOUND_RETURN') {
+        updatedOrder = await shipperApi.scanOutboundReturn(code);
+        successMsg = `Đã xuất kho lấy đơn chuyển hoàn [${code}] đi trả cho Shop [${updatedOrder.senderName || 'Người gửi'}] thành công!`;
+      } else if (activeScanMode === 'RETURN') {
+        updatedOrder = await shipperApi.scanReturn(code, activeReturnReason);
         successMsg = `Đã quét thu hồi hoàn kho thành công đơn [${code}]!`;
       } else {
         updatedOrder = await shipperApi.scanInbound(code);
@@ -310,9 +346,10 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
 
       // Hiển thị Popup thành công kèm nút OK
       let successTitle = 'Nhập Kho Thành Công';
-      if (scanMode === 'PICKUP') successTitle = 'Lấy Hàng Thành Công';
-      else if (scanMode === 'DELIVERY') successTitle = 'Xuất Kho Đi Giao Thành Công';
-      else if (scanMode === 'RETURN') successTitle = 'Thu Hồi Hoàn Kho Thành Công';
+      if (activeScanMode === 'PICKUP') successTitle = 'Lấy Hàng Thành Công';
+      else if (activeScanMode === 'DELIVERY') successTitle = 'Xuất Kho Đi Giao Thành Công';
+      else if (activeScanMode === 'OUTBOUND_RETURN') successTitle = 'Xuất Kho Đi Trả Shop Thành Công';
+      else if (activeScanMode === 'RETURN') successTitle = 'Thu Hồi Hoàn Kho Thành Công';
 
       setPopupFeedback({
         type: 'SUCCESS',
@@ -320,6 +357,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
         message: successMsg,
         routingCode: routingCodeInfo,
         chuteGate: chuteGateInfo,
+        order: updatedOrder,
       });
 
       // Báo bên ngoài cập nhật lại danh sách đơn hàng
@@ -349,6 +387,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
 
   const getHeaderTitle = () => {
     if (scanMode === 'DELIVERY') return 'Quét Xuất Kho Lấy Đơn Đi Giao';
+    if (scanMode === 'OUTBOUND_RETURN') return 'Quét Xuất Kho Lấy Đơn Trả Shop';
     if (scanMode === 'PICKUP') return 'Quét Mã Lấy Hàng Tại Shop';
     if (scanMode === 'RETURN') return 'Quét Mã Thu Hồi Đơn Hoàn Về Kho';
     return 'Quét Mã Nhập Kho Bưu Cục';
@@ -356,6 +395,7 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
 
   const getHeaderColor = () => {
     if (scanMode === 'DELIVERY') return 'bg-blue-600';
+    if (scanMode === 'OUTBOUND_RETURN') return 'bg-amber-600';
     if (scanMode === 'PICKUP') return 'bg-amber-600';
     if (scanMode === 'RETURN') return 'bg-orange-600';
     return 'bg-red-600';
@@ -368,6 +408,9 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
   }
   if (canDelivery) {
     modeOptions.push({ label: 'Lấy đi giao', value: 'DELIVERY', icon: <Scan size={14} /> });
+  }
+  if (canOutboundReturn) {
+    modeOptions.push({ label: 'Lấy đơn trả Shop', value: 'OUTBOUND_RETURN', icon: <RotateCcw size={14} /> });
   }
   if (canInbound) {
     modeOptions.push({ label: 'Nhập kho', value: 'INBOUND', icon: <Building2 size={14} /> });
@@ -514,19 +557,37 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
                       </div>
                     )}
 
-                    <Button
-                      type="primary"
-                      size="middle"
-                      autoFocus
-                      onClick={dismissFeedback}
-                      className={`mt-1.5 min-w-[130px] h-8 rounded-lg font-bold text-xs shadow-md transition-all active:scale-95 ${
-                        popupFeedback.type === 'SUCCESS'
-                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                          : 'bg-amber-600 hover:bg-amber-700 text-white'
-                      }`}
-                    >
-                      OK (Tiếp tục quét)
-                    </Button>
+                    <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
+                      <Button
+                        type="primary"
+                        size="middle"
+                        autoFocus
+                        onClick={dismissFeedback}
+                        className={`min-w-[130px] h-8 rounded-lg font-bold text-xs shadow-md transition-all active:scale-95 ${
+                          popupFeedback.type === 'SUCCESS'
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            : 'bg-amber-600 hover:bg-amber-700 text-white'
+                        }`}
+                      >
+                        OK (Tiếp tục quét)
+                      </Button>
+
+                      {popupFeedback.order && onOpenReturnProof && (scanMode === 'OUTBOUND_RETURN' || scanModeRef.current === 'OUTBOUND_RETURN') && popupFeedback.type === 'SUCCESS' && (
+                        <Button
+                          size="middle"
+                          icon={<Camera size={14} />}
+                          onClick={() => {
+                            const ord = popupFeedback.order!;
+                            dismissFeedback();
+                            onClose();
+                            onOpenReturnProof(ord);
+                          }}
+                          className="h-8 rounded-lg font-bold text-xs bg-amber-600 hover:bg-amber-700 text-white shadow-md border-none flex items-center justify-center gap-1"
+                        >
+                          Chụp ảnh hoàn hàng ngay
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -571,7 +632,13 @@ export const ContinuousScannerModal: React.FC<ContinuousScannerModalProps> = ({
                 onClick={handleManualSubmit}
                 className="bg-red-600 hover:bg-red-700 h-11 rounded-xl font-bold shadow-xs text-sm"
               >
-                {scanMode === 'PICKUP' ? 'Xác nhận lấy hàng' : 'Xác nhận nhập kho'}
+                {scanMode === 'PICKUP'
+                  ? 'Xác nhận lấy hàng'
+                  : scanMode === 'OUTBOUND_RETURN'
+                  ? 'Xác nhận lấy đơn trả Shop'
+                  : scanMode === 'DELIVERY'
+                  ? 'Xác nhận xuất kho đi giao'
+                  : 'Xác nhận nhập kho'}
               </Button>
             </form>
           )}

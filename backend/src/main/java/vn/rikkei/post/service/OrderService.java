@@ -23,6 +23,7 @@ public interface OrderService {
     DashboardStatsResponse getDashboardStats(Long merchantId);
     DashboardStatsResponse getDashboardStats(CustomUserDetails currentUser, LocalDate startDate, LocalDate endDate);
     List<OrderTrackingLog> getOrderTimeline(String trackingCode);
+    java.util.Map<String, Object> getPublicTrackingData(String trackingCode);
     MerchantAddress getDefaultSenderAddress(Long merchantId);
     MerchantAddress saveDefaultSenderAddress(MerchantAddress request, Long merchantId);
 }

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { notification } from 'antd';
 import { webSocketService, OrderEvent } from '../services/websocket';
 import { useAuth } from '../context/AuthContext';
@@ -15,12 +15,22 @@ export function useOrderWebSocket(options: UseOrderWebSocketOptions = {}) {
   const { user } = useAuth();
   const { onEvent, showNotification = true, topic, trackingCode, autoSubscribeUserScope = true } = options;
 
+  const onEventRef = useRef(onEvent);
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
+
+  const showNotificationRef = useRef(showNotification);
+  useEffect(() => {
+    showNotificationRef.current = showNotification;
+  }, [showNotification]);
+
   useEffect(() => {
     const unsubscribes: (() => void)[] = [];
 
     const handleEvent = (event: OrderEvent) => {
       // 1. Hiển thị thông báo Toast nếu bật
-      if (showNotification) {
+      if (showNotificationRef.current) {
         const isMasterBag =
           event.type?.startsWith('MASTER_BAG_') ||
           event.type?.startsWith('BAG_') ||
@@ -87,8 +97,8 @@ export function useOrderWebSocket(options: UseOrderWebSocketOptions = {}) {
       }
 
       // 2. Kích hoạt callback nếu có
-      if (onEvent) {
-        onEvent(event);
+      if (onEventRef.current) {
+        onEventRef.current(event);
       }
     };
 

@@ -53,6 +53,14 @@ public class ShipperServiceImpl implements ShipperService {
     private final ShipperCashSubmissionRepository cashSubmissionRepository;
     private final PayOS payOS;
     private final vn.rikkei.post.service.RedisService redisService;
+    private final Map<Long, String> warehouseNameCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String getWarehouseName(Long warehouseId) {
+        if (warehouseId == null) return null;
+        return warehouseNameCache.computeIfAbsent(warehouseId, id ->
+                warehouseRepository.findById(id).map(Warehouse::getName).orElse(null)
+        );
+    }
 
     private Order saveOrderAndEvictCache(Order order) {
         Order saved = orderRepository.save(order);
@@ -238,6 +246,25 @@ public class ShipperServiceImpl implements ShipperService {
         return summary;
     }
 
+    private String extractPostOfficeKeyword(String poName) {
+        if (poName != null) {
+            String lower = poName.toLowerCase();
+            if (lower.contains("bến thành")) return "Bến Thành";
+            if (lower.contains("cầu giấy")) return "Cầu Giấy";
+            if (lower.contains("hai bà trưng")) return "Hai Bà Trưng";
+            if (lower.contains("hoài đức")) return "Hoài Đức";
+            if (lower.contains("tân bình")) return "Tân Bình";
+            if (lower.contains("hải châu")) return "Hải Châu";
+            if (lower.contains("ninh kiều")) return "Ninh Kiều";
+            if (lower.contains("the pride")) return "The Pride";
+            if (lower.contains("thanh xuân")) return "Thanh Xuân";
+            if (lower.contains("hoàng mai")) return "Hoàng Mai";
+            String cleaned = poName.replaceAll("(?i)^(bưu cục|kho|hub|trung tâm khai thác)\\s*", "").trim();
+            if (!cleaned.isBlank()) return cleaned;
+        }
+        return "";
+    }
+
     private List<Order> getOrdersByScopeAndShipper(User currentUser, Long filterShipperId) {
         if (currentUser == null) {
             return filterShipperId != null ? orderRepository.findByAssignedShipperId(filterShipperId)
@@ -269,7 +296,9 @@ public class ShipperServiceImpl implements ShipperService {
         }
 
         if (isPostOfficeManager && currentUser.getAssignedPostOfficeId() != null) {
-            return orderRepository.findByAssignedPostOfficeId(currentUser.getAssignedPostOfficeId());
+            Warehouse po = warehouseRepository.findById(currentUser.getAssignedPostOfficeId()).orElse(null);
+            String keyword = po != null ? extractPostOfficeKeyword(po.getName()) : "";
+            return orderRepository.findByPostOfficeScopeList(currentUser.getAssignedPostOfficeId(), keyword);
         }
 
         if (isShipper) {
@@ -278,11 +307,14 @@ public class ShipperServiceImpl implements ShipperService {
             List<Order> result = new ArrayList<>(assigned);
 
             if (currentUser.getAssignedPostOfficeId() != null) {
-                List<Order> warehouseOrders = orderRepository.findByAssignedPostOfficeId(currentUser.getAssignedPostOfficeId());
+                Warehouse po = warehouseRepository.findById(currentUser.getAssignedPostOfficeId()).orElse(null);
+                String keyword = po != null ? extractPostOfficeKeyword(po.getName()) : "";
+                List<Order> warehouseOrders = orderRepository.findByPostOfficeScopeList(currentUser.getAssignedPostOfficeId(), keyword);
                 for (Order wo : warehouseOrders) {
                     if (!orderIds.contains(wo.getId())) {
                         String st = wo.getCurrentStatus();
-                        if (("AT_SORTING_HUB".equalsIgnoreCase(st) || "IN_WAREHOUSE".equalsIgnoreCase(st) || "DELIVERY_FAILED".equalsIgnoreCase(st))
+                        if (("AT_SORTING_HUB".equalsIgnoreCase(st) || "IN_WAREHOUSE".equalsIgnoreCase(st)
+                                || "DELIVERY_FAILED".equalsIgnoreCase(st) || "RETURNING".equalsIgnoreCase(st))
                                 && (wo.getAssignedShipperId() == null || wo.getAssignedShipperId().equals(currentUser.getId()))) {
                             result.add(wo);
                             orderIds.add(wo.getId());
@@ -530,8 +562,8 @@ public class ShipperServiceImpl implements ShipperService {
                 }
             }
             case "RETURNING" -> {
-                // Từ RETURNING chỉ có thể sang RETURNED (đã trả hàng về shop)
-                if ("RETURNED".equals(target)) {
+                // Từ RETURNING có thể sang: RETURNED (đã trả hàng về shop), RETURNING (bưu tá xuất kho đi trả), AT_SORTING_HUB / IN_TRANSIT (trung chuyển hoàn)
+                if ("RETURNED".equals(target) || "RETURNING".equals(target) || "AT_SORTING_HUB".equals(target) || "IN_TRANSIT".equals(target)) {
                     isValidTransition = true;
                 }
             }
@@ -563,18 +595,16 @@ public class ShipperServiceImpl implements ShipperService {
                 }
             }
 
-            // Nhập kho bưu cục (AT_SORTING_HUB) chỉ dành cho nhân viên kho / quản lý kho /
-            // admin
+            // Nhập kho bưu cục (AT_SORTING_HUB) chỉ dành cho nhân viên kho / quản lý kho / admin
             if ("AT_SORTING_HUB".equals(target) && !isWarehouseStaff && !isAdmin) {
                 throw new org.springframework.security.access.AccessDeniedException(
                         "Chỉ nhân viên kho hoặc quản lý bưu cục mới có quyền quét xác nhận nhập kho!");
             }
 
-            // Bưu tá (chỉ có ROLE_SHIPPER) được thao tác: PICKED_UP, DELIVERING, DELIVERED,
-            // DELIVERY_FAILED, RETURNING (khi phát thất bại quá số lần)
+            // Bưu tá (ROLE_SHIPPER) được thao tác: PICKED_UP, DELIVERING, DELIVERED, DELIVERY_FAILED, RETURNING, RETURNED
             if (isShipper && !isWarehouseStaff && !isAdmin) {
                 List<String> shipperAllowedTargets = List.of("PICKED_UP", "DELIVERING", "DELIVERED", "DELIVERY_FAILED",
-                        "RETURNING");
+                        "RETURNING", "RETURNED");
                 if (!shipperAllowedTargets.contains(target)) {
                     throw new org.springframework.security.access.AccessDeniedException(
                             "Bưu tá không có quyền cập nhật trạng thái [" + target + "]!");
@@ -728,9 +758,11 @@ public class ShipperServiceImpl implements ShipperService {
 
         String previousStatus = order.getCurrentStatus() != null ? order.getCurrentStatus().toUpperCase() : "";
         int attempts = order.getDeliveryAttempts() != null ? order.getDeliveryAttempts() : 0;
-        boolean isFailedRedelivery = "DELIVERY_FAILED".equals(previousStatus) || (attempts > 0 && "DELIVERING".equals(previousStatus));
+        boolean isReturning = "RETURNING".equalsIgnoreCase(previousStatus) || attempts >= 3;
+        boolean isFailedRedelivery = !isReturning && ("DELIVERY_FAILED".equals(previousStatus) || (attempts > 0 && "DELIVERING".equals(previousStatus)));
 
-        order.setCurrentStatus("AT_SORTING_HUB");
+        String newStatus = isReturning ? "RETURNING" : "AT_SORTING_HUB";
+        order.setCurrentStatus(newStatus);
         if (wh != null) {
             order.setAssignedPostOfficeId(wh.getId());
         }
@@ -741,7 +773,16 @@ public class ShipperServiceImpl implements ShipperService {
         Order saved = saveOrderAndEvictCache(order);
 
         String desc;
-        if (isFailedRedelivery) {
+        if (isReturning) {
+            desc = String.format(
+                    "Đơn hàng chuyển hoàn đã được mang về tiếp nhận nhập kho tại %s vào lúc %s. Người thực hiện: %s (%s - SĐT: %s)%s. Kiện hàng lưu kho an toàn, kích hoạt quy trình chuyển hoàn và sẵn sàng điều phối hoàn trả về cho Shop/Người gửi.",
+                    whName,
+                    timeStr,
+                    actor.getFullName(),
+                    roleTitle,
+                    actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
+                    shipperHandover);
+        } else if (isFailedRedelivery) {
             desc = String.format(
                     "Đơn hàng giao không thành công (Lần phát %d/3) đã được mang về bưu cục %s vào lúc %s. Nhân viên kho %s (%s - SĐT: %s) đã quét tiếp nhận nhập kho lưu trữ an toàn, sẵn sàng để bưu tá xuất kho đi phát lại vào hôm sau%s.",
                     attempts > 0 ? attempts : 1,
@@ -764,7 +805,7 @@ public class ShipperServiceImpl implements ShipperService {
 
         OrderTrackingLog logEntry = OrderTrackingLog.builder()
                 .trackingCode(cleanCode)
-                .status("AT_SORTING_HUB")
+                .status(newStatus)
                 .locationType("POST_OFFICE")
                 .locationId(targetWhId)
                 .locationName("Kho bưu cục: " + whName)
@@ -935,18 +976,55 @@ public class ShipperServiceImpl implements ShipperService {
             }
             case "RETURNING" -> {
                 locationType = "POST_OFFICE";
-                locationName = "Trung tâm khai thác / Bưu cục hoàn hàng";
-                String reason = (note != null && !note.isBlank()) ? note.trim()
-                        : "Giao thất bại nhiều lần hoặc người nhận từ chối nhận hàng";
+                Long whId = actor.getAssignedPostOfficeId() != null ? actor.getAssignedPostOfficeId() : order.getAssignedPostOfficeId();
+                Warehouse wh = whId != null ? warehouseRepository.findById(whId).orElse(null) : null;
+                String whName = wh != null ? wh.getName() : "Kho bưu cục";
+                locationName = "Kho bưu cục: " + whName;
+                boolean isShipperActor = actor.getRoles().stream().anyMatch(r -> "ROLE_SHIPPER".equalsIgnoreCase(r.getRoleName()));
+                if (isShipperActor) {
+                    order.setAssignedShipperId(actor.getId());
+                    order.setAssignedShipperName(actor.getFullName());
+                    order.setAssignedShipperPhone(actor.getPhoneNumber());
+                    desc = String.format(
+                            "Bưu tá %s (SĐT: %s) đã xuất kho bưu cục lấy kiện hàng hoàn và đang trên đường đi trả hàng cho Shop/Người gửi (%s) tại %s vào lúc %s.",
+                            actor.getFullName(),
+                            actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
+                            order.getSenderName() != null ? order.getSenderName() : "Shop",
+                            order.getSenderAddress() != null ? order.getSenderAddress() : "Địa chỉ Shop",
+                            timeStr);
+                    actorDisplayName = actor.getFullName() + " (Bưu tá đi trả hàng hoàn)";
+                    deviceInfo = "SHIPPER_MOBILE_SCANNER";
+                } else {
+                    String reason = (note != null && !note.isBlank()) ? note.trim()
+                            : "Kiện hàng lưu kho bưu cục an toàn chờ xử lý hoàn trả về cho Shop/Người gửi";
+                    desc = String.format(
+                            "Kho bưu cục %s đã tiếp nhận lưu kho kiện hàng hoàn vào lúc %s bởi %s (%s). Ghi chú: %s.",
+                            whName,
+                            timeStr,
+                            actor.getFullName(),
+                            roleTitle,
+                            reason);
+                    actorDisplayName = actor.getFullName() + " (" + roleTitle + ")";
+                    deviceInfo = "POST_OFFICE_PORTAL";
+                }
+            }
+            case "RETURNED" -> {
+                locationType = "SENDER_ADDRESS";
+                locationName = "Địa chỉ người gửi / Shop: " + (order.getSenderAddress() != null ? order.getSenderAddress() : "");
+                String shipperName = actor.getFullName();
+                String noteInfo = (note != null && !note.isBlank()) ? ". Ghi chú trả hàng: " + note.trim() : "";
                 desc = String.format(
-                        "Đơn hàng đang trong quá trình chuyển hoàn về cho Shop/Người gửi (%s) vào lúc %s. Người xác nhận chuyển hoàn: %s (%s). Lý do: %s.",
-                        order.getSenderName() != null ? order.getSenderName() : "Shop",
-                        timeStr,
-                        actor.getFullName(),
+                        "Bưu tá %s (%s - SĐT: %s) đã hoàn trả kiện hàng tận tay cho Shop/Người gửi (%s) tại địa chỉ %s vào lúc %s thành công%s. Kết thúc toàn trình đơn hàng hoàn.",
+                        shipperName,
                         roleTitle,
-                        reason);
-                actorDisplayName = actor.getFullName() + " (" + roleTitle + ")";
-                deviceInfo = "POST_OFFICE_PORTAL";
+                        actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
+                        order.getSenderName() != null ? order.getSenderName() : "Shop",
+                        order.getSenderAddress() != null ? order.getSenderAddress() : "Địa chỉ Shop",
+                        timeStr,
+                        noteInfo);
+                actorDisplayName = shipperName + " (" + roleTitle + " - Hoàn hàng thành công)";
+                deviceInfo = "SHIPPER_MOBILE_APP";
+                order.setDeliveredAt(now);
             }
             default -> {
                 locationType = "DELIVERY_POINT";
@@ -1571,6 +1649,177 @@ public class ShipperServiceImpl implements ShipperService {
     }
 
     @Override
+    @Transactional
+    public OrderResponse scanOutboundForReturn(Long shipperId, String trackingCode) {
+        final String cleanCode = trackingCode != null ? trackingCode.trim().toUpperCase() : "";
+        Order order = orderRepository.findByTrackingCode(cleanCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bưu gửi với mã vận đơn: " + cleanCode));
+
+        User shipper = userRepository.findById(shipperId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin bưu tá!"));
+
+        String currentStatus = order.getCurrentStatus() != null ? order.getCurrentStatus().toUpperCase() : "";
+
+        if ("RETURNED".equalsIgnoreCase(currentStatus)) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ ĐƯỢC HOÀN TRẢ VỀ SHOP THÀNH CÔNG rồi! Không thể xuất kho đi trả lại.");
+        }
+        if ("DELIVERED".equalsIgnoreCase(currentStatus)) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] ĐÃ GIAO THÀNH CÔNG cho người nhận rồi! Không thể chuyển hoàn.");
+        }
+
+        int attempts = order.getDeliveryAttempts() != null ? order.getDeliveryAttempts() : 0;
+        boolean isEligibleForReturn = "RETURNING".equalsIgnoreCase(currentStatus)
+                || (attempts >= 3)
+                || ("AT_SORTING_HUB".equalsIgnoreCase(currentStatus) && attempts > 0);
+
+        if (!isEligibleForReturn) {
+            throw new IllegalStateException(String.format(
+                    "Đơn hàng [%s] hiện đang ở trạng thái [%s] (chưa kích hoạt chuyển hoàn). Chỉ các đơn đã phát thất bại 3 lần hoặc đang chuyển hoàn mới được xuất kho trả Shop!",
+                    cleanCode, currentStatus));
+        }
+
+        order.setCurrentStatus("RETURNING");
+        order.setAssignedShipperId(shipper.getId());
+        order.setAssignedShipperName(shipper.getFullName());
+        order.setAssignedShipperPhone(shipper.getPhoneNumber());
+        Order saved = saveOrderAndEvictCache(order);
+
+        LocalDateTime now = LocalDateTime.now();
+        String timeStr = now.format(TIME_FORMATTER);
+
+        String desc = String.format(
+                "Bưu tá %s (SĐT: %s) đã quét xuất kho bưu cục lấy kiện hàng chuyển hoàn và đang trên đường mang đi trả cho Shop/Người gửi (%s) tại địa chỉ %s vào lúc %s.",
+                shipper.getFullName(),
+                shipper.getPhoneNumber() != null ? shipper.getPhoneNumber() : "N/A",
+                order.getSenderName() != null ? order.getSenderName() : "Shop",
+                order.getSenderAddress() != null ? order.getSenderAddress() : "Địa chỉ Shop",
+                timeStr);
+
+        String poName = "Bưu cục phát";
+        if (order.getAssignedPostOfficeId() != null) {
+            poName = warehouseRepository.findById(order.getAssignedPostOfficeId())
+                    .map(Warehouse::getName).orElse("Bưu cục phát");
+        }
+
+        OrderTrackingLog logEntry = OrderTrackingLog.builder()
+                .trackingCode(cleanCode)
+                .status("RETURNING")
+                .locationType("POST_OFFICE")
+                .locationId(order.getAssignedPostOfficeId() != null ? order.getAssignedPostOfficeId() : 1L)
+                .locationName("Kho bưu cục: " + poName)
+                .description(desc)
+                .actorId(shipperId)
+                .actorName(shipper.getFullName() + " (Bưu tá đi trả hàng Shop)")
+                .deviceInfo("SHIPPER_MOBILE_SCANNER")
+                .build();
+        trackingLogRepository.save(logEntry);
+
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, "RETURNING", shipper.getFullName(),
+                    "Bưu tá xuất kho lấy hàng đi hoàn trả cho Shop");
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo realtime WebSocket: {}", e.getMessage());
+        }
+
+        return res;
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse completeReturn(Long shipperId, CompleteReturnRequest request) {
+        if (request == null || request.getTrackingCode() == null) {
+            throw new IllegalArgumentException("Thông tin hoàn tất chuyển hoàn không hợp lệ!");
+        }
+
+        final String cleanCode = request.getTrackingCode().trim().toUpperCase();
+        Order order = orderRepository.findByTrackingCode(cleanCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + cleanCode));
+
+        User shipper = userRepository.findById(shipperId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin bưu tá!"));
+
+        // BẮT BUỘC: Yêu cầu shipper phải chụp ảnh lại để lưu làm bằng chứng hoàn hàng
+        String photo = request.getProofPhotoUrl();
+        if (photo == null || photo.trim().isEmpty()) {
+            throw new IllegalArgumentException("Bắt buộc phải chụp ảnh bằng chứng bàn giao hàng hoàn cho Shop/Người gửi để lưu trữ hồ sơ!");
+        }
+
+        String currentStatus = order.getCurrentStatus() != null ? order.getCurrentStatus().toUpperCase() : "";
+        if ("RETURNED".equalsIgnoreCase(currentStatus)) {
+            throw new IllegalStateException("Đơn hàng [" + cleanCode + "] đã được xác nhận hoàn hàng thành công trước đó rồi!");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        String timeStr = now.format(TIME_FORMATTER);
+
+        String receiverAtShop = request.getReceiverName() != null && !request.getReceiverName().isBlank()
+                ? request.getReceiverName().trim()
+                : (order.getSenderName() != null ? order.getSenderName() : "Chủ Shop / Người gửi");
+
+        order.setCurrentStatus("RETURNED");
+        order.setDeliveredAt(now);
+        order.setPodPhotoUrl(photo.trim()); // Lưu ảnh chụp bằng chứng hoàn hàng
+        order.setPodReceiverName(receiverAtShop);
+        if (request.getLatitude() != null) {
+            order.setPodLatitude(request.getLatitude());
+        }
+        if (request.getLongitude() != null) {
+            order.setPodLongitude(request.getLongitude());
+        }
+        if (request.getNotes() != null && !request.getNotes().isBlank()) {
+            order.setNotes(request.getNotes().trim());
+        }
+
+        Order saved = saveOrderAndEvictCache(order);
+
+        // Cập nhật ShipperAssignment nếu có
+        assignmentRepository.findByTrackingCode(cleanCode).ifPresent(a -> {
+            a.setStatus("RETURNED");
+            a.setCompletedAt(now);
+            a.setPodPhotoUrl(photo.trim());
+            assignmentRepository.save(a);
+        });
+
+        String noteInfo = (request.getNotes() != null && !request.getNotes().isBlank())
+                ? ". Ghi chú: " + request.getNotes().trim()
+                : "";
+
+        String desc = String.format(
+                "Bưu tá %s (SĐT: %s) đã hoàn trả kiện hàng tận tay cho người gửi (%s) tại địa chỉ %s vào lúc %s thành công. Người nhận tại Shop: %s. Đã lưu ảnh chụp bằng chứng hoàn hàng hiện trường.%s",
+                shipper.getFullName(),
+                shipper.getPhoneNumber() != null ? shipper.getPhoneNumber() : "N/A",
+                order.getSenderName() != null ? order.getSenderName() : "Shop",
+                order.getSenderAddress() != null ? order.getSenderAddress() : "Địa chỉ Shop",
+                timeStr,
+                receiverAtShop,
+                noteInfo);
+
+        OrderTrackingLog logEntry = OrderTrackingLog.builder()
+                .trackingCode(cleanCode)
+                .status("RETURNED")
+                .locationType("SENDER_ADDRESS")
+                .locationId(order.getAssignedPostOfficeId() != null ? order.getAssignedPostOfficeId() : 1L)
+                .locationName("Địa chỉ người gửi / Shop: " + (order.getSenderAddress() != null ? order.getSenderAddress() : ""))
+                .description(desc)
+                .actorId(shipperId)
+                .actorName(shipper.getFullName() + " (Bưu tá - Đã hoàn trả Shop)")
+                .deviceInfo("SHIPPER_MOBILE_APP")
+                .build();
+        trackingLogRepository.save(logEntry);
+
+        OrderResponse res = mapToResponse(saved);
+        try {
+            webSocketNotificationService.notifyOrderStatusUpdated(res, "RETURNED", shipper.getFullName(),
+                    "Đã hoàn trả hàng về Shop thành công");
+        } catch (Exception e) {
+            log.warn("Lỗi gửi thông báo realtime WebSocket: {}", e.getMessage());
+        }
+
+        return res;
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public CashReconciliationResponse getCashReconciliation(Long userId, Long filterShipperId, LocalDate date) {
         LocalDate targetDate = date != null ? date : LocalDate.now();
@@ -2074,11 +2323,7 @@ public class ShipperServiceImpl implements ShipperService {
         if (remaining.compareTo(BigDecimal.ZERO) < 0)
             remaining = BigDecimal.ZERO;
 
-        String poName = null;
-        if (order.getAssignedPostOfficeId() != null) {
-            poName = warehouseRepository.findById(order.getAssignedPostOfficeId())
-                    .map(Warehouse::getName).orElse(null);
-        }
+        String poName = getWarehouseName(order.getAssignedPostOfficeId());
 
         return OrderResponse.builder()
                 .id(order.getId())
@@ -2135,6 +2380,8 @@ public class ShipperServiceImpl implements ShipperService {
                 .settledCashAmount(settled)
                 .remainingCashAmount(remaining)
                 .cashSubmissionCode(order.getCashSubmissionCode())
+                .pickupCompletedAt(order.getPickupCompletedAt())
+                .deliveredAt(order.getDeliveredAt())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .build();
