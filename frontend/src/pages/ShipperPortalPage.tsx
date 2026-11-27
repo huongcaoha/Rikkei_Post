@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Input, Modal, Tabs, Tag, message, Row, Col, Space, DatePicker, Select } from 'antd';
+import { Card, Button, Input, Modal, Tabs, Tag, message, Row, Col, Space, DatePicker, Select, Tooltip } from 'antd';
 import {
   Scan,
   PackageCheck,
@@ -875,11 +875,29 @@ export const ShipperPortalPage: React.FC = () => {
                     </Button>
                   )}
 
-                  {/* Mục 3: Đơn đã giao cho kho -> Đã loại bỏ nút lấy đi giao thủ công, chuyển sang quét mã code */}
+                  {/* Mục 3: Đơn đã giao cho kho -> Bưu tá có thể quét mã hoặc bấm xuất kho đi giao */}
                   {task.currentStatus === 'AT_SORTING_HUB' && (
-                    <div className="w-full text-center py-2.5 px-3 bg-cyan-50 text-cyan-800 font-bold rounded-xl border border-cyan-200 text-xs flex items-center justify-center space-x-1.5">
-                      <Scan size={14} className="text-cyan-700" />
-                      <span>Đã lưu kho - Quét mã đi giao</span>
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <div className="w-full text-center py-2 px-3 bg-cyan-50 text-cyan-800 font-bold rounded-xl border border-cyan-200 text-xs flex items-center justify-center space-x-1.5">
+                        <Scan size={14} className="text-cyan-700" />
+                        <span>{task.deliveryAttempts && task.deliveryAttempts > 0 ? `Lưu kho (Chờ phát lại lần ${(task.deliveryAttempts || 0) + 1}/3)` : 'Đã lưu kho bưu cục'}</span>
+                      </div>
+                      <Button
+                        type="primary"
+                        icon={<Truck size={14} />}
+                        onClick={async () => {
+                          try {
+                            await shipperApi.scanDelivery(task.trackingCode);
+                            message.success(`Đã xuất kho đơn [${task.trackingCode}] mang đi phát!`);
+                            loadTasksAndSummary();
+                          } catch (err: any) {
+                            message.error(err.response?.data?.message || 'Lỗi xuất kho đi giao!');
+                          }
+                        }}
+                        className="bg-amber-500 hover:bg-amber-600 font-bold h-8.5 w-full rounded-xl text-xs shadow-xs"
+                      >
+                        {task.deliveryAttempts && task.deliveryAttempts > 0 ? `Xuất kho phát lại (Lần ${(task.deliveryAttempts || 0) + 1}/3)` : 'Xuất kho đi giao'}
+                      </Button>
                     </div>
                   )}
 
@@ -921,18 +939,53 @@ export const ShipperPortalPage: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Mục 6: Đơn không giao được -> Bưu tá có thể bấm đi phát lại hoặc Quản lý kho thu hồi hoàn về */}
+                  {/* Mục 6: Đơn không giao được -> Bưu tá mang về kho để nhân viên kho quét nhập lại, hoặc chuyển hoàn nếu đủ 3 lần */}
                   {task.currentStatus === 'DELIVERY_FAILED' && (
                     <div className="flex flex-col gap-1.5 w-full">
+                      <div className="text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-1.5 text-center">
+                        Phát thất bại: {task.deliveryAttempts || 1}/3 lần - Cần mang về kho
+                      </div>
                       {canInboundWarehouse && (
                         <Button
                           type="primary"
-                          icon={<RotateCcw size={15} />}
-                          onClick={() => openReturnModal(task.trackingCode)}
-                          className="bg-orange-600 hover:bg-orange-700 font-bold h-9 w-full rounded-xl shadow-xs text-xs"
+                          icon={<Building2 size={15} />}
+                          onClick={async () => {
+                            try {
+                              await shipperApi.scanInbound(task.trackingCode);
+                              message.success(`Đã quét tiếp nhận nhập kho bưu cục lưu trữ đơn [${task.trackingCode}], sẵn sàng để bưu tá xuất kho đi phát lại!`);
+                              loadTasksAndSummary();
+                            } catch (err: any) {
+                              message.error(err.response?.data?.message || 'Lỗi nhập kho!');
+                            }
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 font-bold h-9 w-full rounded-xl shadow-xs text-xs"
                         >
-                          Thu hồi hoàn về kho
+                          Quét nhập lại vào kho
                         </Button>
+                      )}
+                      {canInboundWarehouse && (
+                        (task.deliveryAttempts || 0) >= 3 ? (
+                          <Button
+                            type="primary"
+                            icon={<RotateCcw size={15} />}
+                            onClick={() => openReturnModal(task.trackingCode)}
+                            className="bg-orange-600 hover:bg-orange-700 font-bold h-9 w-full rounded-xl shadow-xs text-xs"
+                          >
+                            Chuyển hoàn về Shop (Đủ 3 lần)
+                          </Button>
+                        ) : (
+                          <Tooltip title={`Chỉ được phép chuyển hoàn khi giao thất bại đủ 3 lần (Hiện tại: ${task.deliveryAttempts || 1}/3 lần). Vui lòng quét nhập kho bưu cục để phát lại vào hôm sau.`}>
+                            <span>
+                              <Button
+                                disabled
+                                icon={<RotateCcw size={15} />}
+                                className="bg-gray-100 text-gray-400 border-gray-200 font-bold h-9 w-full rounded-xl text-xs cursor-not-allowed"
+                              >
+                                Chuyển hoàn về Shop ({task.deliveryAttempts || 1}/3 lần)
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        )
                       )}
                       <Button
                         icon={<RotateCcw size={15} />}

@@ -14,7 +14,8 @@ import {
   Alert,
   Modal,
   Typography,
-  Badge
+  Badge,
+  DatePicker
 } from 'antd';
 import {
   CarOutlined,
@@ -28,13 +29,16 @@ import {
   CameraOutlined,
   SoundOutlined,
   MutedOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  PrinterOutlined
 } from '@ant-design/icons';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { wmsApi } from '../api/wms';
 import { MasterBag } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
+import { MasterBagThermalLabel } from '../components/MasterBagThermalLabel';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
@@ -51,6 +55,12 @@ export const TruckDriverPortalPage: React.FC = () => {
   // Chi tiết bao tải
   const [selectedBag, setSelectedBag] = useState<MasterBag | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+
+  // Bộ lọc theo khoảng ngày tạo
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
+
+  // In tem dán bao tải
+  const [printBag, setPrintBag] = useState<MasterBag | null>(null);
 
   // State Camera quét mã trực tiếp bằng điện thoại
   const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
@@ -273,7 +283,9 @@ export const TruckDriverPortalPage: React.FC = () => {
       if (
         event.type === 'BAG_ASSIGNED_TO_DRIVER' ||
         event.type === 'MASTER_BAG_IN_TRANSIT' ||
-        event.type === 'MASTER_BAG_ARRIVED_AT_HUB'
+        event.type === 'MASTER_BAG_ARRIVED_AT_HUB' ||
+        event.type === 'DISPATCH_BAG_RECEIVED' ||
+        event.type === 'DISPATCH_STATUS_UPDATED'
       ) {
         fetchDriverTasks();
       }
@@ -314,9 +326,16 @@ export const TruckDriverPortalPage: React.FC = () => {
   };
 
   const filteredTasks = tasks.filter(t => {
-    if (activeTab === 'WAITING') return ['SEALED', 'ASSIGNED_TO_DRIVER'].includes(t.status);
-    if (activeTab === 'TRANSIT') return t.status === 'IN_TRANSIT';
-    if (activeTab === 'COMPLETED') return ['ARRIVED_AT_HUB', 'UNSEALED', 'RECEIVED'].includes(t.status);
+    if (activeTab === 'WAITING' && !['SEALED', 'ASSIGNED_TO_DRIVER'].includes(t.status)) return false;
+    if (activeTab === 'TRANSIT' && t.status !== 'IN_TRANSIT') return false;
+    if (activeTab === 'COMPLETED' && !['ARRIVED_AT_HUB', 'UNSEALED', 'RECEIVED'].includes(t.status)) return false;
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      if (!t.createdAt) return false;
+      const created = dayjs(t.createdAt);
+      if (created.isBefore(dateRange[0].startOf('day')) || created.isAfter(dateRange[1].endOf('day'))) {
+        return false;
+      }
+    }
     return true;
   });
 
@@ -413,7 +432,17 @@ export const TruckDriverPortalPage: React.FC = () => {
           )}
 
           <Button size="middle" onClick={() => handleOpenDetail(r)}>
-            Xem kiện bên trong
+            Xem kiện
+          </Button>
+
+          <Button
+            size="middle"
+            icon={<PrinterOutlined />}
+            onClick={() => setPrintBag(r)}
+            className="text-gray-700 hover:text-black font-semibold"
+            title="In tem nhãn dán bao tải A6"
+          >
+            In tem A6
           </Button>
         </Space>
       )
@@ -554,14 +583,140 @@ export const TruckDriverPortalPage: React.FC = () => {
           ]}
         />
 
-        <Table
-          columns={columns}
-          dataSource={filteredTasks}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 8 }}
-          bordered
-        />
+        {/* Thanh lọc theo thời gian tạo */}
+        <div className="flex flex-wrap items-center justify-between gap-3 my-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <DatePicker.RangePicker
+              format="DD/MM/YYYY"
+              placeholder={['Từ ngày tạo', 'Đến ngày tạo']}
+              value={dateRange}
+              onChange={(dates) => setDateRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null] | null)}
+              style={{ width: 260 }}
+              allowClear
+            />
+            {dateRange && (
+              <Button size="small" type="link" onClick={() => setDateRange(null)} className="text-xs text-blue-600">
+                Xóa lọc ngày
+              </Button>
+            )}
+          </div>
+          <Text type="secondary" className="text-xs">
+            Hiển thị {filteredTasks.length} / {tasks.length} bao tải
+          </Text>
+        </div>
+
+        {/* Giao diện Desktop (Bảng đầy đủ) */}
+        <div className="hidden md:block">
+          <Table
+            columns={columns}
+            dataSource={filteredTasks}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 8 }}
+            scroll={{ x: 950 }}
+            bordered
+          />
+        </div>
+
+        {/* Giao diện Mobile Phone (Dạng thẻ chi tiết, không bị co ép hay tràn màn hình) */}
+        <div className="block md:hidden space-y-3">
+          {filteredTasks.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <InboxOutlined className="text-3xl mb-2 text-gray-300" />
+              <p className="text-sm mb-0">Không có bao tải nào phù hợp bộ lọc</p>
+            </div>
+          ) : (
+            filteredTasks.map((bag) => (
+              <Card
+                key={bag.id}
+                size="small"
+                className="rounded-xl shadow-xs border border-gray-200 hover:border-blue-300 transition-all bg-white"
+                bodyStyle={{ padding: '12px' }}
+              >
+                {/* Header thẻ: Mã bao tải & Trạng thái */}
+                <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2 mb-2">
+                  <div>
+                    <div className="font-mono font-bold text-blue-700 text-base">{bag.bagCode}</div>
+                    {bag.sealNumber && (
+                      <Tag color="volcano" className="font-mono text-2xs mt-0.5">
+                        Seal: {bag.sealNumber}
+                      </Tag>
+                    )}
+                  </div>
+                  <div>{renderStatusTag(bag.status)}</div>
+                </div>
+
+                {/* Tuyến đường vận chuyển */}
+                <div className="bg-blue-50/50 p-2.5 rounded-lg text-xs space-y-1.5 mb-2 border border-blue-100/60">
+                  <div className="flex items-start gap-1.5 text-gray-700">
+                    <EnvironmentOutlined className="text-gray-400 shrink-0 mt-0.5" />
+                    <span className="font-medium text-gray-500 shrink-0">Từ:</span>
+                    <span className="font-semibold text-gray-800">{bag.originWarehouseName}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5 text-gray-700">
+                    <ArrowRightOutlined className="text-red-500 shrink-0 mt-0.5" />
+                    <span className="font-medium text-red-500 shrink-0">Đến:</span>
+                    <span className="font-bold text-red-600">{bag.destWarehouseName}</span>
+                  </div>
+                  {bag.assignedTruckPlate && (
+                    <div className="pt-1.5 border-t border-blue-100/80 flex items-center justify-between text-2xs text-gray-600">
+                      <span>Xe tải chuyên chở:</span>
+                      <Tag color="gold" className="font-bold text-xs m-0">
+                        {bag.assignedTruckPlate}
+                      </Tag>
+                    </div>
+                  )}
+                </div>
+
+                {/* Thông tin số kiện & tải trọng & thời gian tạo */}
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-3 px-1">
+                  <div>
+                    <span className="font-bold text-gray-900">{bag.totalItems} kiện</span>
+                    <span className="text-gray-400 mx-1.5">|</span>
+                    <span className="font-bold text-blue-700">{Number(bag.totalWeightKg).toFixed(2)} kg</span>
+                  </div>
+                  <div className="text-2xs text-gray-400 flex items-center gap-1">
+                    <ClockCircleOutlined />
+                    {bag.createdAt ? dayjs(bag.createdAt).format('HH:mm DD/MM') : '—'}
+                  </div>
+                </div>
+
+                {/* Nút tác nghiệp tài xế */}
+                <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                  {['SEALED', 'ASSIGNED_TO_DRIVER'].includes(bag.status) && (
+                    <Button
+                      type="primary"
+                      size="middle"
+                      icon={<CarOutlined />}
+                      onClick={() => handleScanTransit(bag.bagCode)}
+                      loading={scanning}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 font-bold text-xs h-9"
+                    >
+                      Quét nhận & Lên xe
+                    </Button>
+                  )}
+                  <Button
+                    size="middle"
+                    icon={<InboxOutlined />}
+                    onClick={() => handleOpenDetail(bag)}
+                    className="flex-1 text-xs h-9"
+                  >
+                    Xem {bag.totalItems} kiện
+                  </Button>
+                  <Button
+                    size="middle"
+                    icon={<PrinterOutlined />}
+                    onClick={() => setPrintBag(bag)}
+                    className="text-gray-700 hover:text-black text-xs h-9 px-2.5"
+                    title="In tem dán bao tải A6"
+                  >
+                    In tem A6
+                  </Button>
+                </div>
+              </Card>
+            ))
+          )}
+        </div>
       </Card>
 
       {/* Modal Chi tiết kiện hàng trong bao */}
@@ -575,6 +730,16 @@ export const TruckDriverPortalPage: React.FC = () => {
         open={detailModalOpen}
         onCancel={() => setDetailModalOpen(false)}
         footer={[
+          <Button
+            key="print"
+            icon={<PrinterOutlined />}
+            onClick={() => {
+              if (selectedBag) setPrintBag(selectedBag);
+            }}
+            className="text-gray-700 font-semibold"
+          >
+            In tem nhãn dán A6
+          </Button>,
           <Button key="close" type="primary" onClick={() => setDetailModalOpen(false)}>
             Đóng
           </Button>
@@ -749,6 +914,37 @@ export const TruckDriverPortalPage: React.FC = () => {
             )}
           </div>
         </div>
+      </Modal>
+
+      {/* Modal In Tem Nhãn Dán Bao Tải Khổ A6 */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-base font-bold text-gray-800">
+            <PrinterOutlined className="text-blue-600" />
+            In Tem Nhãn Dán Bao Tải Master Bag (Khổ A6)
+          </div>
+        }
+        open={!!printBag}
+        onCancel={() => setPrintBag(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setPrintBag(null)}>
+            Đóng
+          </Button>,
+          <Button
+            key="print"
+            type="primary"
+            icon={<PrinterOutlined />}
+            onClick={() => window.print()}
+            className="bg-red-600 hover:bg-red-700 font-bold"
+          >
+            In tem ngay
+          </Button>,
+        ]}
+        width={480}
+        centered
+        destroyOnClose
+      >
+        {printBag && <MasterBagThermalLabel bag={printBag} />}
       </Modal>
     </div>
   );

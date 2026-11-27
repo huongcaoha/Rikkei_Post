@@ -273,7 +273,24 @@ public class ShipperServiceImpl implements ShipperService {
         }
 
         if (isShipper) {
-            return orderRepository.findByAssignedShipperId(currentUser.getId());
+            List<Order> assigned = orderRepository.findByAssignedShipperId(currentUser.getId());
+            Set<Long> orderIds = assigned.stream().map(Order::getId).collect(Collectors.toSet());
+            List<Order> result = new ArrayList<>(assigned);
+
+            if (currentUser.getAssignedPostOfficeId() != null) {
+                List<Order> warehouseOrders = orderRepository.findByAssignedPostOfficeId(currentUser.getAssignedPostOfficeId());
+                for (Order wo : warehouseOrders) {
+                    if (!orderIds.contains(wo.getId())) {
+                        String st = wo.getCurrentStatus();
+                        if (("AT_SORTING_HUB".equalsIgnoreCase(st) || "IN_WAREHOUSE".equalsIgnoreCase(st) || "DELIVERY_FAILED".equalsIgnoreCase(st))
+                                && (wo.getAssignedShipperId() == null || wo.getAssignedShipperId().equals(currentUser.getId()))) {
+                            result.add(wo);
+                            orderIds.add(wo.getId());
+                        }
+                    }
+                }
+            }
+            return result;
         }
 
         return orderRepository.findAll();
@@ -340,6 +357,18 @@ public class ShipperServiceImpl implements ShipperService {
                     + "], không phải đơn giao thất bại nên không thể thu hồi hoàn kho!");
         }
 
+        // Quy định: Nếu do không liên lạc được với khách thì phải giao đủ 3 lần mới cho chuyển hoàn về shop
+        int attempts = order.getDeliveryAttempts() != null ? order.getDeliveryAttempts() : 0;
+        String reasonStr = (reason != null && !reason.isBlank()) ? reason.trim()
+                : "Giao hàng không thành công sau các lần phát";
+        boolean isExplicitReject = reasonStr.toLowerCase().contains("từ chối") || reasonStr.toLowerCase().contains("hủy đơn");
+
+        if (attempts < 3 && !isExplicitReject) {
+            throw new IllegalStateException(String.format(
+                    "CHẶN CHUYỂN HOÀN: Đơn hàng [%s] mới phát thất bại %d/3 lần. Theo quy định, nếu do không liên lạc được với khách thì phải phát đủ 3 lần mới được phép chuyển hoàn về Shop! Vui lòng mang kiện hàng về bưu cục để nhân viên kho quét nhập kho (AT_SORTING_HUB) lưu trữ và giao lại vào hôm sau.",
+                    cleanCode, attempts));
+        }
+
         validateStatusTransition(order, "RETURNING", actor);
 
         LocalDateTime now = LocalDateTime.now();
@@ -357,8 +386,6 @@ public class ShipperServiceImpl implements ShipperService {
         Warehouse wh = whId != null ? warehouseRepository.findById(whId).orElse(null) : null;
         String whName = wh != null ? wh.getName() + " (" + wh.getCode() + ")" : "Bưu cục thu hồi";
 
-        String reasonStr = (reason != null && !reason.isBlank()) ? reason.trim()
-                : "Giao hàng không thành công sau các lần phát";
         String noteSuffix = (note != null && !note.isBlank()) ? ". Ghi chú bưu cục: " + note.trim() : "";
 
         String desc = String.format(
@@ -473,30 +500,32 @@ public class ShipperServiceImpl implements ShipperService {
                     isValidTransition = true;
                 }
             }
-            case "AT_SORTING_HUB" -> {
-                // Từ AT_SORTING_HUB chỉ có thể sang: DELIVERING (lấy hàng đi giao), IN_TRANSIT
+            case "AT_SORTING_HUB", "IN_WAREHOUSE" -> {
+                // Từ AT_SORTING_HUB / IN_WAREHOUSE chỉ có thể sang: DELIVERING (lấy hàng đi giao), IN_TRANSIT
                 // (vận chuyển liên bưu cục), hoặc RETURNING (chuyển hoàn)
-                if ("DELIVERING".equals(target) || "IN_TRANSIT".equals(target) || "RETURNING".equals(target)) {
+                if ("DELIVERING".equals(target) || "IN_TRANSIT".equals(target) || "RETURNING".equals(target) || "AT_SORTING_HUB".equals(target) || "IN_WAREHOUSE".equals(target)) {
                     isValidTransition = true;
                 }
             }
             case "IN_TRANSIT" -> {
-                // Từ IN_TRANSIT chỉ có thể nhập về bưu cục kế tiếp (AT_SORTING_HUB)
-                if ("AT_SORTING_HUB".equals(target)) {
+                // Từ IN_TRANSIT có thể nhập về bưu cục kế tiếp (AT_SORTING_HUB/IN_WAREHOUSE) hoặc xuất kho phát hàng (DELIVERING)
+                if ("AT_SORTING_HUB".equals(target) || "IN_WAREHOUSE".equals(target) || "DELIVERING".equals(target)) {
                     isValidTransition = true;
                 }
             }
             case "DELIVERING" -> {
                 // Từ DELIVERING chỉ có thể sang: DELIVERED (giao thành công), DELIVERY_FAILED
-                // (giao thất bại) hoặc RETURNING (thu hồi hoàn kho)
-                if ("DELIVERED".equals(target) || "DELIVERY_FAILED".equals(target) || "RETURNING".equals(target)) {
+                // (giao thất bại), RETURNING (thu hồi hoàn kho), hoặc AT_SORTING_HUB / IN_WAREHOUSE (nhập lại kho bưu cục)
+                if ("DELIVERED".equals(target) || "DELIVERY_FAILED".equals(target) || "RETURNING".equals(target)
+                        || "AT_SORTING_HUB".equals(target) || "IN_WAREHOUSE".equals(target)) {
                     isValidTransition = true;
                 }
             }
             case "DELIVERY_FAILED" -> {
                 // Từ DELIVERY_FAILED có thể sang: DELIVERING (giao lại), DELIVERY_FAILED (cập
-                // nhật lần phát tiếp theo) hoặc RETURNING (chuyển hoàn)
-                if ("DELIVERING".equals(target) || "DELIVERY_FAILED".equals(target) || "RETURNING".equals(target)) {
+                // nhật lần phát tiếp theo), RETURNING (chuyển hoàn khi đủ điều kiện), hoặc AT_SORTING_HUB / IN_WAREHOUSE (nhân viên kho quét nhập lại vào kho để hôm sau bưu tá xuất kho phát lại)
+                if ("DELIVERING".equals(target) || "DELIVERY_FAILED".equals(target) || "RETURNING".equals(target)
+                        || "AT_SORTING_HUB".equals(target) || "IN_WAREHOUSE".equals(target)) {
                     isValidTransition = true;
                 }
             }
@@ -687,12 +716,6 @@ public class ShipperServiceImpl implements ShipperService {
         Warehouse wh = warehouseRepository.findById(targetWhId).orElse(null);
         String whName = wh != null ? wh.getName() + " (" + wh.getCode() + ")" : "Bưu cục tiếp nhận khai thác";
 
-        order.setCurrentStatus("AT_SORTING_HUB");
-        if (wh != null) {
-            order.setAssignedPostOfficeId(wh.getId());
-        }
-        Order saved = saveOrderAndEvictCache(order);
-
         LocalDateTime now = LocalDateTime.now();
         String timeStr = now.format(TIME_FORMATTER);
         String roleTitle = getRoleTitle(actor);
@@ -703,14 +726,41 @@ public class ShipperServiceImpl implements ShipperService {
                                 : "")
                 : "";
 
-        String desc = String.format(
-                "Đơn hàng đã được nhập kho thành công tại %s vào lúc %s. Người thực hiện nhập kho: %s (%s - SĐT: %s)%s. Kiện hàng đã lưu kho an toàn và sẵn sàng chia chọn, phân tuyến phát.",
-                whName,
-                timeStr,
-                actor.getFullName(),
-                roleTitle,
-                actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
-                shipperHandover);
+        String previousStatus = order.getCurrentStatus() != null ? order.getCurrentStatus().toUpperCase() : "";
+        int attempts = order.getDeliveryAttempts() != null ? order.getDeliveryAttempts() : 0;
+        boolean isFailedRedelivery = "DELIVERY_FAILED".equals(previousStatus) || (attempts > 0 && "DELIVERING".equals(previousStatus));
+
+        order.setCurrentStatus("AT_SORTING_HUB");
+        if (wh != null) {
+            order.setAssignedPostOfficeId(wh.getId());
+        }
+        // Xóa thông tin bưu tá lấy hàng/phát hàng cũ để bưu tá ca sau tiếp nhận xuất kho
+        order.setAssignedShipperId(null);
+        order.setAssignedShipperName(null);
+        order.setAssignedShipperPhone(null);
+        Order saved = saveOrderAndEvictCache(order);
+
+        String desc;
+        if (isFailedRedelivery) {
+            desc = String.format(
+                    "Đơn hàng giao không thành công (Lần phát %d/3) đã được mang về bưu cục %s vào lúc %s. Nhân viên kho %s (%s - SĐT: %s) đã quét tiếp nhận nhập kho lưu trữ an toàn, sẵn sàng để bưu tá xuất kho đi phát lại vào hôm sau%s.",
+                    attempts > 0 ? attempts : 1,
+                    whName,
+                    timeStr,
+                    actor.getFullName(),
+                    roleTitle,
+                    actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
+                    shipperHandover);
+        } else {
+            desc = String.format(
+                    "Đơn hàng đã được nhập kho thành công tại %s vào lúc %s. Người thực hiện nhập kho: %s (%s - SĐT: %s)%s. Kiện hàng đã lưu kho an toàn và sẵn sàng chia chọn, phân tuyến phát.",
+                    whName,
+                    timeStr,
+                    actor.getFullName(),
+                    roleTitle,
+                    actor.getPhoneNumber() != null ? actor.getPhoneNumber() : "N/A",
+                    shipperHandover);
+        }
 
         OrderTrackingLog logEntry = OrderTrackingLog.builder()
                 .trackingCode(cleanCode)
@@ -729,8 +779,9 @@ public class ShipperServiceImpl implements ShipperService {
                 actor.getFullName(), roleTitle, cleanCode, whName, timeStr);
         OrderResponse res = mapToResponse(saved);
         try {
-            webSocketNotificationService.notifyOrderStatusUpdated(res, "PICKED_UP", actor.getFullName(),
-                    "Đã nhập kho bưu cục " + whName);
+            webSocketNotificationService.notifyOrderStatusUpdated(res, previousStatus, actor.getFullName(),
+                    isFailedRedelivery ? "Nhập lại kho bưu cục sau giao thất bại (Lần " + (attempts > 0 ? attempts : 1) + "/3)"
+                            : "Đã nhập kho bưu cục " + whName);
         } catch (Exception e) {
             log.warn("Lỗi gửi thông báo WebSocket: {}", e.getMessage());
         }
@@ -749,6 +800,17 @@ public class ShipperServiceImpl implements ShipperService {
 
         // Kiểm tra thứ tự trạng thái & phân quyền nghiêm ngặt
         validateStatusTransition(order, status, actor);
+
+        if ("RETURNING".equalsIgnoreCase(status)) {
+            int attempts = order.getDeliveryAttempts() != null ? order.getDeliveryAttempts() : 0;
+            String noteCheck = (note != null ? note : "").toLowerCase();
+            boolean isExplicitReject = noteCheck.contains("từ chối") || noteCheck.contains("hủy đơn");
+            if (attempts < 3 && !isExplicitReject) {
+                throw new IllegalStateException(String.format(
+                        "CHẶN CHUYỂN HOÀN: Đơn hàng [%s] mới giao thất bại %d/3 lần. Theo quy định, nếu do không liên lạc được với khách thì phải giao đủ 3 lần mới được phép chuyển hoàn về Shop! Vui lòng quét mã nhập lại vào kho bưu cục (AT_SORTING_HUB) để lưu kho và giao lại vào hôm sau.",
+                        cleanCode, attempts));
+            }
+        }
 
         LocalDateTime now = LocalDateTime.now();
         String timeStr = now.format(TIME_FORMATTER);
@@ -978,6 +1040,8 @@ public class ShipperServiceImpl implements ShipperService {
                     "Đơn hàng [" + cleanCode + "] ĐÃ GIAO THÀNH CÔNG cho khách rồi! Không thể xuất kho đi giao lại.");
         }
         if (!"AT_SORTING_HUB".equalsIgnoreCase(order.getCurrentStatus())
+                && !"IN_WAREHOUSE".equalsIgnoreCase(order.getCurrentStatus())
+                && !"IN_TRANSIT".equalsIgnoreCase(order.getCurrentStatus())
                 && !"DELIVERY_FAILED".equalsIgnoreCase(order.getCurrentStatus())) {
             throw new IllegalStateException("Đơn hàng [" + cleanCode + "] hiện đang ở trạng thái ["
                     + order.getCurrentStatus() + "], không thể xuất kho đi giao phát!");
@@ -992,6 +1056,9 @@ public class ShipperServiceImpl implements ShipperService {
         order.setAssignedShipperId(shipperId);
         order.setAssignedShipperName(shipper.getFullName());
         order.setAssignedShipperPhone(shipper.getPhoneNumber());
+        if (shipper.getAssignedPostOfficeId() != null) {
+            order.setAssignedPostOfficeId(shipper.getAssignedPostOfficeId());
+        }
 
         Order saved = saveOrderAndEvictCache(order);
 
@@ -999,13 +1066,26 @@ public class ShipperServiceImpl implements ShipperService {
         String receiverAddr = (order.getReceiverAddress() != null ? order.getReceiverAddress() : "")
                 + (order.getReceiverWardName() != null ? ", " + order.getReceiverWardName() : "");
 
-        String desc = String.format(
-                "%s (SĐT: %s) đã quét xuất kho bưu cục lấy kiện hàng đi phát đến người nhận (%s - %s) vào lúc %s.",
-                shipperDisplayName,
-                shipper.getPhoneNumber() != null ? shipper.getPhoneNumber() : "N/A",
-                order.getReceiverName() != null ? order.getReceiverName() : "Khách hàng",
-                receiverAddr,
-                timeStr);
+        int attempts = order.getDeliveryAttempts() != null ? order.getDeliveryAttempts() : 0;
+        String desc;
+        if (attempts > 0) {
+            desc = String.format(
+                    "%s (SĐT: %s) đã quét xuất kho bưu cục lấy kiện hàng đi phát lại (Lần phát thứ %d/3) đến người nhận (%s - %s) vào lúc %s.",
+                    shipperDisplayName,
+                    shipper.getPhoneNumber() != null ? shipper.getPhoneNumber() : "N/A",
+                    attempts + 1,
+                    order.getReceiverName() != null ? order.getReceiverName() : "Khách hàng",
+                    receiverAddr,
+                    timeStr);
+        } else {
+            desc = String.format(
+                    "%s (SĐT: %s) đã quét xuất kho bưu cục lấy kiện hàng đi phát đến người nhận (%s - %s) vào lúc %s.",
+                    shipperDisplayName,
+                    shipper.getPhoneNumber() != null ? shipper.getPhoneNumber() : "N/A",
+                    order.getReceiverName() != null ? order.getReceiverName() : "Khách hàng",
+                    receiverAddr,
+                    timeStr);
+        }
 
         OrderTrackingLog logEntry = OrderTrackingLog.builder()
                 .trackingCode(cleanCode)
@@ -1412,14 +1492,19 @@ public class ShipperServiceImpl implements ShipperService {
                 ? request.getReason().trim()
                 : "Không liên lạc được với người nhận";
 
+        boolean isExplicitReject = reason.toLowerCase().contains("từ chối") || reason.toLowerCase().contains("hủy đơn");
         String targetStatus = "DELIVERY_FAILED";
         boolean autoReturn = false;
 
-        // Nếu đã thử phát >= 3 lần hoặc khách từ chối dứt khoát -> Tự động chuyển hoàn
-        // (RETURNING)
-        if (nextAttempts >= 3 || reason.toLowerCase().contains("từ chối") || reason.toLowerCase().contains("hủy đơn")) {
+        // Nếu đã thử phát >= 3 lần hoặc khách từ chối dứt khoát -> Mới kích hoạt chuyển hoàn (RETURNING)
+        if (nextAttempts >= 3 || isExplicitReject) {
             targetStatus = "RETURNING";
             autoReturn = true;
+        } else {
+            // Chưa đủ 3 lần và lý do không liên hệ được / hẹn lại -> Giữ DELIVERY_FAILED
+            // Bưu tá mang kiện hàng về bưu cục để nhân viên kho quét nhập lại vào kho lưu, hôm sau bưu tá xuất kho phát lại
+            targetStatus = "DELIVERY_FAILED";
+            autoReturn = false;
         }
 
         validateStatusTransition(order, targetStatus, shipper);
@@ -1443,9 +1528,11 @@ public class ShipperServiceImpl implements ShipperService {
 
         String returnNotice = autoReturn
                 ? String.format(
-                        " [CẢNH BÁO: Đã phát thất bại %d lần hoặc khách từ chối nhận hàng -> Đơn hàng tự động kích hoạt quy trình CHUYỂN HOÀN về kho bưu cục!]",
+                        " [CẢNH BÁO: Đã phát thất bại %d lần hoặc khách từ chối nhận hàng -> Đơn hàng kích hoạt quy trình CHUYỂN HOÀN về cho người gửi/Shop!]",
                         nextAttempts)
-                : String.format(" [Lần phát thứ %d/3]", nextAttempts);
+                : String.format(
+                        " [Lần phát thứ %d/3. Kiện hàng mang về bưu cục để nhân viên kho quét nhập lại vào kho lưu, bưu tá sẽ xuất kho phát lại vào hôm sau]",
+                        nextAttempts);
 
         String desc = String.format(
                 "Giao hàng không thành công vào lúc %s. Bưu tá phụ trách: %s (SĐT: %s). Lý do: %s%s%s. Bằng chứng hiện trường: %s.",
@@ -1987,6 +2074,12 @@ public class ShipperServiceImpl implements ShipperService {
         if (remaining.compareTo(BigDecimal.ZERO) < 0)
             remaining = BigDecimal.ZERO;
 
+        String poName = null;
+        if (order.getAssignedPostOfficeId() != null) {
+            poName = warehouseRepository.findById(order.getAssignedPostOfficeId())
+                    .map(Warehouse::getName).orElse(null);
+        }
+
         return OrderResponse.builder()
                 .id(order.getId())
                 .trackingCode(order.getTrackingCode())
@@ -2026,6 +2119,7 @@ public class ShipperServiceImpl implements ShipperService {
                 .assignedShipperName(order.getAssignedShipperName())
                 .assignedShipperPhone(order.getAssignedShipperPhone())
                 .assignedPostOfficeId(order.getAssignedPostOfficeId())
+                .postOfficeName(poName)
                 .podPhotoUrl(order.getPodPhotoUrl())
                 .podSignatureUrl(order.getPodSignatureUrl())
                 .podLatitude(order.getPodLatitude())

@@ -51,6 +51,8 @@ import { dispatchApi, DispatchFilterParams } from '../api/dispatch';
 import { locationApi } from '../api/location';
 import { truckApi } from '../api/truck';
 import { useAuth } from '../context/AuthContext';
+import { webSocketService } from '../services/websocket';
+import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 import {
   DispatchOrder,
   DispatchOrderItem,
@@ -112,7 +114,15 @@ export const DispatchManagementPage: React.FC = () => {
   // Modal tài xế quét nạp bao tải lên xe
   const [loadBagInput, setLoadBagInput] = useState('');
   const [loadBagLoading, setLoadBagLoading] = useState(false);
+  const [loadBagScanMode, setLoadBagScanMode] = useState<'CAMERA' | 'GUN'>('GUN');
+  const [loadBagCameraActive, setLoadBagCameraActive] = useState(false);
+  const [loadBagFacingMode, setLoadBagFacingMode] = useState<'environment' | 'user'>('environment');
+  const [isLoadBagMuted, setIsLoadBagMuted] = useState(false);
   const loadBagInputRef = useRef<any>(null);
+  const loadBagHtml5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const loadBagLastCodeRef = useRef<string>('');
+  const loadBagLastTimeRef = useRef<number>(0);
+  const loadBagProcessingRef = useRef<boolean>(false);
 
   // Modal quét nhập kho đích
   const [inboundScanCode, setInboundScanCode] = useState('');
@@ -129,9 +139,13 @@ export const DispatchManagementPage: React.FC = () => {
 
   const userWarehouseId = user?.assignedPostOfficeId || (user as any)?.warehouseId;
   const userRoles: string[] = user?.roles || [];
-  const isDriverOnly = userRoles.includes('ROLE_TRUCK_DRIVER') &&
-    !userRoles.some(r => ['ROLE_ADMIN', 'ROLE_BRANCH_MANAGER', 'ROLE_POST_OFFICE_MANAGER', 'ROLE_WAREHOUSE_STAFF'].includes(r));
-  const canCreateDispatch = !isDriverOnly;
+  const isAdmin = userRoles.includes('ROLE_ADMIN');
+  const isBranchManager = userRoles.includes('ROLE_BRANCH_MANAGER');
+  const isPostOfficeManager = userRoles.includes('ROLE_POST_OFFICE_MANAGER');
+  const isTruckDriver = userRoles.includes('ROLE_TRUCK_DRIVER');
+  const isWarehouseStaff = userRoles.includes('ROLE_WAREHOUSE_STAFF');
+  // Chỉ quản lý kho Hub trở lên (Admin, Quản lý chi nhánh, Quản lý kho/Hub) mới được tạo lệnh điều vận
+  const canCreateDispatch = isAdmin || isBranchManager || isPostOfficeManager;
 
   // Lọc tài xế và xe tải trực thuộc kho bưu cục quản lý
   const effectiveOriginWhId = (!user?.roles?.includes('ROLE_ADMIN') && userWarehouseId) ? userWarehouseId : selectedOriginId;
@@ -195,11 +209,57 @@ export const DispatchManagementPage: React.FC = () => {
 
   useEffect(() => {
     fetchMetadata();
+    return () => {
+      stopInboundCamera();
+      stopLoadBagCamera();
+    };
   }, []);
 
   useEffect(() => {
     fetchDispatchOrders();
   }, [dateRange, selectedStatus, selectedDestWarehouseId]);
+
+  const selectedDispatchRef = useRef<DispatchOrder | null>(null);
+  useEffect(() => {
+    selectedDispatchRef.current = selectedDispatch;
+  }, [selectedDispatch]);
+
+  // Lắng nghe WebSocket Realtime cập nhật điều vận và bao tải tức thì
+  useOrderWebSocket({
+    onEvent: (event) => {
+      if (
+        event.type === 'DISPATCH_BAG_RECEIVED' ||
+        event.type === 'BAG_LOADED_TO_DISPATCH' ||
+        event.type === 'MASTER_BAG_ARRIVED_AT_HUB' ||
+        event.type === 'MASTER_BAG_IN_TRANSIT' ||
+        event.type === 'DISPATCH_STATUS_UPDATED' ||
+        event.type === 'BAG_UNSEALED'
+      ) {
+        fetchDispatchOrders();
+        if (selectedDispatchRef.current) {
+          dispatchApi.getDispatchById(selectedDispatchRef.current.id).then((res) => {
+            if (res.success) {
+              setSelectedDispatch(res.data);
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+  });
+
+  useEffect(() => {
+    const unsub = webSocketService.subscribe('/topic/dispatch-orders', (event) => {
+      fetchDispatchOrders();
+      if (selectedDispatchRef.current) {
+        dispatchApi.getDispatchById(selectedDispatchRef.current.id).then((res) => {
+          if (res.success) {
+            setSelectedDispatch(res.data);
+          }
+        }).catch(() => {});
+      }
+    });
+    return () => unsub();
+  }, []);
 
   // Sinh mã điều động ngẫu nhiên
   const generateNewDispatchCode = () => {
@@ -253,14 +313,153 @@ export const DispatchManagementPage: React.FC = () => {
     }
   };
 
+  // Khởi động Camera quét nạp bao tải lên xe
+  const startLoadBagCamera = async (mode: 'environment' | 'user' = 'environment') => {
+    try {
+      if (loadBagHtml5QrCodeRef.current) {
+        await stopLoadBagCamera();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      const element = document.getElementById('dispatch-loadbag-camera-reader');
+      if (!element) return;
+
+      const qrCode = new Html5Qrcode('dispatch-loadbag-camera-reader');
+      loadBagHtml5QrCodeRef.current = qrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 280, height: 200 },
+        aspectRatio: 1.333,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+      };
+
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          const backCam =
+            cameras.find(
+              (c) =>
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('sau') ||
+                c.label.toLowerCase().includes('environment')
+            ) || cameras[cameras.length - 1];
+
+          await qrCode.start(
+            mode === 'environment'
+              ? backCam
+                ? backCam.id
+                : { facingMode: 'environment' }
+              : { facingMode: 'user' },
+            config,
+            (decodedText) => handleLoadBagCameraDecoded(decodedText),
+            () => {}
+          );
+        } else {
+          await qrCode.start(
+            { facingMode: mode },
+            config,
+            (decodedText) => handleLoadBagCameraDecoded(decodedText),
+            () => {}
+          );
+        }
+        setLoadBagCameraActive(true);
+      } catch (camErr) {
+        await qrCode.start(
+          { facingMode: mode },
+          config,
+          (decodedText) => handleLoadBagCameraDecoded(decodedText),
+          () => {}
+        );
+        setLoadBagCameraActive(true);
+      }
+    } catch (err: any) {
+      console.warn('Lỗi bật camera nạp bao:', err);
+      setLoadBagCameraActive(false);
+    }
+  };
+
+  const stopLoadBagCamera = async () => {
+    if (loadBagHtml5QrCodeRef.current) {
+      try {
+        if (loadBagHtml5QrCodeRef.current.isScanning) {
+          await loadBagHtml5QrCodeRef.current.stop();
+        }
+        await loadBagHtml5QrCodeRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      loadBagHtml5QrCodeRef.current = null;
+    }
+    setLoadBagCameraActive(false);
+  };
+
+  const handleSwitchLoadBagCamera = async () => {
+    const nextMode = loadBagFacingMode === 'environment' ? 'user' : 'environment';
+    setLoadBagFacingMode(nextMode);
+    await startLoadBagCamera(nextMode);
+  };
+
+  const handleSwitchLoadBagScanMode = async (mode: 'CAMERA' | 'GUN') => {
+    setLoadBagScanMode(mode);
+    if (mode === 'CAMERA') {
+      setTimeout(() => {
+        startLoadBagCamera(loadBagFacingMode);
+      }, 300);
+    } else {
+      await stopLoadBagCamera();
+      setTimeout(() => {
+        loadBagInputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const handleLoadBagCameraDecoded = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) return;
+
+    const now = Date.now();
+    if (code === loadBagLastCodeRef.current && now - loadBagLastTimeRef.current < 2500) {
+      return;
+    }
+
+    if (loadBagProcessingRef.current) return;
+    loadBagProcessingRef.current = true;
+    loadBagLastCodeRef.current = code;
+    loadBagLastTimeRef.current = now;
+
+    if (!isLoadBagMuted) {
+      playBeep();
+    }
+    await handleLoadBagSubmit(code);
+    loadBagProcessingRef.current = false;
+  };
+
   // Mở modal tài xế quét nạp bao tải lên xe
   const handleOpenLoadBagModal = (dispatch: DispatchOrder) => {
     setSelectedDispatch(dispatch);
     setLoadBagInput('');
     setIsLoadBagModalOpen(true);
-    setTimeout(() => {
-      loadBagInputRef.current?.focus();
-    }, 200);
+    if (loadBagScanMode === 'CAMERA') {
+      setTimeout(() => {
+        startLoadBagCamera(loadBagFacingMode);
+      }, 350);
+    } else {
+      setTimeout(() => {
+        loadBagInputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const handleCloseLoadBagModal = async () => {
+    await stopLoadBagCamera();
+    setIsLoadBagModalOpen(false);
+    setLoadBagInput('');
   };
 
   // Tài xế thực hiện quét nạp bao tải vào chuyến xe
@@ -521,6 +720,11 @@ export const DispatchManagementPage: React.FC = () => {
           <div className="text-[11px] text-gray-400">
             {dayjs(record.createdAt).format('HH:mm DD/MM/YYYY')}
           </div>
+          {record.createdUserName && (
+            <div className="text-[11px] text-gray-500 font-medium">
+              Tạo bởi: <span className="font-semibold text-gray-800">{record.createdUserName}</span>
+            </div>
+          )}
         </div>
       )
     },
@@ -638,6 +842,17 @@ export const DispatchManagementPage: React.FC = () => {
         const totalBags = record.totalBags || 0;
         const receivedCount = record.items?.filter(it => it.isReceivedAtDest)?.length || 0;
         const allReceived = totalBags > 0 && receivedCount === totalBags;
+        const isAssignedDriver = record.driverId === user?.id;
+        const isDestWarehouseStaff = record.destWarehouseId === userWarehouseId;
+
+        // Phân quyền chuẩn xác theo yêu cầu:
+        // 1. Quét nạp bao: CHỈ THỰC SỰ ẨN ĐI KHI trạng thái chuyến đi là COMPLETED hoặc CANCELLED
+        const canLoadBags = record.status !== 'COMPLETED' && record.status !== 'CANCELLED' && (isAssignedDriver || isAdmin);
+        const canDepart = record.status === 'PICKED_UP' && totalBags > 0 && (isAssignedDriver || isAdmin);
+        // 2. Quét nhận tại Hub đích: Chỉ nhân viên/quản lý kho Hub đích (hoặc Admin) mới được thao tác
+        const canReceiveAtDest = ['IN_TRANSIT'].includes(record.status) && (isDestWarehouseStaff || isAdmin);
+        // 3. Hoàn thành chuyến: Tài xế được gán, kho đích hoặc Admin
+        const canCompleteTrip = record.status === 'IN_TRANSIT' && (isAssignedDriver || isDestWarehouseStaff || isAdmin);
 
         return (
           <Space direction="vertical" size={2}>
@@ -653,7 +868,7 @@ export const DispatchManagementPage: React.FC = () => {
             </Button>
 
             {/* Nút tài xế thực hiện quét nạp bao tải lên xe */}
-            {['PICKED_UP', 'IN_TRANSIT'].includes(record.status) && (
+            {canLoadBags && (
               <Button
                 size="small"
                 type="primary"
@@ -666,7 +881,7 @@ export const DispatchManagementPage: React.FC = () => {
             )}
 
             {/* Nút xuất phát đi giao (nếu đang PICKED_UP) */}
-            {record.status === 'PICKED_UP' && (
+            {canDepart && (
               <Popconfirm
                 title="Xuất phát chuyến xe"
                 description={`Xác nhận tài xế ${record.driverName} đã chất hàng và bắt đầu xuất bến đi giao?`}
@@ -681,7 +896,7 @@ export const DispatchManagementPage: React.FC = () => {
             )}
 
             {/* Nút quét nhập kho tại Hub đích */}
-            {(record.status === 'IN_TRANSIT' || record.status === 'PICKED_UP') && (
+            {canReceiveAtDest && (
               <Button
                 size="small"
                 type="primary"
@@ -693,36 +908,29 @@ export const DispatchManagementPage: React.FC = () => {
               </Button>
             )}
 
-            {/* Nút hoàn thành chuyến đi: CHỈ CHO PHÉP khi tất cả bao tải đã được nhập hết vào kho đích */}
-            {record.status === 'IN_TRANSIT' && (
-              allReceived ? (
-                <Popconfirm
-                  title="Xác nhận hoàn thành chuyến xe"
-                  description={`Toàn bộ ${totalBags} bao tải trên xe đã được kho đích [${record.destWarehouseName}] quét tiếp nhận nhập kho đầy đủ. Xác nhận hoàn tất chuyến đi?`}
-                  onConfirm={() => handleUpdateStatus(record, 'COMPLETED')}
-                  okText="Hoàn thành chuyến đi"
-                  cancelText="Hủy"
-                >
-                  <Button size="small" type="primary" className="bg-green-600 hover:bg-green-700 font-bold">
-                    ✅ Hoàn thành chuyến đi
-                  </Button>
-                </Popconfirm>
-              ) : (
-                <Tooltip
-                  title={
-                    totalBags === 0
-                      ? 'Chưa thể hoàn thành: Chuyến xe chưa nạp bao tải nào!'
-                      : `Chưa thể hoàn thành chuyến đi! Còn ${totalBags - receivedCount} bao tải chưa được kho đích [${record.destWarehouseName}] quét tiếp nhận nhập kho.`
-                  }
-                >
-                  <Button size="small" disabled className="font-bold opacity-60 cursor-not-allowed">
-                    ⏳ Chờ kho đích nhận ({receivedCount}/{totalBags} bao)
-                  </Button>
-                </Tooltip>
-              )
+            {/* Nút hoàn thành chuyến đi: CHỈ HIỂN THỊ KHI toàn bộ bao tải đã được nhập hết vào kho đích */}
+            {record.status === 'IN_TRANSIT' && canCompleteTrip && allReceived && (
+              <Popconfirm
+                title="Xác nhận hoàn thành chuyến xe"
+                description={`Toàn bộ ${totalBags} bao tải trên xe đã được kho đích [${record.destWarehouseName}] quét tiếp nhận nhập kho đầy đủ. Xác nhận hoàn tất chuyến đi?`}
+                onConfirm={() => handleUpdateStatus(record, 'COMPLETED')}
+                okText="Hoàn thành chuyến đi"
+                cancelText="Hủy"
+              >
+                <Button size="small" type="primary" className="bg-green-600 hover:bg-green-700 font-bold">
+                  ✅ Hoàn thành chuyến đi
+                </Button>
+              </Popconfirm>
             )}
 
-            {/* Nút hủy lệnh (chỉ khi đang PICKED_UP và là Quản lý/Admin) */}
+            {/* Nếu còn bao tải chưa nhập kho đích -> KHÔNG hiện nút hoàn thành, chỉ hiện tag tiến độ */}
+            {record.status === 'IN_TRANSIT' && !allReceived && (
+              <Tag color="processing" className="text-[11px] font-medium border-blue-200 text-blue-700 w-max">
+                ⏳ Chờ kho đích nhận ({receivedCount}/{totalBags} bao)
+              </Tag>
+            )}
+
+            {/* Nút hủy lệnh (chỉ khi đang PICKED_UP và là Quản lý tạo/Admin) */}
             {record.status === 'PICKED_UP' && canCreateDispatch && (
               <Popconfirm
                 title="Hủy lệnh điều vận"
@@ -796,14 +1004,14 @@ export const DispatchManagementPage: React.FC = () => {
         </Col>
         <Col xs={12} sm={8} md={5}>
           <Card className="rounded-2xl border-orange-100 shadow-xs bg-orange-50/50 p-2 border">
-            <div className="text-orange-700 text-xs font-semibold uppercase">Đang đi giao</div>
+            <div className="text-orange-700 text-xs font-semibold uppercase">Đang vận chuyển</div>
             <div className="text-2xl font-black text-orange-700 mt-1">{inTransitCount}</div>
             <div className="text-[11px] text-orange-600">Đang trên đường tới Hub đích</div>
           </Card>
         </Col>
         <Col xs={12} sm={8} md={5}>
           <Card className="rounded-2xl border-green-100 shadow-xs bg-green-50/50 p-2 border">
-            <div className="text-green-700 text-xs font-semibold uppercase">Đã giao xong</div>
+            <div className="text-green-700 text-xs font-semibold uppercase">Đã hoàn thành chuyến</div>
             <div className="text-2xl font-black text-green-700 mt-1">{completedCount}</div>
             <div className="text-[11px] text-green-600">Hoàn tất nhập kho đích</div>
           </Card>
@@ -841,12 +1049,12 @@ export const DispatchManagementPage: React.FC = () => {
             <Select
               value={selectedStatus}
               onChange={val => setSelectedStatus(val)}
-              className="w-44 rounded-lg"
+              className="w-52 rounded-lg"
               options={[
                 { label: 'Tất cả trạng thái', value: 'ALL' },
                 { label: '📦 Đã nhận hàng tại kho', value: 'PICKED_UP' },
-                { label: '🚚 Đang đi giao', value: 'IN_TRANSIT' },
-                { label: '✅ Đã giao xong', value: 'COMPLETED' },
+                { label: '🚚 Đang vận chuyển', value: 'IN_TRANSIT' },
+                { label: '✅ Đã hoàn thành chuyến', value: 'COMPLETED' },
                 { label: '❌ Đã hủy', value: 'CANCELLED' }
               ]}
             />
@@ -867,14 +1075,207 @@ export const DispatchManagementPage: React.FC = () => {
           </div>
         </div>
 
-        <Table
-          dataSource={filteredDispatches}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 8, showSizeChanger: true }}
-          className="rounded-xl overflow-hidden"
-        />
+        {/* Bảng dữ liệu dành cho Desktop */}
+        <div className="hidden md:block">
+          <Table
+            dataSource={filteredDispatches}
+            columns={columns}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 8, showSizeChanger: true }}
+            scroll={{ x: 1050 }}
+            className="rounded-xl overflow-hidden"
+          />
+        </div>
+
+        {/* Giao diện Thẻ Responsive dành cho Điện Thoại Mobile (Khắc phục lỗi tràn và che khuất thông tin) */}
+        <div className="block md:hidden space-y-3">
+          {filteredDispatches.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <Truck size={36} className="mx-auto mb-2 text-gray-300" />
+              <p className="text-sm mb-0">Không có chuyến xe điều vận nào phù hợp</p>
+            </div>
+          ) : (
+            filteredDispatches.map((record) => {
+              const totalBags = record.totalBags || 0;
+              const receivedCount = record.items?.filter(it => it.isReceivedAtDest)?.length || 0;
+              const allReceived = totalBags > 0 && receivedCount === totalBags;
+              const isAssignedDriver = record.driverId === user?.id;
+              const isDestWarehouseStaff = record.destWarehouseId === userWarehouseId;
+
+              // Quét nạp bao: Chỉ thực sự ẩn đi khi chuyến đi hoàn thành (COMPLETED) hoặc bị hủy
+              const canLoadBags = record.status !== 'COMPLETED' && record.status !== 'CANCELLED' && (isAssignedDriver || isAdmin);
+              const canDepart = record.status === 'PICKED_UP' && totalBags > 0 && (isAssignedDriver || isAdmin);
+              const canReceiveAtDest = ['IN_TRANSIT'].includes(record.status) && (isDestWarehouseStaff || isAdmin);
+              const canCompleteTrip = record.status === 'IN_TRANSIT' && (isAssignedDriver || isDestWarehouseStaff || isAdmin);
+
+              let statusColor = 'default';
+              let statusIcon = <Clock size={12} />;
+              switch (record.status) {
+                case 'PICKED_UP': statusColor = 'blue'; statusIcon = <Check size={12} />; break;
+                case 'IN_TRANSIT': statusColor = 'orange'; statusIcon = <Truck size={12} />; break;
+                case 'COMPLETED': statusColor = 'success'; statusIcon = <CheckCircle2 size={12} />; break;
+                case 'CANCELLED': statusColor = 'error'; statusIcon = <XCircle size={12} />; break;
+              }
+
+              return (
+                <Card
+                  key={record.id}
+                  size="small"
+                  className="rounded-xl shadow-xs border border-gray-200 bg-white hover:border-purple-300 transition-all"
+                  bodyStyle={{ padding: '12px' }}
+                >
+                  {/* Header thẻ: Mã điều động, Người tạo & Trạng thái */}
+                  <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2 mb-2">
+                    <div>
+                      <Tag color="geekblue" className="font-mono font-bold text-sm px-2 py-0.5">
+                        {record.dispatchCode}
+                      </Tag>
+                      <div className="text-[11px] text-gray-400 mt-0.5">
+                        Tạo: {dayjs(record.createdAt).format('HH:mm DD/MM/YYYY')}
+                      </div>
+                      {record.createdUserName && (
+                        <div className="text-[11px] text-gray-500 font-medium">
+                          Tạo bởi: <span className="font-semibold text-gray-800">{record.createdUserName}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <Tag color={statusColor} className="font-bold flex items-center gap-1 text-xs">
+                        {statusIcon} {record.statusDescription}
+                      </Tag>
+                    </div>
+                  </div>
+
+                  {/* Tuyến đường vận chuyển */}
+                  <div className="bg-purple-50/40 p-2.5 rounded-lg text-xs space-y-1.5 mb-2 border border-purple-100/60">
+                    <div className="flex items-start gap-1.5 text-gray-800">
+                      <Building2 size={13} className="text-blue-600 shrink-0 mt-0.5" />
+                      <span className="text-gray-500 shrink-0">Kho đi:</span>
+                      <span className="font-bold text-gray-800">{record.originWarehouseName}</span>
+                    </div>
+                    <div className="flex items-start gap-1.5 text-gray-800">
+                      <MapPin size={13} className="text-purple-600 shrink-0 mt-0.5" />
+                      <span className="text-gray-500 shrink-0">Kho đến:</span>
+                      <span className="font-bold text-purple-700">{record.destWarehouseName}</span>
+                    </div>
+                  </div>
+
+                  {/* Tài xế & Xe tải */}
+                  <div className="bg-gray-50 p-2 rounded-lg text-xs flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Truck size={14} className="text-indigo-600" />
+                      <span className="font-bold text-gray-800">{record.driverName || 'Chưa gán'}</span>
+                      {record.driverPhone && <span className="text-gray-400 text-[11px]">({record.driverPhone})</span>}
+                    </div>
+                    {record.truckPlate && (
+                      <Tag color="cyan" className="font-mono text-xs font-bold m-0">
+                        {record.truckPlate}
+                      </Tag>
+                    )}
+                  </div>
+
+                  {/* Bao hàng / Kiện / Tải trọng */}
+                  <div className="flex items-center justify-between text-xs text-gray-600 px-1 mb-2">
+                    <div>
+                      <span className="font-bold text-blue-700">{totalBags} bao tải</span>
+                      <span className="text-gray-400 mx-1">|</span>
+                      <span className="text-gray-700">{record.totalItems || 0} đơn</span>
+                      <span className="text-gray-400 mx-1">|</span>
+                      <span className="font-semibold text-gray-800">{record.totalWeightKg || 0} kg</span>
+                    </div>
+                  </div>
+
+                  {record.status === 'IN_TRANSIT' && totalBags > 0 && (
+                    <div className="mb-2 px-1">
+                      <Progress
+                        percent={Math.round((receivedCount / totalBags) * 100)}
+                        size="small"
+                        status={receivedCount === totalBags ? 'success' : 'active'}
+                        format={() => `Đã nhận: ${receivedCount}/${totalBags} bao`}
+                      />
+                    </div>
+                  )}
+
+                  {/* Nút hành động chuẩn phân quyền */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+                    <Button
+                      size="middle"
+                      icon={<Eye size={14} />}
+                      onClick={() => {
+                        setSelectedDispatch(record);
+                        setIsDetailModalOpen(true);
+                      }}
+                      className="flex-1 text-xs h-9"
+                    >
+                      Chi tiết ({totalBags} bao)
+                    </Button>
+
+                    {canLoadBags && (
+                      <Button
+                        size="middle"
+                        type="primary"
+                        icon={<Barcode size={14} />}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 font-bold text-xs h-9"
+                        onClick={() => handleOpenLoadBagModal(record)}
+                      >
+                        Quét nạp bao
+                      </Button>
+                    )}
+
+                    {canDepart && (
+                      <Popconfirm
+                        title="Xuất phát chuyến xe"
+                        description={`Xác nhận tài xế ${record.driverName} đã chất hàng và bắt đầu xuất bến đi giao?`}
+                        onConfirm={() => handleUpdateStatus(record, 'IN_TRANSIT')}
+                        okText="Xuất bến ngay"
+                        cancelText="Hủy"
+                      >
+                        <Button size="middle" type="primary" className="flex-1 bg-orange-500 hover:bg-orange-600 font-bold text-xs h-9">
+                          Xuất bến đi giao
+                        </Button>
+                      </Popconfirm>
+                    )}
+
+                    {canReceiveAtDest && (
+                      <Button
+                        size="middle"
+                        type="primary"
+                        icon={<ScanLine size={14} />}
+                        className="flex-1 bg-purple-600 hover:bg-purple-700 font-bold text-xs h-9"
+                        onClick={() => handleOpenInboundModal(record)}
+                      >
+                        Quét nhận Hub đích
+                      </Button>
+                    )}
+
+                    {canCompleteTrip && allReceived && (
+                      <Popconfirm
+                        title="Xác nhận hoàn thành chuyến xe"
+                        description={`Toàn bộ ${totalBags} bao tải trên xe đã được quét nhận vào kho đích. Xác nhận hoàn tất chuyến xe?`}
+                        onConfirm={() => handleUpdateStatus(record, 'COMPLETED')}
+                        okText="Hoàn tất"
+                        cancelText="Hủy"
+                      >
+                        <Button size="middle" type="primary" className="flex-1 bg-green-600 hover:bg-green-700 font-bold text-xs h-9">
+                          Hoàn thành chuyến đi
+                        </Button>
+                      </Popconfirm>
+                    )}
+
+                    {record.status === 'IN_TRANSIT' && !allReceived && (
+                      <div className="w-full text-center py-0.5">
+                        <Tag color="processing" className="text-[11px] font-medium border-blue-200 text-blue-700">
+                          ⏳ Chờ kho đích nhận ({receivedCount}/{totalBags} bao)
+                        </Tag>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              );
+            })
+          )}
+        </div>
       </Card>
 
       {/* ================= MODAL TẠO LỆNH ĐIỀU VẬN MỚI ================= */}
@@ -1041,16 +1442,42 @@ export const DispatchManagementPage: React.FC = () => {
       {/* ================= MODAL TÀI XẾ QUÉT MÃ BAO TẢI LÊN XE MANG ĐI ================= */}
       <Modal
         title={
-          <div className="flex items-center gap-2 text-base font-bold text-blue-700">
-            <Barcode size={20} className="text-blue-600" />
-            <span>Tài Xế Quét Mã Bao Tải Nạp Lên Xe [{selectedDispatch?.dispatchCode}]</span>
+          <div className="flex items-center justify-between pr-6 w-full">
+            <div className="flex items-center gap-2 text-base font-bold text-blue-700">
+              <Barcode size={20} className="text-blue-600" />
+              <span>Tài Xế Quét Mã Bao Tải Nạp Lên Xe [{selectedDispatch?.dispatchCode}]</span>
+            </div>
+            {loadBagScanMode === 'CAMERA' && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="small"
+                  icon={isLoadBagMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                  onClick={() => setIsLoadBagMuted(!isLoadBagMuted)}
+                  className="text-xs font-medium"
+                >
+                  {isLoadBagMuted ? 'Bật âm' : 'Tắt âm'}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<RefreshCw size={14} />}
+                  onClick={handleSwitchLoadBagCamera}
+                  className="text-xs font-medium"
+                >
+                  Đổi Cam
+                </Button>
+              </div>
+            )}
           </div>
         }
         open={isLoadBagModalOpen}
-        onCancel={() => setIsLoadBagModalOpen(false)}
-        footer={null}
+        onCancel={handleCloseLoadBagModal}
+        footer={[
+          <Button key="close" type="primary" onClick={handleCloseLoadBagModal} className="bg-blue-600 font-bold px-6">
+            Đóng
+          </Button>
+        ]}
         width={750}
-        destroyOnClose
+        destroyOnClose={false}
       >
         {selectedDispatch && (
           <div className="space-y-4 mt-2">
@@ -1061,39 +1488,99 @@ export const DispatchManagementPage: React.FC = () => {
                   <b>{selectedDispatch.originWarehouseName}</b> → <b>{selectedDispatch.destWarehouseName}</b>
                 </div>
               }
-              description="Tài xế dùng súng quét mã barcode hoặc nhập mã bao tải / mã seal kẹp chì để nạp bao lên xe. Khi quét nạp, bao tải sẽ tự động chuyển sang trạng thái Đang trung chuyển (IN_TRANSIT) và gán cho bạn."
+              description="Tài xế dùng súng quét mã barcode, nhập mã hoặc dùng Camera điện thoại quét mã bao tải / mã seal kẹp chì để nạp bao lên xe. Nút quét nạp bao sẽ tiếp tục hiển thị cho đến khi chuyến xe được đánh dấu hoàn thành."
               type="info"
               showIcon
               className="rounded-xl"
             />
 
-            {/* Ô quét Barcode lớn */}
-            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl space-y-2">
-              <label className="text-xs font-extrabold text-blue-900 uppercase tracking-wide block">
-                Bắn Súng Quét Barcode Mã Bao Tải Hoặc Mã Kẹp Chì (Seal):
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  ref={loadBagInputRef}
-                  prefix={<Barcode size={20} className="text-blue-600" />}
-                  placeholder="Quét mã bao tải (VD: BAG2611...) rồi nhấn Enter..."
-                  value={loadBagInput}
-                  onChange={e => setLoadBagInput(e.target.value)}
-                  onPressEnter={() => handleLoadBagSubmit()}
-                  className="font-mono font-bold text-lg h-12 uppercase"
-                  autoFocus
-                  disabled={loadBagLoading}
-                />
-                <Button
-                  type="primary"
-                  onClick={() => handleLoadBagSubmit()}
-                  loading={loadBagLoading}
-                  className="bg-blue-600 hover:bg-blue-700 h-12 px-6 font-bold"
-                >
-                  Nạp Vào Xe
-                </Button>
+            {/* Toggle Chế độ Quét: Camera vs Súng bắn mã */}
+            <Segmented
+              size="large"
+              block
+              value={loadBagScanMode}
+              onChange={(val) => handleSwitchLoadBagScanMode(val as 'CAMERA' | 'GUN')}
+              options={[
+                {
+                  label: (
+                    <div className="flex items-center justify-center gap-2 py-1.5 font-bold">
+                      <Camera size={18} className="text-blue-600" />
+                      <span>Quét Bằng Camera (Điện thoại / Webcam)</span>
+                    </div>
+                  ),
+                  value: 'CAMERA',
+                },
+                {
+                  label: (
+                    <div className="flex items-center justify-center gap-2 py-1.5 font-bold">
+                      <Barcode size={18} className="text-indigo-600" />
+                      <span>Súng Bắn Barcode / Nhập Tay</span>
+                    </div>
+                  ),
+                  value: 'GUN',
+                },
+              ]}
+            />
+
+            {/* CHẾ ĐỘ CAMERA */}
+            {loadBagScanMode === 'CAMERA' && (
+              <div className="space-y-2">
+                <div className="relative rounded-2xl overflow-hidden border-2 border-blue-500 bg-black shadow-lg">
+                  <div id="dispatch-loadbag-camera-reader" className="w-full" style={{ minHeight: '280px' }} />
+                  {!loadBagCameraActive && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-black/80 p-4 text-center">
+                      <RefreshCw className="animate-spin text-3xl text-blue-400 mb-2" size={32} />
+                      <p className="text-sm font-semibold mb-0">Đang khởi động Camera quét bao tải...</p>
+                      <p className="text-xs text-gray-400 mt-1">Vui lòng cấp quyền truy cập Camera nếu trình duyệt yêu cầu.</p>
+                    </div>
+                  )}
+                  <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 backdrop-blur-xs">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>Camera Nạp Bao Sẵn Sàng</span>
+                  </div>
+                </div>
+                <div className="text-center text-xs text-gray-500 italic">
+                  💡 Hướng camera vào mã vạch Code-128 hoặc mã QR trên tem dán bao tải A6 hoặc mã seal chì để nạp ngay lên xe.
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* CHẾ ĐỘ SÚNG BẮN MÃ VẠCH / NHẬP TAY */}
+            {loadBagScanMode === 'GUN' && (
+              <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl space-y-2">
+                <label className="text-xs font-extrabold text-blue-900 uppercase tracking-wide block">
+                  Bắn Súng Quét Barcode Mã Bao Tải Hoặc Mã Kẹp Chì (Seal):
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    ref={loadBagInputRef}
+                    prefix={<Barcode size={20} className="text-blue-600" />}
+                    placeholder="Quét mã bao tải (VD: BAG2611...) rồi nhấn Enter..."
+                    value={loadBagInput}
+                    onChange={e => setLoadBagInput(e.target.value)}
+                    onPressEnter={() => handleLoadBagSubmit()}
+                    className="font-mono font-bold text-lg h-12 uppercase"
+                    autoFocus
+                    disabled={loadBagLoading}
+                  />
+                  <Button
+                    type="primary"
+                    onClick={() => handleLoadBagSubmit()}
+                    loading={loadBagLoading}
+                    className="bg-blue-600 hover:bg-blue-700 h-12 px-6 font-bold"
+                  >
+                    Nạp Vào Xe
+                  </Button>
+                  <Button
+                    icon={<Camera size={16} />}
+                    onClick={() => handleSwitchLoadBagScanMode('CAMERA')}
+                    className="h-12 px-3 font-semibold border-blue-400 text-blue-700 hover:bg-blue-50"
+                  >
+                    Camera
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Thống kê bao tải hiện có trên xe */}
             <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex items-center justify-between">
@@ -1150,7 +1637,7 @@ export const DispatchManagementPage: React.FC = () => {
             </div>
 
             <div className="flex justify-end pt-2">
-              <Button onClick={() => setIsLoadBagModalOpen(false)}>Đóng</Button>
+              <Button onClick={handleCloseLoadBagModal}>Đóng</Button>
             </div>
           </div>
         )}
@@ -1417,9 +1904,68 @@ export const DispatchManagementPage: React.FC = () => {
               </table>
             </div>
 
-            <div className="flex justify-end pt-2">
-              <Button onClick={() => setIsDetailModalOpen(false)}>Đóng</Button>
-            </div>
+            {(() => {
+              const detailTotalBags = selectedDispatch.totalBags || selectedDispatch.items?.length || 0;
+              const detailReceivedCount = selectedDispatch.items?.filter(it => it.isReceivedAtDest)?.length || 0;
+              const detailAllReceived = detailTotalBags > 0 && detailReceivedCount === detailTotalBags;
+              const canDriverCompleteInModal = selectedDispatch.status === 'IN_TRANSIT' && detailAllReceived && (selectedDispatch.driverId === user?.id || isAdmin);
+              const canDestScanInModal = selectedDispatch.status === 'IN_TRANSIT' && !detailAllReceived && (selectedDispatch.destWarehouseId === userWarehouseId || isAdmin);
+
+              return (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-gray-100">
+                  <div className="text-xs">
+                    {selectedDispatch.status === 'IN_TRANSIT' && (
+                      detailAllReceived ? (
+                        <span className="text-green-600 font-bold flex items-center gap-1">
+                          <CheckCircle2 size={15} /> Toàn bộ {detailTotalBags} bao tải đã được kho đích quét tiếp nhận
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 font-medium">
+                          ⏳ Đã nhập {detailReceivedCount} / {detailTotalBags} bao tải tại kho đích (Chưa đủ điều kiện hoàn tất)
+                        </span>
+                      )
+                    )}
+                    {selectedDispatch.status === 'COMPLETED' && (
+                      <span className="text-green-700 font-bold flex items-center gap-1">
+                        <CheckCircle2 size={15} /> Chuyến xe điều vận đã hoàn tất nhập kho đích thành công
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button onClick={() => setIsDetailModalOpen(false)}>Đóng</Button>
+                    {canDestScanInModal && (
+                      <Button
+                        type="primary"
+                        icon={<ScanLine size={14} />}
+                        className="bg-purple-600 hover:bg-purple-700 font-bold"
+                        onClick={() => {
+                          setIsDetailModalOpen(false);
+                          handleOpenInboundModal(selectedDispatch);
+                        }}
+                      >
+                        Quét Nhận Bao Tại Hub Đích
+                      </Button>
+                    )}
+                    {canDriverCompleteInModal && (
+                      <Popconfirm
+                        title="Xác nhận hoàn thành chuyến xe"
+                        description={`Toàn bộ ${detailTotalBags} bao tải đã được kho đích [${selectedDispatch.destWarehouseName}] quét nhận đầy đủ. Bạn xác nhận hoàn tất chuyến xe này?`}
+                        onConfirm={async () => {
+                          await handleUpdateStatus(selectedDispatch, 'COMPLETED');
+                          setIsDetailModalOpen(false);
+                        }}
+                        okText="Hoàn thành chuyến đi"
+                        cancelText="Hủy"
+                      >
+                        <Button type="primary" icon={<CheckCircle2 size={14} />} className="bg-green-600 hover:bg-green-700 font-bold">
+                          ✅ Hoàn Thành Chuyến Xe
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </Modal>

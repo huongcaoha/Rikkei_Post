@@ -132,14 +132,13 @@ public class DispatchServiceImpl implements DispatchService {
     @Override
     @Transactional
     public DispatchOrderResponse createDispatchOrder(CreateDispatchOrderRequest request, Long userId, List<String> userRoles) {
-        boolean isTruckDriver = userRoles != null && userRoles.stream()
-                .anyMatch(r -> "ROLE_TRUCK_DRIVER".equalsIgnoreCase(r));
-        boolean isManagerOrAdmin = userRoles != null && userRoles.stream()
-                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER", "ROLE_WAREHOUSE_STAFF")
+        boolean isAuthorized = userRoles != null && userRoles.stream()
+                .anyMatch(r -> List.of("ROLE_ADMIN", "ROLE_BRANCH_MANAGER", "ROLE_POST_OFFICE_MANAGER")
                         .contains(r.toUpperCase()));
 
-        if (isTruckDriver && !isManagerOrAdmin) {
-            throw new org.springframework.security.access.AccessDeniedException("Tài xế xe tải không được phép tạo lệnh điều vận! Chỉ quản lý kho/Hub mới có quyền tạo lệnh.");
+        if (!isAuthorized) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Chỉ có Quản lý kho Hub trở lên (Admin, Quản lý chi nhánh, Quản lý bưu cục/Hub) mới có quyền tạo lệnh điều vận!");
         }
         Warehouse origin = warehouseRepository.findById(request.getOriginWarehouseId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kho xuất phát ID: " + request.getOriginWarehouseId()));
@@ -439,7 +438,11 @@ public class DispatchServiceImpl implements DispatchService {
                 throw new IllegalStateException("Chuyến xe chưa nạp bao tải nào, không thể hoàn thành chuyến đi!");
             }
             List<DispatchOrderItem> unreceived = dispatch.getItems().stream()
-                    .filter(it -> !Boolean.TRUE.equals(it.getIsReceivedAtDest()))
+                    .filter(it -> {
+                        boolean received = Boolean.TRUE.equals(it.getIsReceivedAtDest())
+                                || (it.getMasterBag() != null && List.of("ARRIVED_AT_HUB", "RECEIVED", "UNSEALED").contains(it.getMasterBag().getStatus()));
+                        return !received;
+                    })
                     .toList();
             if (!unreceived.isEmpty()) {
                 String unreceivedCodes = unreceived.stream()
@@ -477,6 +480,25 @@ public class DispatchServiceImpl implements DispatchService {
 
         DispatchOrder saved = dispatchOrderRepository.save(dispatch);
         log.info("Lệnh điều vận {} chuyển trạng thái: {} -> {}", dispatch.getDispatchCode(), currentStatus, targetStatus);
+
+        // Bắn WebSocket thông báo trạng thái chuyến xe cập nhật
+        try {
+            Map<String, Object> dispatchMsg = new HashMap<>();
+            dispatchMsg.put("type", "DISPATCH_STATUS_UPDATED");
+            dispatchMsg.put("dispatchId", saved.getId());
+            dispatchMsg.put("dispatchCode", saved.getDispatchCode());
+            dispatchMsg.put("status", saved.getStatus());
+            dispatchMsg.put("message", String.format("Chuyến xe điều vận [%s] đã cập nhật sang trạng thái [%s]!", saved.getDispatchCode(), targetStatus));
+
+            webSocketNotificationService.notifyGeneric("/topic/dispatch-orders", dispatchMsg);
+            webSocketNotificationService.notifyGeneric("/topic/master-bags", dispatchMsg);
+            if (saved.getDriver() != null) {
+                webSocketNotificationService.notifyGeneric("/topic/driver/" + saved.getDriver().getId(), dispatchMsg);
+            }
+        } catch (Exception ex) {
+            log.warn("Lỗi gửi WebSocket updateDispatchStatus: {}", ex.getMessage());
+        }
+
         return mapToResponse(saved);
     }
 
@@ -690,6 +712,10 @@ public class DispatchServiceImpl implements DispatchService {
         for (BagItem bi : bagItems) {
             orderRepository.findByTrackingCode(bi.getTrackingCode()).ifPresent(order -> {
                 order.setCurrentStatus("AT_SORTING_HUB");
+                order.setAssignedPostOfficeId(destWh.getId());
+                order.setAssignedShipperId(null);
+                order.setAssignedShipperName(null);
+                order.setAssignedShipperPhone(null);
                 orderRepository.save(order);
                 if (redisService != null) {
                     redisService.evictOrderCache(order.getTrackingCode());
@@ -718,20 +744,34 @@ public class DispatchServiceImpl implements DispatchService {
 
         log.info("Kho {} đã quét tiếp nhận bao tải {} thuộc chuyến xe {}", destWh.getName(), bag.getBagCode(), dispatch.getDispatchCode());
 
-        // Kiểm tra nếu tất cả bao tải trong chuyến xe đã được nhận hết -> Tự động chuyển COMPLETED
+        // Kiểm tra xem tất cả bao tải trong chuyến xe đã được nhận hết chưa
         boolean allReceived = dispatch.getItems().stream().allMatch(it -> Boolean.TRUE.equals(it.getIsReceivedAtDest()));
-        if (allReceived) {
-            dispatch.setStatus("COMPLETED");
-            dispatch.setCompletedTime(now);
-            if (dispatch.getTruck() != null) {
-                dispatch.getTruck().setStatus("AT_WAREHOUSE");
-                dispatch.getTruck().setCurrentWarehouse(destWh);
-                truckRepository.save(dispatch.getTruck());
+        dispatchOrderRepository.save(dispatch);
+
+        // Gửi thông báo WebSocket realtime
+        try {
+            Map<String, Object> dispatchMsg = new HashMap<>();
+            dispatchMsg.put("type", "DISPATCH_BAG_RECEIVED");
+            dispatchMsg.put("bagCode", bag.getBagCode());
+            dispatchMsg.put("sealNumber", bag.getSealNumber());
+            dispatchMsg.put("dispatchId", dispatch.getId());
+            dispatchMsg.put("dispatchCode", dispatch.getDispatchCode());
+            dispatchMsg.put("status", dispatch.getStatus());
+            dispatchMsg.put("isReceivedAtDest", true);
+            dispatchMsg.put("allReceived", allReceived);
+            dispatchMsg.put("receiverUserName", receiver.getFullName());
+            dispatchMsg.put("receivedAt", now.toString());
+            dispatchMsg.put("message", String.format("Bao tải [%s] đã được quét tiếp nhận tại kho đích [%s]!", bag.getBagCode(), destWh.getName()));
+
+            webSocketNotificationService.notifyGeneric("/topic/dispatch-orders", dispatchMsg);
+            webSocketNotificationService.notifyGeneric("/topic/master-bags", dispatchMsg);
+            if (dispatch.getDriver() != null) {
+                webSocketNotificationService.notifyGeneric("/topic/driver/" + dispatch.getDriver().getId(), dispatchMsg);
             }
-            log.info("Toàn bộ bao tải trên chuyến xe {} đã được quét nhận hết. Chuyến xe tự động hoàn tất COMPLETED!", dispatch.getDispatchCode());
+        } catch (Exception ex) {
+            log.warn("Lỗi gửi WebSocket khi scanBagInbound: {}", ex.getMessage());
         }
 
-        dispatchOrderRepository.save(dispatch);
         return mapToResponse(dispatch);
     }
 
@@ -777,6 +817,15 @@ public class DispatchServiceImpl implements DispatchService {
     private DispatchOrderResponse mapToResponse(DispatchOrder d) {
         List<DispatchOrderItemResponse> itemDtos = d.getItems().stream().map(it -> {
             MasterBag mb = it.getMasterBag();
+            boolean isReceived = Boolean.TRUE.equals(it.getIsReceivedAtDest())
+                    || (mb != null && List.of("ARRIVED_AT_HUB", "RECEIVED", "UNSEALED").contains(mb.getStatus()));
+            if (isReceived && !Boolean.TRUE.equals(it.getIsReceivedAtDest())) {
+                it.setIsReceivedAtDest(true);
+                if (it.getReceivedAt() == null) {
+                    it.setReceivedAt(mb != null && mb.getArrivedAtHubAt() != null ? mb.getArrivedAtHubAt() : LocalDateTime.now());
+                }
+                dispatchOrderItemRepository.save(it);
+            }
             return DispatchOrderItemResponse.builder()
                     .id(it.getId())
                     .masterBagId(mb != null ? mb.getId() : null)
@@ -787,8 +836,8 @@ public class DispatchServiceImpl implements DispatchService {
                     .bagStatus(mb != null ? mb.getStatus() : "")
                     .totalItems(it.getTotalItems())
                     .weightKg(it.getWeightKg())
-                    .isReceivedAtDest(it.getIsReceivedAtDest())
-                    .receivedAt(it.getReceivedAt())
+                    .isReceivedAtDest(isReceived)
+                    .receivedAt(it.getReceivedAt() != null ? it.getReceivedAt() : (mb != null ? mb.getArrivedAtHubAt() : null))
                     .receiverUserId(it.getReceiverUserId())
                     .receiverUserName(it.getReceiverUserName())
                     .scannedAt(it.getScannedAt())
@@ -797,8 +846,8 @@ public class DispatchServiceImpl implements DispatchService {
 
         String statusDesc = switch (d.getStatus()) {
             case "PICKED_UP" -> "Đã nhận hàng tại kho";
-            case "IN_TRANSIT" -> "Đang đi giao";
-            case "COMPLETED" -> "Đã giao xong";
+            case "IN_TRANSIT" -> "Đang vận chuyển";
+            case "COMPLETED" -> "Đã hoàn thành chuyến";
             case "CANCELLED" -> "Đã hủy chuyến";
             default -> d.getStatus();
         };

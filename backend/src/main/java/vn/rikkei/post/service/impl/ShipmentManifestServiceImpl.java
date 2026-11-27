@@ -267,6 +267,15 @@ public class ShipmentManifestServiceImpl implements ShipmentManifestService {
 
             List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(bag.getId());
             for (BagItem item : items) {
+                orderRepository.findByTrackingCode(item.getTrackingCode()).ifPresent(order -> {
+                    order.setCurrentStatus("AT_SORTING_HUB");
+                    order.setAssignedPostOfficeId(manifest.getDestHubId());
+                    order.setAssignedShipperId(null);
+                    order.setAssignedShipperName(null);
+                    order.setAssignedShipperPhone(null);
+                    orderRepository.save(order);
+                });
+
                 OrderTrackingLog logEntry = OrderTrackingLog.builder()
                         .trackingCode(item.getTrackingCode())
                         .status("IN_WAREHOUSE")

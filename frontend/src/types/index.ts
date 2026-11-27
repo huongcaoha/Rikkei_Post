@@ -110,6 +110,7 @@ export interface Order {
   assignedShipperName?: string;
   assignedShipperPhone?: string;
   assignedPostOfficeId?: number;
+  postOfficeName?: string;
   assignedRouteId?: number;
   pickupCompletedAt?: string;
   deliveredAt?: string;

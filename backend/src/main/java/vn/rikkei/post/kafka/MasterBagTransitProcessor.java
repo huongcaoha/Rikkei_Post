@@ -28,6 +28,7 @@ public class MasterBagTransitProcessor {
     private final OrderTrackingLogRepository trackingLogRepository;
     private final WarehouseRepository warehouseRepository;
     private final WebSocketNotificationService webSocketNotificationService;
+    private final vn.rikkei.post.repository.DispatchOrderItemRepository dispatchOrderItemRepository;
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
 
@@ -143,6 +144,9 @@ public class MasterBagTransitProcessor {
                 if (hub != null) {
                     order.setAssignedPostOfficeId(hub.getId());
                 }
+                order.setAssignedShipperId(null);
+                order.setAssignedShipperName(null);
+                order.setAssignedShipperPhone(null);
                 orderRepository.save(order);
 
                 String desc = String.format("Kho Hub trung chuyển [%s] đã quét tiếp nhận bao tải [%s] (Kẹp chì: %s) từ tài xế %s vào lúc %s. Người tiếp nhận: %s. Kiện hàng đã cập bến Hub an toàn và sẵn sàng chia chọn.",
@@ -176,13 +180,61 @@ public class MasterBagTransitProcessor {
             });
         }
 
+        // Đồng bộ trạng thái DispatchOrderItem nếu bao tải nằm trong chuyến xe điều vận
+        try {
+            dispatchOrderItemRepository.findFirstByBagCodeOrderByScannedAtDesc(event.getBagCode()).ifPresent(item -> {
+                item.setIsReceivedAtDest(true);
+                item.setReceivedAt(LocalDateTime.now());
+                if (event.getOperatorId() != null) {
+                    item.setReceiverUserId(event.getOperatorId());
+                }
+                if (event.getOperatorName() != null) {
+                    item.setReceiverUserName(event.getOperatorName());
+                }
+                dispatchOrderItemRepository.save(item);
+
+                vn.rikkei.post.entity.DispatchOrder dispatch = item.getDispatchOrder();
+                if (dispatch != null) {
+                    boolean allReceived = dispatch.getItems().stream()
+                            .allMatch(it -> Boolean.TRUE.equals(it.getIsReceivedAtDest()) || it.getId().equals(item.getId()));
+
+                    Map<String, Object> dispatchMsg = new HashMap<>();
+                    dispatchMsg.put("type", "DISPATCH_BAG_RECEIVED");
+                    dispatchMsg.put("bagCode", event.getBagCode());
+                    dispatchMsg.put("sealNumber", event.getSealNumber());
+                    dispatchMsg.put("dispatchId", dispatch.getId());
+                    dispatchMsg.put("dispatchCode", dispatch.getDispatchCode());
+                    dispatchMsg.put("status", dispatch.getStatus());
+                    dispatchMsg.put("isReceivedAtDest", true);
+                    dispatchMsg.put("allReceived", allReceived);
+                    dispatchMsg.put("receiverUserName", event.getOperatorName());
+                    dispatchMsg.put("receivedAt", LocalDateTime.now().toString());
+                    dispatchMsg.put("message", String.format("Kho đích [%s] đã quét tiếp nhận bao tải [%s] của chuyến xe [%s]!",
+                            hubName, event.getBagCode(), dispatch.getDispatchCode()));
+
+                    webSocketNotificationService.notifyGeneric("/topic/dispatch-orders", dispatchMsg);
+                    webSocketNotificationService.notifyGeneric("/topic/master-bags", dispatchMsg);
+                    if (dispatch.getDriver() != null) {
+                        webSocketNotificationService.notifyGeneric("/topic/driver/" + dispatch.getDriver().getId(), dispatchMsg);
+                    }
+                }
+            });
+        } catch (Exception ex) {
+            log.warn("Lỗi đồng bộ DispatchOrderItem trong handleArrivedAtHub: {}", ex.getMessage());
+        }
+
         // Thông báo WebSocket
         try {
             Map<String, Object> msg = new HashMap<>();
             msg.put("type", "MASTER_BAG_ARRIVED_AT_HUB");
             msg.put("bagCode", event.getBagCode());
+            msg.put("sealNumber", event.getSealNumber());
             msg.put("hubName", hubName);
             msg.put("status", "ARRIVED_AT_HUB");
+            msg.put("message", String.format("Bao tải [%s]%s đã cập bến và quét tiếp nhận vào kho Hub [%s] thành công!",
+                    event.getBagCode(),
+                    event.getSealNumber() != null ? " (Seal: " + event.getSealNumber() + ")" : "",
+                    hubName));
             webSocketNotificationService.notifyGeneric("/topic/master-bags", msg);
             if (event.getDestWarehouseId() != null) {
                 webSocketNotificationService.notifyGeneric("/topic/warehouse/" + event.getDestWarehouseId(), msg);

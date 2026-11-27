@@ -33,6 +33,7 @@ public class MasterBagServiceImpl implements MasterBagService {
         private final vn.rikkei.post.repository.TruckRepository truckRepository;
         private final vn.rikkei.post.kafka.MasterBagKafkaProducer kafkaProducer;
         private final vn.rikkei.post.service.RedisService redisService;
+        private final DispatchOrderItemRepository dispatchOrderItemRepository;
 
         @Override
         public List<MasterBagResponse> getAllBags() {
@@ -364,8 +365,11 @@ public class MasterBagServiceImpl implements MasterBagService {
                 List<BagItem> items = bagItemRepository.findByMasterBagIdOrderByScannedAtDesc(bagId);
                 for (BagItem it : items) {
                         orderRepository.findByTrackingCode(it.getTrackingCode()).ifPresent(order -> {
-                                order.setCurrentStatus("IN_WAREHOUSE");
+                                order.setCurrentStatus("AT_SORTING_HUB");
                                 order.setAssignedPostOfficeId(bag.getDestWarehouse().getId());
+                                order.setAssignedShipperId(null);
+                                order.setAssignedShipperName(null);
+                                order.setAssignedShipperPhone(null);
                                 orderRepository.save(order);
                                 if (redisService != null) {
                                         redisService.evictOrderCache(order.getTrackingCode());
@@ -689,6 +693,46 @@ public class MasterBagServiceImpl implements MasterBagService {
                                 .build();
 
                 kafkaProducer.sendTransitEvent(event);
+
+                // Cập nhật trạng thái DispatchOrderItem nếu bao tải này nằm trong chuyến xe điều vận
+                try {
+                    dispatchOrderItemRepository.findFirstByBagCodeOrderByScannedAtDesc(saved.getBagCode()).ifPresent(item -> {
+                        item.setIsReceivedAtDest(true);
+                        item.setReceivedAt(LocalDateTime.now());
+                        item.setReceiverUserId(operator.getId());
+                        item.setReceiverUserName(operator.getFullName());
+                        dispatchOrderItemRepository.save(item);
+
+                        DispatchOrder dispatch = item.getDispatchOrder();
+                        if (dispatch != null) {
+                            boolean allReceived = dispatch.getItems().stream()
+                                    .allMatch(it -> Boolean.TRUE.equals(it.getIsReceivedAtDest()) || it.getId().equals(item.getId()));
+
+                            Map<String, Object> dispatchMsg = new HashMap<>();
+                            dispatchMsg.put("type", "DISPATCH_BAG_RECEIVED");
+                            dispatchMsg.put("bagCode", saved.getBagCode());
+                            dispatchMsg.put("sealNumber", saved.getSealNumber());
+                            dispatchMsg.put("dispatchId", dispatch.getId());
+                            dispatchMsg.put("dispatchCode", dispatch.getDispatchCode());
+                            dispatchMsg.put("status", dispatch.getStatus());
+                            dispatchMsg.put("isReceivedAtDest", true);
+                            dispatchMsg.put("allReceived", allReceived);
+                            dispatchMsg.put("receiverUserName", operator.getFullName());
+                            dispatchMsg.put("receivedAt", LocalDateTime.now().toString());
+                            dispatchMsg.put("message", String.format("Kho đích [%s] đã quét tiếp nhận bao tải [%s] của chuyến xe [%s]!",
+                                    hub.getName(), saved.getBagCode(), dispatch.getDispatchCode()));
+
+                            webSocketNotificationService.notifyGeneric("/topic/dispatch-orders", dispatchMsg);
+                            webSocketNotificationService.notifyGeneric("/topic/master-bags", dispatchMsg);
+                            if (dispatch.getDriver() != null) {
+                                webSocketNotificationService.notifyGeneric("/topic/driver/" + dispatch.getDriver().getId(), dispatchMsg);
+                            }
+                        }
+                    });
+                } catch (Exception ex) {
+                    log.warn("Lỗi cập nhật DispatchOrderItem hoặc gửi WebSocket trong hubScanInbound: {}", ex.getMessage());
+                }
+
                 log.info("Kho Hub {} ({}) đã quét tiếp nhận bao tải {} từ tài xế {}",
                                 hub.getName(), operator.getFullName(), saved.getBagCode(),
                                 saved.getAssignedDriverName());

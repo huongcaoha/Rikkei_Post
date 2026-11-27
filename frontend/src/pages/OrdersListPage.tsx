@@ -87,6 +87,8 @@ export const OrdersListPage: React.FC = () => {
     else if (order.currentStatus === 'PICKED_UP') nextStatus = canInboundWarehouse ? 'AT_SORTING_HUB' : 'DELIVERING';
     else if (order.currentStatus === 'AT_SORTING_HUB' || order.currentStatus === 'IN_TRANSIT') nextStatus = 'DELIVERING';
     else if (order.currentStatus === 'DELIVERING') nextStatus = 'DELIVERED';
+    else if (order.currentStatus === 'DELIVERY_FAILED') nextStatus = canInboundWarehouse ? 'AT_SORTING_HUB' : 'DELIVERING';
+    else if (order.currentStatus === 'RETURNING') nextStatus = 'RETURNED';
     statusForm.setFieldsValue({ status: nextStatus, note: '' });
     setStatusModalOpen(true);
   };
@@ -111,8 +113,9 @@ export const OrdersListPage: React.FC = () => {
       CREATED: { color: 'blue', label: 'Mới tạo' },
       PICKED_UP: { color: 'cyan', label: 'Đã lấy hàng' },
       IN_TRANSIT: { color: 'purple', label: 'Đang luân chuyển' },
-      AT_SORTING_HUB: { color: 'geekblue', label: 'Tại Hub khai thác' },
-      DELIVERING: { color: 'orange', label: 'Đang phát hàng' },
+      AT_SORTING_HUB: { color: 'geekblue', label: 'Đang ở kho (Chờ phát)' },
+      IN_WAREHOUSE: { color: 'geekblue', label: 'Đang ở kho (Chờ phát)' },
+      DELIVERING: { color: 'orange', label: 'Đang đi giao' },
       DELIVERED: { color: 'green', label: 'Giao thành công' },
       DELIVERY_FAILED: { color: 'red', label: 'Giao thất bại' },
       RETURNING: { color: 'volcano', label: 'Đang hoàn hàng' },
@@ -194,9 +197,19 @@ export const OrdersListPage: React.FC = () => {
       render: (_: any, record: Order) => (
         <div className="space-y-1">
           <div>{getStatusTag(record.currentStatus)}</div>
-          {record.assignedShipperName && (
+          {record.currentStatus === 'DELIVERING' && record.assignedShipperName && (
+            <div className="text-xs text-orange-700 font-semibold">
+              Bưu tá giao: {record.assignedShipperName} ({record.assignedShipperPhone || ''})
+            </div>
+          )}
+          {record.currentStatus === 'PICKED_UP' && record.assignedShipperName && (
+            <div className="text-xs text-cyan-700 font-semibold">
+              Bưu tá lấy: {record.assignedShipperName} ({record.assignedShipperPhone || ''})
+            </div>
+          )}
+          {(record.currentStatus === 'AT_SORTING_HUB' || record.currentStatus === 'IN_WAREHOUSE') && (
             <div className="text-xs text-blue-700 font-semibold">
-              Bưu tá: {record.assignedShipperName} ({record.assignedShipperPhone || ''})
+              Kho hiện tại: {record.postOfficeName || (record.assignedPostOfficeId ? `Bưu cục #${record.assignedPostOfficeId}` : 'Kho bưu cục')}
             </div>
           )}
           <div className="text-[11px] text-gray-500">
@@ -516,9 +529,20 @@ export const OrdersListPage: React.FC = () => {
                     { label: 'Đang trên đường đi phát (DELIVERING)', value: 'DELIVERING' },
                     { label: 'Giao hàng thành công (DELIVERED)', value: 'DELIVERED' },
                     { label: 'Giao hàng thất bại (DELIVERY_FAILED)', value: 'DELIVERY_FAILED' },
-                    { label: 'Đang chuyển hoàn về shop (RETURNING)', value: 'RETURNING' },
+                    {
+                      label: (selectedOrder?.deliveryAttempts || 0) >= 3
+                        ? 'Đang chuyển hoàn về shop (RETURNING)'
+                        : `Đang chuyển hoàn về shop (RETURNING) - Cần phát đủ 3 lần (${selectedOrder?.deliveryAttempts || 0}/3)`,
+                      value: 'RETURNING',
+                      disabled: (selectedOrder?.deliveryAttempts || 0) < 3,
+                    },
                   ]}
                 />
+                {selectedOrder?.currentStatus === 'DELIVERY_FAILED' && (
+                  <div className="text-[11px] text-blue-600 mt-1 font-medium">
+                    * Đơn giao thất bại: Vui lòng chuyển sang [Đã nhập kho bưu cục (AT_SORTING_HUB)] để lưu kho và phát lại vào hôm sau. Chỉ khi giao không thành công đủ 3 lần mới được phép chuyển hoàn về Shop.
+                  </div>
+                )}
                 {!canInboundWarehouse && (
                   <div className="text-[11px] text-amber-600 mt-1 italic">
                     * Quyền hạn bưu tá: Trạng thái [Đã nhập kho bưu cục] chỉ do Nhân viên kho hoặc Quản lý kho tiếp nhận và xác nhận khi bạn mang hàng về bưu cục.

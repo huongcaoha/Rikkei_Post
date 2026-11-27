@@ -55,6 +55,8 @@ class MasterBagServiceTest {
     private MasterBagKafkaProducer kafkaProducer;
     @Mock
     private RedisService redisService;
+    @Mock
+    private DispatchOrderItemRepository dispatchOrderItemRepository;
 
     @InjectMocks
     private MasterBagServiceImpl masterBagService;

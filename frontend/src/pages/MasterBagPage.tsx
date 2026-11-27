@@ -20,6 +20,7 @@ import {
   Alert,
   Tooltip,
   Segmented,
+  DatePicker,
 } from 'antd';
 import {
   Package,
@@ -53,6 +54,7 @@ import { useAuth } from '../context/AuthContext';
 import { useOrderWebSocket } from '../hooks/useOrderWebSocket';
 import { MasterBag, Warehouse } from '../types';
 import { MasterBagThermalLabel } from '../components/MasterBagThermalLabel';
+import { ThermalLabel } from '../components/ThermalLabel';
 import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
@@ -78,6 +80,7 @@ export const MasterBagPage: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [filterDestWarehouseId, setFilterDestWarehouseId] = useState<number | 'ALL'>('ALL');
   const [searchKeyword, setSearchKeyword] = useState<string>('');
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
 
   // Tự động lắng nghe sự kiện WebSocket cập nhật danh sách bao tải
   useOrderWebSocket({
@@ -139,6 +142,7 @@ export const MasterBagPage: React.FC = () => {
   const lastScannedTimeRef = useRef<number>(0);
   const isProcessingRef = useRef<boolean>(false);
   const gunInputRef = useRef<any>(null);
+  const successfullyScannedCodesRef = useRef<Set<string>>(new Set());
 
   // Drawer chi tiết bàn đóng bao
   const [activeBag, setActiveBag] = useState<MasterBag | null>(null);
@@ -154,9 +158,31 @@ export const MasterBagPage: React.FC = () => {
 
   // Modal in nhãn bao
   const [printBag, setPrintBag] = useState<MasterBag | null>(null);
+  // Modal in tem vận đơn lẻ
+  const [printOrder, setPrintOrder] = useState<any | null>(null);
+
+  // Camera quét mã đơn hàng khi tạo bao tải mới
+  const [newBagCameraOpen, setNewBagCameraOpen] = useState<boolean>(false);
+  const [newBagCameraActive, setNewBagCameraActive] = useState<boolean>(false);
+  const [newBagFacingMode, setNewBagFacingMode] = useState<'environment' | 'user'>('environment');
+  const [newBagLastFeedback, setNewBagLastFeedback] = useState<{
+    code: string;
+    message: string;
+    success: boolean;
+    time: string;
+  } | null>(null);
+
+  const newBagHtml5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const newBagLastCodeRef = useRef<string>('');
+  const newBagLastTimeRef = useRef<number>(0);
+  const newBagProcessingRef = useRef<boolean>(false);
 
   useEffect(() => {
     fetchData();
+    return () => {
+      stopCamera();
+      stopNewBagCamera();
+    };
   }, []);
 
   const fetchData = async () => {
@@ -231,6 +257,187 @@ export const MasterBagPage: React.FC = () => {
 
   const handleRemoveTrackingFromNewBag = (trackingCode: string) => {
     setScannedItems((prev) => prev.filter((item) => item.trackingCode !== trackingCode));
+  };
+
+  const handlePrintOrderWaybill = async (trackingCode: string) => {
+    try {
+      const order = await orderApi.getOrderByTrackingCode(trackingCode);
+      setPrintOrder(order);
+    } catch (err: any) {
+      message.error('Không tìm thấy thông tin đơn hàng để in tem: ' + trackingCode);
+    }
+  };
+
+  const startNewBagCamera = async (mode: 'environment' | 'user' = 'environment') => {
+    try {
+      if (newBagHtml5QrCodeRef.current) {
+        await stopNewBagCamera();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      const element = document.getElementById('new-bag-camera-reader');
+      if (!element) return;
+
+      const qrCode = new Html5Qrcode('new-bag-camera-reader');
+      newBagHtml5QrCodeRef.current = qrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 280, height: 200 },
+        aspectRatio: 1.333,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+      };
+
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          const backCam =
+            cameras.find(
+              (c) =>
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('sau') ||
+                c.label.toLowerCase().includes('environment')
+            ) || cameras[cameras.length - 1];
+
+          await qrCode.start(
+            mode === 'environment'
+              ? backCam
+                ? backCam.id
+                : { facingMode: 'environment' }
+              : { facingMode: 'user' },
+            config,
+            (decodedText) => handleNewBagCameraDecoded(decodedText),
+            () => {}
+          );
+        } else {
+          await qrCode.start(
+            { facingMode: mode },
+            config,
+            (decodedText) => handleNewBagCameraDecoded(decodedText),
+            () => {}
+          );
+        }
+        setNewBagCameraActive(true);
+      } catch (camErr) {
+        await qrCode.start(
+          { facingMode: mode },
+          config,
+          (decodedText) => handleNewBagCameraDecoded(decodedText),
+          () => {}
+        );
+        setNewBagCameraActive(true);
+      }
+    } catch (err: any) {
+      console.warn('Lỗi bật camera quét đơn vào bao:', err);
+      setNewBagCameraActive(false);
+    }
+  };
+
+  const stopNewBagCamera = async () => {
+    if (newBagHtml5QrCodeRef.current) {
+      try {
+        if (newBagHtml5QrCodeRef.current.isScanning) {
+          await newBagHtml5QrCodeRef.current.stop();
+        }
+        await newBagHtml5QrCodeRef.current.clear();
+      } catch (e) {
+        // Ignore
+      }
+      newBagHtml5QrCodeRef.current = null;
+    }
+    setNewBagCameraActive(false);
+  };
+
+  const handleOpenNewBagCameraModal = () => {
+    setNewBagCameraOpen(true);
+    setNewBagLastFeedback(null);
+    setTimeout(() => {
+      startNewBagCamera(newBagFacingMode);
+    }, 350);
+  };
+
+  const handleCloseNewBagCameraModal = async () => {
+    await stopNewBagCamera();
+    setNewBagCameraOpen(false);
+    setNewBagLastFeedback(null);
+  };
+
+  const handleSwitchNewBagCamera = async () => {
+    const nextMode = newBagFacingMode === 'environment' ? 'user' : 'environment';
+    setNewBagFacingMode(nextMode);
+    await startNewBagCamera(nextMode);
+  };
+
+  const handleNewBagCameraDecoded = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) return;
+
+    const now = Date.now();
+    if (code === newBagLastCodeRef.current && now - newBagLastTimeRef.current < 2500) {
+      return;
+    }
+
+    if (newBagProcessingRef.current) return;
+    newBagProcessingRef.current = true;
+    newBagLastCodeRef.current = code;
+    newBagLastTimeRef.current = now;
+
+    if (scannedItems.some((it) => it.trackingCode === code)) {
+      playBeep(false);
+      setNewBagLastFeedback({
+        code,
+        message: `Đơn hàng [${code}] đã có trong bao tải rồi!`,
+        success: false,
+        time: dayjs().format('HH:mm:ss'),
+      });
+      newBagProcessingRef.current = false;
+      return;
+    }
+
+    try {
+      const order = await orderApi.getOrderByTrackingCode(code);
+      playBeep(true);
+      setScannedItems((prev) => [
+        ...prev,
+        {
+          trackingCode: code,
+          itemName: order.itemName || 'Hàng hóa tổng hợp',
+          weightGram: order.billableWeightGram || order.actualWeightGram || 500,
+          receiverAddress: order.receiverAddress,
+        },
+      ]);
+      setNewBagLastFeedback({
+        code,
+        message: `Đã quét đơn hàng [${code}] vào bao thành công! (${order.itemName || 'Hàng hóa'})`,
+        success: true,
+        time: dayjs().format('HH:mm:ss'),
+      });
+    } catch (err: any) {
+      playBeep(true);
+      setScannedItems((prev) => [
+        ...prev,
+        {
+          trackingCode: code,
+          itemName: 'Kiện hàng gom bao',
+          weightGram: 500,
+        },
+      ]);
+      setNewBagLastFeedback({
+        code,
+        message: `Đã thêm mã vận đơn [${code}] vào bao!`,
+        success: true,
+        time: dayjs().format('HH:mm:ss'),
+      });
+    } finally {
+      setTimeout(() => {
+        newBagProcessingRef.current = false;
+      }, 500);
+    }
   };
 
   const handleCreateBag = async () => {
@@ -442,6 +649,11 @@ export const MasterBagPage: React.FC = () => {
     const code = rawCode.trim().toUpperCase();
     if (!code) return;
 
+    // Bỏ qua nếu mã này đã được quét thành công trong phiên làm việc hiện tại
+    if (successfullyScannedCodesRef.current.has(code)) {
+      return;
+    }
+
     // Chặn quét lặp cùng 1 mã trong vòng 2.5 giây
     const now = Date.now();
     if (code === lastScannedCodeRef.current && now - lastScannedTimeRef.current < 2500) {
@@ -471,6 +683,10 @@ export const MasterBagPage: React.FC = () => {
         user?.assignedPostOfficeId ||
         (warehouses.length > 0 ? warehouses[0].id : 1);
       const updated = await wmsApi.hubScanInbound(code, effectiveWhId);
+
+      successfullyScannedCodesRef.current.add(code);
+      if (updated.bagCode) successfullyScannedCodesRef.current.add(updated.bagCode.toUpperCase());
+      if (updated.sealNumber) successfullyScannedCodesRef.current.add(updated.sealNumber.toUpperCase());
 
       playBeep(true);
       setLastScannedFeedback({
@@ -541,6 +757,7 @@ export const MasterBagPage: React.FC = () => {
     setHubScanModalOpen(false);
     setHubScanInput('');
     setLastScannedFeedback(null);
+    successfullyScannedCodesRef.current.clear();
   };
 
   const handleOpenSealModal = (bag: MasterBag) => {
@@ -598,6 +815,13 @@ export const MasterBagPage: React.FC = () => {
   const filteredBags = bags.filter((b) => {
     if (filterStatus !== 'ALL' && b.status !== filterStatus) return false;
     if (filterDestWarehouseId !== 'ALL' && b.destWarehouseId !== filterDestWarehouseId) return false;
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      if (!b.createdAt) return false;
+      const created = dayjs(b.createdAt);
+      if (created.isBefore(dateRange[0].startOf('day')) || created.isAfter(dateRange[1].endOf('day'))) {
+        return false;
+      }
+    }
     if (searchKeyword.trim()) {
       const kw = searchKeyword.trim().toLowerCase();
       const matchCode = b.bagCode.toLowerCase().includes(kw);
@@ -727,19 +951,6 @@ export const MasterBagPage: React.FC = () => {
             </Button>
           )}
 
-          {['IN_TRANSIT', 'DISPATCHED', 'ASSIGNED_TO_DRIVER', 'SEALED'].includes(record.status) && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<ScanLine size={14} />}
-              onClick={() => handleOpenHubScanModal(record)}
-              className="bg-purple-600 hover:bg-purple-700 text-xs font-semibold"
-              title="Quét tiếp nhận nhập kho đích/Hub"
-            >
-              Quét nhập kho
-            </Button>
-          )}
-
           <Button
             size="small"
             icon={<Printer size={14} />}
@@ -770,25 +981,25 @@ export const MasterBagPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <Button icon={<RotateCcw size={16} />} onClick={fetchData} loading={loading}>
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto mt-2 md:mt-0">
+          <Button icon={<RotateCcw size={15} />} onClick={fetchData} loading={loading} className="text-xs">
             Làm mới
           </Button>
           <Button
             type="default"
-            icon={<Scan size={16} className="text-purple-600" />}
+            icon={<Scan size={15} className="text-purple-600" />}
             onClick={() => handleOpenHubScanModal()}
-            className="border-purple-600 text-purple-700 hover:bg-purple-50 font-bold shadow-xs"
+            className="border-purple-600 text-purple-700 hover:bg-purple-50 font-bold shadow-xs text-xs"
           >
             Quét Nhập Kho Bao Tải (Súng / Camera)
           </Button>
           <Button
             type="primary"
-            icon={<Plus size={16} />}
+            icon={<Plus size={15} />}
             onClick={handleOpenCreateModal}
-            className="bg-red-600 hover:bg-red-700"
+            className="bg-red-600 hover:bg-red-700 font-bold text-xs"
           >
-            Tạo bao tải mới
+            + Tạo bao tải mới
           </Button>
         </div>
       </div>
@@ -953,6 +1164,15 @@ export const MasterBagPage: React.FC = () => {
               <Option value="RECEIVED">Đã nhận kho đích</Option>
               <Option value="UNSEALED">Đã cắt chì / Mở bao</Option>
             </Select>
+
+            <DatePicker.RangePicker
+              format="DD/MM/YYYY"
+              placeholder={['Từ ngày', 'Đến ngày']}
+              value={dateRange}
+              onChange={(dates) => setDateRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null] | null)}
+              style={{ width: 250 }}
+              allowClear
+            />
           </div>
 
           <Text type="secondary" className="text-xs">
@@ -960,14 +1180,129 @@ export const MasterBagPage: React.FC = () => {
           </Text>
         </div>
 
-        <Table
-          columns={columns}
-          dataSource={filteredBags}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 10, showSizeChanger: true }}
-          className="overflow-x-auto"
-        />
+        {/* Bảng dữ liệu dành cho Desktop */}
+        <div className="hidden md:block">
+          <Table
+            columns={columns}
+            dataSource={filteredBags}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 10, showSizeChanger: true }}
+            scroll={{ x: 1000 }}
+            className="overflow-x-auto"
+          />
+        </div>
+
+        {/* Giao diện Thẻ Responsive dành cho Điện Thoại Mobile (Hiển thị đầy đủ mọi thông tin bao tải) */}
+        <div className="block md:hidden space-y-3">
+          {filteredBags.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <Package size={36} className="mx-auto mb-2 text-gray-300" />
+              <p className="text-sm mb-0">Không có bao tải nào phù hợp bộ lọc</p>
+            </div>
+          ) : (
+            filteredBags.map((bag) => (
+              <Card
+                key={bag.id}
+                size="small"
+                className="rounded-xl shadow-xs border border-gray-200 bg-white hover:border-blue-300 transition-all"
+                bodyStyle={{ padding: '12px' }}
+              >
+                {/* Header thẻ: Mã bao tải & Kẹp chì & Trạng thái */}
+                <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2 mb-2">
+                  <div>
+                    <span className="font-mono font-bold text-blue-600 text-base">{bag.bagCode}</span>
+                    {bag.sealNumber && (
+                      <div className="mt-0.5">
+                        <Tag color="volcano" className="font-mono text-2xs">
+                          Seal: {bag.sealNumber}
+                        </Tag>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    {STATUS_TAGS[bag.status] ? (
+                      <Tag color={STATUS_TAGS[bag.status].color} className="font-semibold text-xs">
+                        {STATUS_TAGS[bag.status].label}
+                      </Tag>
+                    ) : (
+                      <Tag>{bag.status}</Tag>
+                    )}
+                  </div>
+                </div>
+
+                {/* Tuyến vận chuyển */}
+                <div className="bg-blue-50/40 p-2.5 rounded-lg text-xs space-y-1 mb-2 border border-blue-100/60">
+                  <div className="flex items-center gap-1.5 text-gray-700">
+                    <span className="text-gray-500 shrink-0 font-medium">Từ:</span>
+                    <span className="font-semibold text-gray-800">{bag.originWarehouseName}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-gray-700">
+                    <span className="text-red-500 shrink-0 font-medium">Đến:</span>
+                    <span className="font-bold text-red-600">{bag.destWarehouseName}</span>
+                  </div>
+                </div>
+
+                {/* Số kiện & Cân nặng & Ngày tạo */}
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-2 px-1">
+                  <div>
+                    <span className="font-bold text-gray-900">{bag.totalItems} kiện</span>
+                    <span className="text-gray-400 mx-1">|</span>
+                    <span className="font-semibold text-gray-700">{Number(bag.totalWeightKg || 0).toFixed(2)} kg</span>
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    {bag.createdAt ? dayjs(bag.createdAt).format('HH:mm DD/MM') : '—'}
+                  </div>
+                </div>
+
+                {bag.assignedDriverName && (
+                  <div className="text-xs text-gray-600 mb-2 px-1">
+                    Tài xế: <span className="font-semibold text-gray-800">{bag.assignedDriverName}</span>
+                    {bag.assignedTruckPlate && (
+                      <Tag color="gold" className="text-2xs ml-1 font-bold">
+                        {bag.assignedTruckPlate}
+                      </Tag>
+                    )}
+                  </div>
+                )}
+
+                {/* Nút hành động */}
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+                  <Button
+                    type="primary"
+                    size="middle"
+                    icon={<Package size={14} />}
+                    onClick={() => openBagDrawer(bag)}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-xs h-9 font-semibold"
+                  >
+                    {bag.status === 'OPEN' ? 'Đóng hàng' : 'Xem chi tiết'}
+                  </Button>
+
+                  {bag.status === 'OPEN' && bag.totalItems > 0 && (
+                    <Button
+                      size="middle"
+                      icon={<Lock size={14} />}
+                      onClick={() => handleOpenSealModal(bag)}
+                      className="flex-1 border-orange-500 text-orange-600 hover:bg-orange-50 text-xs h-9 font-semibold"
+                    >
+                      Kẹp chì
+                    </Button>
+                  )}
+
+                  <Button
+                    size="middle"
+                    icon={<Printer size={14} />}
+                    onClick={() => setPrintBag(bag)}
+                    className="text-gray-700 hover:text-black text-xs h-9 px-3"
+                    title="In tem bao tải A6"
+                  >
+                    In tem A6
+                  </Button>
+                </div>
+              </Card>
+            ))
+          )}
+        </div>
       </Card>
 
       {/* Drawer: Bàn Đóng Bao Tải Chi Tiết (Active Bag Workspace) */}
@@ -1065,20 +1400,31 @@ export const MasterBagPage: React.FC = () => {
 
             {/* Bảng danh sách kiện hàng bên trong */}
             <div>
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <Text strong className="text-sm text-gray-700">
                   Danh sách kiện hàng trong bao ({activeBag.items?.length || 0}):
                 </Text>
-                {activeBag.status === 'OPEN' && activeBag.totalItems > 0 && (
+                <div className="flex items-center gap-2">
                   <Button
-                    type="primary"
-                    icon={<Lock size={14} />}
-                    onClick={() => handleOpenSealModal(activeBag)}
-                    className="bg-orange-600 hover:bg-orange-700 text-xs"
+                    size="small"
+                    icon={<Printer size={14} />}
+                    onClick={() => setPrintBag(activeBag)}
+                    className="text-xs font-semibold text-gray-700 hover:text-black border-gray-300"
+                    title="In tem nhãn dán bao tải tổng khổ A6"
                   >
-                    Kẹp chì niêm phong
+                    In tem bao tải A6
                   </Button>
-                )}
+                  {activeBag.status === 'OPEN' && activeBag.totalItems > 0 && (
+                    <Button
+                      type="primary"
+                      icon={<Lock size={14} />}
+                      onClick={() => handleOpenSealModal(activeBag)}
+                      className="bg-orange-600 hover:bg-orange-700 text-xs font-semibold"
+                    >
+                      Kẹp chì niêm phong
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <Table
@@ -1113,8 +1459,24 @@ export const MasterBagPage: React.FC = () => {
                     render: (w: number) => <span className="text-xs font-semibold">{w} g</span>,
                   },
                   {
+                    title: 'In tem',
+                    key: 'printOrder',
+                    width: 65,
+                    align: 'center' as const,
+                    render: (_: any, item: any) => (
+                      <Button
+                        size="small"
+                        icon={<Printer size={13} className="text-gray-600 hover:text-blue-600" />}
+                        onClick={() => handlePrintOrderWaybill(item.trackingCode)}
+                        title="In tem vận đơn đơn hàng này"
+                        className="text-xs"
+                      />
+                    ),
+                  },
+                  {
                     title: '',
                     key: 'del',
+                    width: 45,
                     render: (_: any, item: any) =>
                       activeBag.status === 'OPEN' ? (
                         <Popconfirm
@@ -1255,25 +1617,36 @@ export const MasterBagPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex gap-2">
-              <Input
-                size="large"
-                prefix={<Barcode size={20} className="text-gray-400" />}
-                placeholder="Quét mã vận đơn (VD: RKP261124...) rồi nhấn Enter"
-                value={newBagScanInput}
-                onChange={(e) => setNewBagScanInput(e.target.value)}
-                onPressEnter={handleAddTrackingToNewBag}
-                className="font-mono font-bold"
-                disabled={checkingItem}
-              />
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="flex-1 flex gap-2">
+                <Input
+                  size="large"
+                  prefix={<Barcode size={20} className="text-gray-400" />}
+                  placeholder="Quét mã vận đơn (VD: RKP261124...) rồi nhấn Enter"
+                  value={newBagScanInput}
+                  onChange={(e) => setNewBagScanInput(e.target.value)}
+                  onPressEnter={handleAddTrackingToNewBag}
+                  className="font-mono font-bold"
+                  disabled={checkingItem}
+                />
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={handleAddTrackingToNewBag}
+                  loading={checkingItem}
+                  className="bg-blue-600 hover:bg-blue-700 font-semibold"
+                >
+                  Thêm đơn
+                </Button>
+              </div>
               <Button
-                type="primary"
+                type="default"
                 size="large"
-                onClick={handleAddTrackingToNewBag}
-                loading={checkingItem}
-                className="bg-blue-600 hover:bg-blue-700 font-semibold"
+                icon={<Camera size={18} className="text-red-600" />}
+                onClick={handleOpenNewBagCameraModal}
+                className="border-red-500 text-red-600 hover:bg-red-50 font-bold whitespace-nowrap h-10 px-4"
               >
-                Thêm đơn
+                📷 Quét Camera
               </Button>
             </div>
 
@@ -1314,8 +1687,23 @@ export const MasterBagPage: React.FC = () => {
                   },
                   {
                     title: '',
+                    key: 'print',
+                    width: 45,
+                    align: 'center' as const,
+                    render: (_: any, record: any) => (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<Printer size={14} className="text-gray-600 hover:text-black" />}
+                        onClick={() => handlePrintOrderWaybill(record.trackingCode)}
+                        title="In tem vận đơn"
+                      />
+                    ),
+                  },
+                  {
+                    title: '',
                     key: 'action',
-                    width: 50,
+                    width: 45,
                     align: 'center' as const,
                     render: (_: any, record: any) => (
                       <Button
@@ -1618,6 +2006,92 @@ export const MasterBagPage: React.FC = () => {
             <MasterBagThermalLabel bag={printBag} />
           </div>
         )}
+      </Modal>
+
+      {/* Modal In Tem Vận Đơn Cá Nhân Cho Đơn Hàng */}
+      <Modal
+        title="Tem Vận Đơn Kiện Hàng (Khổ Nhiệt A6)"
+        open={!!printOrder}
+        onCancel={() => setPrintOrder(null)}
+        footer={[
+          <Button key="close" onClick={() => setPrintOrder(null)}>
+            Đóng
+          </Button>,
+          <Button
+            key="print"
+            type="primary"
+            icon={<Printer size={16} />}
+            onClick={() => window.print()}
+            className="bg-red-600 hover:bg-red-700 font-bold"
+          >
+            In tem ngay
+          </Button>,
+        ]}
+        width={480}
+        destroyOnClose
+      >
+        {printOrder && (
+          <div className="py-2">
+            <ThermalLabel order={printOrder} />
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Camera Quét Mã Đơn Hàng Gom Vào Bao Tải Mới */}
+      <Modal
+        title={
+          <div className="flex items-center justify-between pr-6">
+            <div className="flex items-center gap-2 font-bold text-red-600">
+              <Camera size={20} />
+              <span>Camera Quét Mã Đơn Hàng Vào Bao Tải</span>
+            </div>
+            <Button size="small" icon={<RefreshCw size={14} />} onClick={handleSwitchNewBagCamera} className="text-xs">
+              Đổi Camera
+            </Button>
+          </div>
+        }
+        open={newBagCameraOpen}
+        onCancel={handleCloseNewBagCameraModal}
+        footer={[
+          <Button key="close" type="primary" onClick={handleCloseNewBagCameraModal} className="bg-red-600 font-bold px-6">
+            Hoàn tất & Đóng Camera (Đã có {scannedItems.length} kiện)
+          </Button>
+        ]}
+        width={560}
+        destroyOnClose
+      >
+        <div className="space-y-3 pt-2">
+          {newBagLastFeedback && (
+            <Alert
+              message={newBagLastFeedback.message}
+              type={newBagLastFeedback.success ? 'success' : 'warning'}
+              showIcon
+              className="animate-pulse shadow-sm text-xs font-semibold"
+            />
+          )}
+
+          <div className="relative rounded-2xl overflow-hidden border-2 border-red-400 bg-black shadow-lg">
+            <div id="new-bag-camera-reader" className="w-full" style={{ minHeight: '280px' }} />
+            {!newBagCameraActive && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-black/80 p-4 text-center">
+                <RefreshCw size={32} className="animate-spin text-red-400 mb-2" />
+                <p className="text-sm font-semibold mb-0">Đang khởi động camera điện thoại...</p>
+                <p className="text-xs text-gray-400 mt-1">Vui lòng cấp quyền camera nếu trình duyệt yêu cầu.</p>
+              </div>
+            )}
+            <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 backdrop-blur-xs">
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+              <span>Quét liên tục kiện hàng</span>
+            </div>
+          </div>
+
+          <div className="bg-red-50/70 p-3 rounded-xl border border-red-100 flex items-center justify-between text-xs">
+            <span className="font-bold text-red-900">Tổng kiện đã gom vào bao:</span>
+            <Tag color="red" className="font-bold text-sm px-2.5 py-0.5">
+              {scannedItems.length} kiện hàng
+            </Tag>
+          </div>
+        </div>
       </Modal>
     </div>
   );

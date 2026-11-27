@@ -730,5 +730,12 @@ public class DataInitializer implements CommandLineRunner {
                     .build());
             log.info("Đã khởi tạo phiếu thu hồi đồ hỏng mẫu trạng thái CHO_THU_HOI");
         }
+
+        // Đồng bộ trạng thái đơn mẫu RKP261126926314 sẵn sàng cho bưu tá bưu cục đích quét phát
+        try {
+            jdbcTemplate.update("UPDATE orders SET current_status = 'AT_SORTING_HUB', assigned_shipper_id = NULL, assigned_shipper_name = NULL, assigned_shipper_phone = NULL WHERE tracking_code = 'RKP261126926314'");
+        } catch (Exception ex) {
+            log.warn("Lỗi cập nhật đơn RKP261126926314 trong DataInitializer: {}", ex.getMessage());
+        }
     }
 }

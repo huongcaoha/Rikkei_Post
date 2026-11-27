@@ -21,10 +21,66 @@ export function useOrderWebSocket(options: UseOrderWebSocketOptions = {}) {
     const handleEvent = (event: OrderEvent) => {
       // 1. Hiển thị thông báo Toast nếu bật
       if (showNotification) {
-        const isCreated = event.type === 'ORDER_CREATED';
+        const isMasterBag =
+          event.type?.startsWith('MASTER_BAG_') ||
+          event.type?.startsWith('BAG_') ||
+          Boolean(event.bagCode);
+
+        let title = '📦 Cập nhật đơn hàng';
+        let desc = event.message;
+
+        if (isMasterBag) {
+          const bagCode = event.bagCode || 'Bao tải';
+          const sealInfo = event.sealNumber ? ` (Seal: ${event.sealNumber})` : '';
+
+          switch (event.type) {
+            case 'MASTER_BAG_CREATED':
+              title = '🎒 Đóng bao tải mới';
+              desc = desc || `Bao tải [${bagCode}]${sealInfo} đã được tạo gom kiện.`;
+              break;
+            case 'BAG_SEALED':
+              title = '🔒 Niêm phong kẹp chì bao tải';
+              desc = desc || `Bao tải [${bagCode}] đã được kẹp chì ${sealInfo} sẵn sàng luân chuyển.`;
+              break;
+            case 'BAG_ASSIGNED_TO_DRIVER':
+              title = '🚚 Gán bao tải cho tài xế';
+              desc = desc || `Bao tải [${bagCode}] đã gán cho tài xế ${event.driverName || 'vận tải'}.`;
+              break;
+            case 'MASTER_BAG_IN_TRANSIT':
+              title = '🚛 Bao tải đang trung chuyển';
+              desc = desc || `Bao tải [${bagCode}] đã xuất kho lên xe và đang trên đường luân chuyển.`;
+              break;
+            case 'MASTER_BAG_ARRIVED_AT_HUB':
+              title = '🏢 Tiếp nhận bao tải vào kho Hub';
+              desc = desc || `Bao tải [${bagCode}]${sealInfo} đã cập bến và quét nhập kho ${event.hubName || 'Hub'} thành công.`;
+              break;
+            default:
+              title = '🎒 Bao tải gom hàng';
+              desc = desc || `Bao tải [${bagCode}] - Trạng thái: ${event.status || 'Cập nhật'}`;
+              break;
+          }
+        } else {
+          const isCreated = event.type === 'ORDER_CREATED';
+          title = isCreated ? '🔔 Đơn hàng mới!' : '📦 Cập nhật đơn hàng';
+          if (!desc) {
+            if (event.trackingCode) {
+              desc = `Mã vận đơn: #${event.trackingCode} - Trạng thái: ${event.status}`;
+            } else {
+              desc = `Trạng thái: ${event.status || 'Đã cập nhật'}`;
+            }
+          }
+        }
+
+        // Dùng notification key để Ant Design tự động deduplicate:
+        // Cùng 1 sự kiện (dù đến từ nhiều topic như /topic/master-bags và /topic/warehouse/{id}) sẽ chỉ hiện 1 popup duy nhất, không xếp chồng lên nhau
+        const notifKey = isMasterBag
+          ? `bag_${event.bagCode || 'bag'}_${event.status || event.type}`
+          : `order_${event.trackingCode || 'generic'}_${event.status || event.type}`;
+
         notification.open({
-          message: isCreated ? '🔔 Đơn hàng mới!' : '📦 Cập nhật đơn hàng',
-          description: event.message || `Mã vận đơn: #${event.trackingCode} - Trạng thái: ${event.status}`,
+          key: notifKey,
+          message: title,
+          description: desc,
           placement: 'topRight',
           duration: 4.5,
         });

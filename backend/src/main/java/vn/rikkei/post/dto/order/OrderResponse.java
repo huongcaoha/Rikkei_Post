@@ -67,6 +67,7 @@ public class OrderResponse {
     private String assignedShipperName;
     private String assignedShipperPhone;
     private Long assignedPostOfficeId;
+    private String postOfficeName;
     private Long assignedRouteId;
     private LocalDateTime pickupCompletedAt;
     private LocalDateTime deliveredAt;

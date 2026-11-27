@@ -617,6 +617,12 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private OrderResponse mapToResponse(Order order) {
+        String poName = null;
+        if (order.getAssignedPostOfficeId() != null) {
+            poName = warehouseRepository.findById(order.getAssignedPostOfficeId())
+                    .map(Warehouse::getName).orElse(null);
+        }
+
         return OrderResponse.builder()
                 .id(order.getId())
                 .trackingCode(order.getTrackingCode())
@@ -665,6 +671,7 @@ public class OrderServiceImpl implements OrderService {
                 .assignedShipperName(order.getAssignedShipperName())
                 .assignedShipperPhone(order.getAssignedShipperPhone())
                 .assignedPostOfficeId(order.getAssignedPostOfficeId())
+                .postOfficeName(poName)
                 .assignedRouteId(order.getAssignedRouteId())
                 .pickupCompletedAt(order.getPickupCompletedAt())
                 .deliveredAt(order.getDeliveredAt())

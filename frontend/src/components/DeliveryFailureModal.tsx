@@ -31,7 +31,8 @@ export const DeliveryFailureModal: React.FC<DeliveryFailureModalProps> = ({
 
   const currentAttempts = order.deliveryAttempts || 0;
   const nextAttempts = currentAttempts + 1;
-  const isAutoReturn = nextAttempts >= 3 || reason.toLowerCase().includes('từ chối') || reason.toLowerCase().includes('hủy đơn');
+  const isExplicitReject = reason.toLowerCase().includes('từ chối') || reason.toLowerCase().includes('hủy đơn');
+  const isAutoReturn = nextAttempts >= 3 || isExplicitReject;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -91,18 +92,19 @@ export const DeliveryFailureModal: React.FC<DeliveryFailureModalProps> = ({
 
         {isAutoReturn ? (
           <Alert
-            message="Cảnh báo kích hoạt Hàng hoàn (RETURNING)"
+            message="Kích hoạt Chuyển hoàn về Shop (RETURNING)"
             description={
               nextAttempts >= 3
-                ? 'Đơn hàng đã phát thất bại 3 lần theo quy định bưu chính. Hệ thống sẽ tự động chuyển đơn sang trạng thái HÀNG HOÀN (RETURNING) về kho bưu cục.'
-                : 'Lý do khách từ chối nhận hoặc hủy đơn sẽ kích hoạt ngay quy trình CHUYỂN HOÀN về cho người gửi.'
+                ? 'Đơn hàng đã phát không thành công đủ 3 lần theo quy định bưu chính. Hệ thống sẽ kích hoạt quy trình CHUYỂN HOÀN (RETURNING) về cho Shop/Người gửi.'
+                : 'Lý do khách từ chối nhận hoặc hủy đơn sẽ kích hoạt ngay quy trình CHUYỂN HOÀN về cho người gửi/Shop.'
             }
             type="warning"
             showIcon
           />
         ) : (
           <Alert
-            message={`Đơn hàng sẽ chuyển sang trạng thái CHỜ PHÁT LẠI (Lần ${nextAttempts}/3)`}
+            message={`Đơn hàng chuyển sang trạng thái GIAO THẤT BẠI (Lần ${nextAttempts}/3)`}
+            description="Theo quy định, đơn giao không thành công (< 3 lần) sẽ được mang về kho bưu cục để nhân viên kho quét tiếp nhận nhập kho lưu trữ (AT_SORTING_HUB). Hôm sau bưu tá sẽ quét mã lấy đơn đi phát lại cho khách."
             type="info"
             showIcon
           />
